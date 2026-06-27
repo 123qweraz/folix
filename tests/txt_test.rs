@@ -38,13 +38,13 @@ fn test_open_chinese_novel() {
     );
     let doc = folix::app::engines::reflow_engine::ReflowDocument::open(path)
         .expect("Failed to open Chinese novel TXT");
-    assert_eq!(doc.page_count(), 1);
+    assert_eq!(doc.page_count(), 1, "Continuous document");
     let text = doc.page_text(0);
     assert!(!text.is_empty(), "Should have text content");
-    // Check a few expected Chinese characters
+    assert!(text.chars().count() > 100000, "Full text should be long");
     assert!(
         text.contains("更多") || text.contains("精校") || text.contains("下载"),
-        "Text should contain Chinese: got prefix {:?}",
+        "Text should contain expected Chinese: got prefix {:?}",
         &text[..text.len().min(100)]
     );
     println!("Chinese TXT: {} chars", text.chars().count());

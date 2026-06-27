@@ -51,6 +51,7 @@ pub struct AnnotateState {
     pub tool: AnnotationTool,
     pub annotations: Vec<Annotation>,
     pub stroke_points: Vec<[f32; 2]>,
+    pub page: usize,
 }
 
 #[derive(Clone, PartialEq)]
@@ -84,6 +85,7 @@ impl Mode {
             tool: AnnotationTool::Highlight,
             annotations: vec![],
             stroke_points: vec![],
+            page: 0,
         })
     }
 

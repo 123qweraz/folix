@@ -138,12 +138,21 @@ impl FolixApp {
     }
 
     fn render_toolbar(&mut self, ctx: &egui::Context) {
+        let current_name = self.state.mode.name().to_string();
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Mode:");
-                ui.selectable_value(&mut self.state.mode, Mode::reading(), "Reading");
-                ui.selectable_value(&mut self.state.mode, Mode::auto(), "Auto");
-                ui.selectable_value(&mut self.state.mode, Mode::annotate(), "Annotate");
+                for name in ["Reading", "Auto", "Annotate"] {
+                    let selected = current_name == name;
+                    if ui.selectable_label(selected, name).clicked() && !selected {
+                        self.state.switch(match name {
+                            "Reading" => Mode::reading(),
+                            "Auto" => Mode::auto(),
+                            "Annotate" => Mode::annotate(),
+                            _ => Mode::reading(),
+                        });
+                    }
+                }
             });
         });
     }

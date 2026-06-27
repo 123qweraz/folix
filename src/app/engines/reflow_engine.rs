@@ -2,7 +2,7 @@ use super::{Document, RenderedPage, TocEntry};
 
 pub struct ReflowDocument {
     path: String,
-    chapters: Vec<String>,
+    full_text: String,
     doc_title: String,
     toc: Vec<TocEntry>,
 }
@@ -36,39 +36,48 @@ impl ReflowDocument {
             })
             .unwrap_or_else(|| "Untitled".to_string());
 
-        // Build chapter content from reader
-        let mut chapters: Vec<String> = Vec::new();
+        let mut full_text = String::new();
+        let mut chapter_texts: Vec<String> = Vec::new();
 
         for result in epub.reader() {
             let data = result.ok()?;
             let html = data.content();
-            let plain = Self::strip_html(html);
-            if !plain.trim().is_empty() {
-                chapters.push(plain.trim().to_string());
+            let plain = Self::strip_html(html).trim().to_string();
+            if !plain.is_empty() {
+                chapter_texts.push(plain);
             }
         }
 
-        if chapters.is_empty() {
-            chapters.push("(empty document)".to_string());
+        // Concatenate all chapters, record char offsets for each
+        let mut chapter_char_offsets: Vec<usize> = Vec::new();
+        for (i, ct) in chapter_texts.iter().enumerate() {
+            chapter_char_offsets.push(full_text.len());
+            if i > 0 {
+                full_text.push('\n');
+            }
+            full_text.push_str(ct);
         }
 
-        // Build ToC: assign page indices sequentially from flat ToC entries
+        // Build ToC: each flattened entry maps to the chapter with same index
         let mut toc: Vec<TocEntry> = Vec::new();
         let toc_data = epub.toc();
         if let Some(contents) = toc_data.contents() {
             for (i, entry) in contents.flatten().enumerate() {
-                if i < chapters.len() {
-                    toc.push(TocEntry {
-                        label: entry.label().to_string(),
-                        page_index: i,
-                    });
-                }
+                let char_offset = chapter_char_offsets.get(i).copied().unwrap_or(0);
+                toc.push(TocEntry {
+                    label: entry.label().to_string(),
+                    page_index: char_offset,
+                });
             }
+        }
+
+        if full_text.is_empty() {
+            full_text = "(empty document)".to_string();
         }
 
         Some(Self {
             path: path.to_string(),
-            chapters,
+            full_text,
             doc_title,
             toc,
         })
@@ -84,45 +93,16 @@ impl ReflowDocument {
             .unwrap_or("Untitled")
             .to_string();
 
-        let chapters = Self::paginate_text(&content, 3000);
+        if content.is_empty() {
+            return None;
+        }
 
         Some(Self {
             path: path.to_string(),
-            chapters,
+            full_text: content,
             doc_title,
             toc: vec![],
         })
-    }
-
-    fn paginate_text(text: &str, target_chars: usize) -> Vec<String> {
-        let paragraphs: Vec<&str> = text.split("\n\n").collect();
-        let mut pages = Vec::new();
-        let mut current = String::new();
-
-        for para in paragraphs {
-            let trimmed = para.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            if current.len() + trimmed.len() + 2 > target_chars && !current.is_empty() {
-                pages.push(std::mem::take(&mut current));
-            }
-
-            if !current.is_empty() {
-                current.push('\n');
-            }
-            current.push_str(trimmed);
-        }
-
-        if !current.is_empty() {
-            pages.push(current);
-        }
-
-        if pages.is_empty() {
-            pages.push("(empty)".to_string());
-        }
-        pages
     }
 
     fn decode_text(data: &[u8]) -> String {
@@ -167,15 +147,11 @@ impl ReflowDocument {
 
 impl Document for ReflowDocument {
     fn page_count(&self) -> usize {
-        self.chapters.len()
+        1
     }
 
     fn page_text(&self, page: usize) -> String {
-        if page < self.chapters.len() {
-            self.chapters[page].clone()
-        } else {
-            String::new()
-        }
+        if page == 0 { self.full_text.clone() } else { String::new() }
     }
 
     fn title(&self) -> String {
