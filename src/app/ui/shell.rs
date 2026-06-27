@@ -1,4 +1,4 @@
-use crate::app::core::{AppState, Mode, document_manager::DocumentManager, mode_system::ModeController};
+use crate::app::core::{AppState, Mode, document_manager::DocumentManager};
 use crate::app::core::mode_system::ViewMode;
 use crate::app::platform::font_loader::FontLoader;
 use super::mode_ui;
@@ -8,6 +8,7 @@ pub struct FolixApp {
     pub open_dialog: bool,
     pub show_about: bool,
     pub status_message: String,
+    pub recent_files: Vec<String>,
 }
 
 impl FolixApp {
@@ -19,6 +20,7 @@ impl FolixApp {
             open_dialog: false,
             show_about: false,
             status_message: String::new(),
+            recent_files: Vec::new(),
         };
         app.init_features();
         app
@@ -73,12 +75,57 @@ impl FolixApp {
             self.state.feature_system.register(id, scope);
         }
     }
+
+    fn open_file(&mut self, path_str: String) {
+        self.recent_files.retain(|p| p != &path_str);
+        self.recent_files.insert(0, path_str.clone());
+        self.recent_files.truncate(10);
+
+        if let Some(doc) = DocumentManager::open(&path_str) {
+            let replace = self.state.current_tab()
+                .map(|t| t.is_new_tab())
+                .unwrap_or(false);
+
+            if replace {
+                let idx = self.state.active_tab;
+                let tab = &mut self.state.tabs[idx];
+                tab.document = Some(doc);
+                tab.path = Some(path_str.clone());
+                tab.mode = Mode::reading();
+                if let Mode::Reading(ref mut rs) = tab.mode {
+                    rs.view_mode = if tab.document.as_ref().unwrap().lock().supports_image() {
+                        ViewMode::Image
+                    } else {
+                        ViewMode::Text
+                    };
+                }
+            } else {
+                self.state.add_tab(path_str.clone(), doc);
+            }
+            self.state.feature_system.use_feature("open_file");
+            self.status_message = format!("Opened: {}", path_str);
+        } else {
+            self.status_message = format!("Failed to open: {}", path_str);
+        }
+    }
 }
 
 impl eframe::App for FolixApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle dropped files
+        let dropped_files: Vec<String> = ctx.input(|i| {
+            i.raw.dropped_files.iter()
+                .filter_map(|f| f.path.as_ref())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect()
+        });
+        for path in dropped_files {
+            self.open_file(path);
+        }
+
         self.render_menu_bar(ctx);
         self.render_toolbar(ctx);
+        self.render_tab_bar(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_document_view(ui);
@@ -100,9 +147,10 @@ impl FolixApp {
                         ui.close_menu();
                     }
                     if ui.button("Close").clicked() {
-                        self.state.document = None;
-                        self.state.document_path = None;
-                        self.status_message = "Closed document".to_string();
+                        if !self.state.tabs.is_empty() {
+                            self.state.close_tab(self.state.active_tab);
+                            self.status_message = "Closed document".to_string();
+                        }
                         ui.close_menu();
                     }
                     ui.separator();
@@ -113,15 +161,19 @@ impl FolixApp {
 
                 ui.menu_button("Mode", |ui| {
                     let modes = ["Reading", "Auto", "Annotate"];
+                    let current_name = self.state.current_tab()
+                        .map(|t| t.mode.name().to_string())
+                        .unwrap_or_else(|| "Reading".to_string());
                     for mode_name in &modes {
-                        let selected = self.state.mode.name() == *mode_name;
+                        let selected = current_name == *mode_name;
                         if ui.selectable_label(selected, *mode_name).clicked() {
-                            self.state.switch(match *mode_name {
-                                "Reading" => Mode::reading(),
-                                "Auto" => Mode::auto(),
-                                "Annotate" => Mode::annotate(),
-                                _ => Mode::reading(),
-                            });
+                            if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
+                                tab.mode = match *mode_name {
+                                    "Auto" => Mode::auto(),
+                                    "Annotate" => Mode::annotate(),
+                                    _ => Mode::reading(),
+                                };
+                            }
                             ui.close_menu();
                         }
                     }
@@ -138,30 +190,106 @@ impl FolixApp {
     }
 
     fn render_toolbar(&mut self, ctx: &egui::Context) {
-        let current_name = self.state.mode.name().to_string();
+        let current_name = self.state.current_tab()
+            .map(|t| t.mode.name().to_string())
+            .unwrap_or_else(|| "Reading".to_string());
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Mode:");
                 for name in ["Reading", "Auto", "Annotate"] {
                     let selected = current_name == name;
                     if ui.selectable_label(selected, name).clicked() && !selected {
-                        self.state.switch(match name {
-                            "Reading" => Mode::reading(),
-                            "Auto" => Mode::auto(),
-                            "Annotate" => Mode::annotate(),
-                            _ => Mode::reading(),
-                        });
+                        if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
+                            tab.mode = match name {
+                                "Auto" => Mode::auto(),
+                                "Annotate" => Mode::annotate(),
+                                _ => Mode::reading(),
+                            };
+                        }
                     }
                 }
             });
         });
     }
 
+    fn render_tab_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                // "+" button to create a new tab page
+                if ui.button(" + ").clicked() {
+                    self.state.add_new_tab();
+                }
+
+                let mut to_close: Option<usize> = None;
+                let mut i = 0;
+                while i < self.state.tabs.len() {
+                    let title = self.state.tabs[i].title();
+                    let is_active = i == self.state.active_tab;
+
+                    if ui.selectable_label(is_active, &title).clicked() {
+                        self.state.active_tab = i;
+                    }
+
+                    if ui.button("×").clicked() {
+                        to_close = Some(i);
+                    }
+
+                    i += 1;
+                }
+
+                if let Some(idx) = to_close {
+                    self.state.close_tab(idx);
+                }
+            });
+        });
+    }
+
+    fn render_new_tab_page(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(100.0);
+            ui.heading("Folix");
+            ui.label("PDF / EPUB / TXT Reader");
+            ui.add_space(20.0);
+            if ui.add(egui::Button::new("📂  Open File").min_size(egui::vec2(200.0, 36.0))).clicked() {
+                self.open_dialog = true;
+            }
+            ui.add_space(24.0);
+
+            if !self.recent_files.is_empty() {
+                ui.label("Recent Files");
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        for path in self.recent_files.clone() {
+                            let name = std::path::Path::new(&path)
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or(&path);
+                            if ui.selectable_label(false, name).clicked() {
+                                self.open_file(path);
+                            }
+                        }
+                    });
+            } else {
+                ui.label("No recent files");
+                ui.colored_label(egui::Color32::GRAY, "Open a file or drag-and-drop to get started.");
+            }
+        });
+    }
+
     fn render_document_view(&mut self, ui: &mut egui::Ui) {
-        let mode_name = self.state.mode.name().to_string();
+        let idx = self.state.active_tab;
+
+        // New tab page
+        if self.state.tabs[idx].is_new_tab() {
+            self.render_new_tab_page(ui);
+            return;
+        }
+
+        let mode_name = self.state.tabs[idx].mode.name().to_string();
         let pinned_names: Vec<String> = self.state.feature_system.pinned_features(&mode_name)
             .iter().map(|f| f.id.clone()).collect();
-        let document = self.state.document.clone();
 
         ui.horizontal(|ui| {
             for name in &pinned_names {
@@ -169,7 +297,9 @@ impl FolixApp {
             }
         });
 
-        match &mut self.state.mode {
+        let document = self.state.tabs[idx].document.as_ref().unwrap().clone();
+        let tab = &mut self.state.tabs[idx];
+        match &mut tab.mode {
             Mode::Reading(ref mut rs) => {
                 mode_ui::render_reading(ui, &document, rs);
             }
@@ -186,14 +316,20 @@ impl FolixApp {
     fn render_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(format!("Mode: {}", self.state.mode.name()));
+                let tab = self.state.current_tab();
+                let mode_name = tab.map(|t| t.mode.name()).unwrap_or("N/A");
+                ui.label(format!("Mode: {}", mode_name));
                 ui.separator();
-                if let Some(ref path) = self.state.document_path {
-                    let name = std::path::Path::new(path)
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("");
-                    ui.label(format!("Document: {}", name));
+                if let Some(tab) = tab {
+                    if let Some(path) = &tab.path {
+                        let name = std::path::Path::new(path)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        ui.label(format!("Document: {}", name));
+                    } else {
+                        ui.label("New Tab");
+                    }
                 } else {
                     ui.label("No document open");
                 }
@@ -210,23 +346,7 @@ impl FolixApp {
                 .add_filter("Documents", &["pdf", "epub", "txt"])
                 .pick_file();
             if let Some(path) = path {
-                let path_str = path.to_string_lossy().to_string();
-                if let Some(doc) = DocumentManager::open(&path_str) {
-                    if let Mode::Reading(ref mut rs) = self.state.mode {
-                        rs.page = 0;
-                        rs.view_mode = if doc.lock().supports_image() {
-                            ViewMode::Image
-                        } else {
-                            ViewMode::Text
-                        };
-                    }
-                    self.state.document = Some(doc);
-                    self.state.document_path = Some(path_str.clone());
-                    self.state.feature_system.use_feature("open_file");
-                    self.status_message = format!("Opened: {}", path_str);
-                } else {
-                    self.status_message = format!("Failed to open: {}", path_str);
-                }
+                self.open_file(path.to_string_lossy().to_string());
             }
             self.open_dialog = false;
         }

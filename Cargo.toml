@@ -21,3 +21,6 @@ parking_lot = "0.12"
 encoding_rs = "0.8"
 rfd = "0.15"
 
+[patch.crates-io]
+egui-winit = { path = "patches/egui-winit" }
+

@@ -4,4 +4,4 @@ pub mod document_manager;
 pub mod feature_system;
 
 pub use mode_system::Mode;
-pub use app_state::AppState;
+pub use app_state::{AppState, OpenTab};

@@ -4,12 +4,32 @@ pub enum ViewMode {
     Image,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
+pub struct SearchState {
+    pub query: String,
+    pub show_search: bool,
+    pub matches: Vec<usize>,
+    pub current_match: usize,
+}
+
+impl SearchState {
+    pub fn new() -> Self {
+        Self {
+            query: String::new(),
+            show_search: false,
+            matches: vec![],
+            current_match: 0,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct ReadingState {
     pub page: usize,
     pub scale: f32,
     pub view_mode: ViewMode,
     pub show_toc: bool,
+    pub search: SearchState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -19,7 +39,7 @@ pub enum AutoPlayMode {
     SentenceStream,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct AutoState {
     pub playing: bool,
     pub speed: f32,
@@ -27,7 +47,7 @@ pub struct AutoState {
     pub progress: f32,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum AnnotationTool {
     Highlight,
     Pen,
@@ -36,7 +56,7 @@ pub enum AnnotationTool {
     Select,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct Annotation {
     pub id: String,
     pub doc_id: String,
@@ -46,7 +66,7 @@ pub struct Annotation {
     pub note: Option<String>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct AnnotateState {
     pub tool: AnnotationTool,
     pub annotations: Vec<Annotation>,
@@ -54,7 +74,7 @@ pub struct AnnotateState {
     pub page: usize,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Mode {
     Reading(ReadingState),
     Auto(AutoState),
@@ -68,6 +88,7 @@ impl Mode {
             scale: 1.0,
             view_mode: ViewMode::Text,
             show_toc: false,
+            search: SearchState::new(),
         })
     }
 
@@ -96,9 +117,4 @@ impl Mode {
             Mode::Annotate(_) => "Annotate",
         }
     }
-}
-
-pub trait ModeController {
-    fn switch(&mut self, mode: Mode);
-    fn current(&self) -> &Mode;
 }

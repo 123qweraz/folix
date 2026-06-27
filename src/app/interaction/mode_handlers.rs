@@ -7,8 +7,10 @@ pub trait ModeHandler {
 pub struct ReadingHandler;
 impl ModeHandler for ReadingHandler {
     fn handle(&mut self, state: &mut AppState) {
-        if let Mode::Reading(ref mut rs) = state.mode {
-            let _ = rs;
+        if let Some(tab) = state.current_tab_mut() {
+            if let Mode::Reading(ref mut rs) = tab.mode {
+                let _ = rs;
+            }
         }
     }
 }
@@ -16,8 +18,10 @@ impl ModeHandler for ReadingHandler {
 pub struct AutoHandler;
 impl ModeHandler for AutoHandler {
     fn handle(&mut self, state: &mut AppState) {
-        if let Mode::Auto(ref mut aut) = state.mode {
-            let _ = aut;
+        if let Some(tab) = state.current_tab_mut() {
+            if let Mode::Auto(ref mut aut) = tab.mode {
+                let _ = aut;
+            }
         }
     }
 }
@@ -25,8 +29,10 @@ impl ModeHandler for AutoHandler {
 pub struct AnnotateHandler;
 impl ModeHandler for AnnotateHandler {
     fn handle(&mut self, state: &mut AppState) {
-        if let Mode::Annotate(ref mut an) = state.mode {
-            let _ = an;
+        if let Some(tab) = state.current_tab_mut() {
+            if let Mode::Annotate(ref mut an) = tab.mode {
+                let _ = an;
+            }
         }
     }
 }
