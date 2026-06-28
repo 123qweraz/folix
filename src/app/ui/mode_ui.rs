@@ -214,7 +214,11 @@ fn render_page_image(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, pag
 }
 
 fn render_paged_image(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, rs: &mut ReadingState) {
-    render_page_image(ui, doc, rs.page, rs.scale);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            render_page_image(ui, doc, rs.page, rs.scale);
+        });
 }
 
 fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, page: &mut usize, scale: f32, total: usize, initial_scroll: Option<f32>, out_scroll_y: &mut f32, id_salt: &str) {
@@ -245,7 +249,7 @@ fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>
     }
     let approx_vph = ui.available_size().y;
 
-    let mut sa = egui::ScrollArea::both()
+    let mut sa = egui::ScrollArea::vertical()
         .id_salt(id)
         .auto_shrink([false; 2]);
     if let Some(off) = initial_scroll {
