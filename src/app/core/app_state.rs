@@ -1,5 +1,5 @@
 use crate::app::engines::Document;
-use super::mode_system::Mode;
+use super::mode_system::TabModes;
 use super::feature_system::FeatureSystem;
 use std::sync::Arc;
 use parking_lot::Mutex;
@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 pub struct OpenTab {
     pub document: Option<Arc<Mutex<Box<dyn Document>>>>,
     pub path: Option<String>,
-    pub mode: Mode,
+    pub modes: TabModes,
 }
 
 impl OpenTab {
@@ -48,18 +48,16 @@ impl AppState {
 
     pub fn add_tab(&mut self, path: String, document: Arc<Mutex<Box<dyn Document>>>) -> usize {
         let idx = self.tabs.len();
-        let mut mode = Mode::reading();
-        if let Mode::Reading(ref mut rs) = mode {
-            rs.view_mode = if document.lock().supports_image() {
-                super::mode_system::ViewMode::Image
-            } else {
-                super::mode_system::ViewMode::Text
-            };
-        }
+        let mut modes = TabModes::new();
+        modes.reading.view_mode = if document.lock().supports_image() {
+            super::mode_system::ViewMode::Image
+        } else {
+            super::mode_system::ViewMode::Text
+        };
         self.tabs.push(OpenTab {
             document: Some(document),
             path: Some(path),
-            mode,
+            modes,
         });
         self.active_tab = idx;
         idx
@@ -70,7 +68,7 @@ impl AppState {
         self.tabs.push(OpenTab {
             document: None,
             path: None,
-            mode: Mode::reading(),
+            modes: TabModes::new(),
         });
         self.active_tab = idx;
         idx

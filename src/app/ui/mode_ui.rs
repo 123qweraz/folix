@@ -42,7 +42,7 @@ pub fn render_reading(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
                     None
                 };
 
-                render_continuous_images(ui, document, &mut rs.page, rs.scale, total, initial_scroll, &mut rs.scroll_offset_y);
+                render_continuous_images(ui, document, &mut rs.page, rs.scale, total, initial_scroll, &mut rs.scroll_offset_y, "pdf_scroll_reading");
             } else {
                 render_text_continuous(ui, document, rs);
             }
@@ -215,8 +215,8 @@ fn render_paged_image(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, rs
     render_page_image(ui, doc, rs.page, rs.scale);
 }
 
-fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, page: &mut usize, scale: f32, total: usize, initial_scroll: Option<f32>, out_scroll_y: &mut f32) {
-    let id = ui.make_persistent_id("pdf_scroll");
+fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, page: &mut usize, scale: f32, total: usize, initial_scroll: Option<f32>, out_scroll_y: &mut f32, id_salt: &str) {
+    let id = ui.make_persistent_id(id_salt);
     let spacing = 12.0;
 
     if total == 0 { return; }
@@ -330,10 +330,23 @@ pub fn render_auto(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, 
         ui.horizontal(|ui| {
             ui.label(format!("Page {}/{}", current_page + 1, document.lock().page_count()));
         });
+
         let total = document.lock().page_count();
+        let target_y = if total > 0 && current_page < total {
+            let d = document.lock();
+            let mut y = 0.0;
+            for i in 0..current_page {
+                let (_, h) = d.page_size(i, 1.0).unwrap_or((800.0, 1000.0));
+                y += h + 12.0;
+            }
+            Some(y)
+        } else {
+            None
+        };
+
         let mut auto_page = current_page;
         let mut dummy_scroll = 0.0;
-        render_continuous_images(ui, document, &mut auto_page, 1.0, total, None, &mut dummy_scroll);
+        render_continuous_images(ui, document, &mut auto_page, 1.0, total, target_y, &mut dummy_scroll, "pdf_scroll_auto");
     } else {
         if aut.playing {
             let dt = ui.input(|i| i.unstable_dt);
@@ -422,7 +435,7 @@ pub fn render_annotate(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>
         let total = document.lock().page_count();
         let mut annotate_page = an.page;
         let mut dummy_scroll = 0.0;
-        render_continuous_images(ui, document, &mut annotate_page, 1.0, total, None, &mut dummy_scroll);
+        render_continuous_images(ui, document, &mut annotate_page, 1.0, total, Some(0.0), &mut dummy_scroll, "pdf_scroll_annotate");
     } else {
         let text = document.lock().page_text(0);
         egui::ScrollArea::vertical()

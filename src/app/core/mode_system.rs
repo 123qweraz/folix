@@ -18,6 +18,12 @@ pub struct SearchState {
     pub current_match: usize,
 }
 
+impl Default for SearchState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SearchState {
     pub fn new() -> Self {
         Self {
@@ -90,51 +96,78 @@ pub struct AnnotateState {
     pub page: usize,
 }
 
-#[derive(Clone)]
-pub enum Mode {
-    Reading(ReadingState),
-    Auto(AutoState),
-    Annotate(AnnotateState),
+#[derive(Clone, Copy, PartialEq)]
+pub enum ModeKind {
+    Reading,
+    Auto,
+    Annotate,
 }
 
-impl Mode {
-    pub fn reading() -> Self {
-        Mode::Reading(ReadingState {
-            page: 0,
-            scale: 1.0,
-            view_mode: ViewMode::Text,
-            reading_layout: ReadingLayout::Scroll,
-            show_sidebar: false,
-            search: SearchState::new(),
-            bookmarks: vec![],
-            scroll_offset_y: 0.0,
-            total_height: 0.0,
-        })
-    }
-
-    pub fn auto() -> Self {
-        Mode::Auto(AutoState {
-            playing: false,
-            speed: 1.0,
-            auto_mode: AutoPlayMode::PageFlow,
-            progress: 0.0,
-        })
-    }
-
-    pub fn annotate() -> Self {
-        Mode::Annotate(AnnotateState {
-            tool: AnnotationTool::Highlight,
-            annotations: vec![],
-            stroke_points: vec![],
-            page: 0,
-        })
-    }
-
+impl ModeKind {
     pub fn name(&self) -> &str {
         match self {
-            Mode::Reading(_) => "Reading",
-            Mode::Auto(_) => "Auto",
-            Mode::Annotate(_) => "Annotate",
+            ModeKind::Reading => "Reading",
+            ModeKind::Auto => "Auto",
+            ModeKind::Annotate => "Annotate",
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct TabModes {
+    pub reading: ReadingState,
+    pub auto: AutoState,
+    pub annotate: AnnotateState,
+    pub active: ModeKind,
+}
+
+impl Default for TabModes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TabModes {
+    pub fn new() -> Self {
+        Self {
+            reading: ReadingState {
+                page: 0,
+                scale: 1.0,
+                view_mode: ViewMode::Text,
+                reading_layout: ReadingLayout::Scroll,
+                show_sidebar: false,
+                search: SearchState::new(),
+                bookmarks: vec![],
+                scroll_offset_y: 0.0,
+                total_height: 0.0,
+            },
+            auto: AutoState {
+                playing: false,
+                speed: 1.0,
+                auto_mode: AutoPlayMode::PageFlow,
+                progress: 0.0,
+            },
+            annotate: AnnotateState {
+                tool: AnnotationTool::Highlight,
+                annotations: vec![],
+                stroke_points: vec![],
+                page: 0,
+            },
+            active: ModeKind::Reading,
+        }
+    }
+
+    pub fn switch_to(&mut self, target: ModeKind) {
+        let pos = match self.active {
+            ModeKind::Reading => self.reading.page as f32,
+            ModeKind::Auto => self.auto.progress,
+            ModeKind::Annotate => self.annotate.page as f32,
+        };
+        match target {
+            ModeKind::Reading => self.reading.page = pos as usize,
+            ModeKind::Auto => self.auto.progress = pos,
+            ModeKind::Annotate => self.annotate.page = pos as usize,
+        }
+        self.active = target;
     }
 }

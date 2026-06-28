@@ -1,4 +1,4 @@
-use crate::app::core::{AppState, Mode, ReadingLayout, document_manager::DocumentManager};
+use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::mode_system::ViewMode;
 use crate::app::platform::font_loader::FontLoader;
 use super::mode_ui;
@@ -91,14 +91,12 @@ impl FolixApp {
                 let tab = &mut self.state.tabs[idx];
                 tab.document = Some(doc);
                 tab.path = Some(path_str.clone());
-                tab.mode = Mode::reading();
-                if let Mode::Reading(ref mut rs) = tab.mode {
-                    rs.view_mode = if tab.document.as_ref().unwrap().lock().supports_image() {
-                        ViewMode::Image
-                    } else {
-                        ViewMode::Text
-                    };
-                }
+                tab.modes = TabModes::new();
+                tab.modes.reading.view_mode = if tab.document.as_ref().unwrap().lock().supports_image() {
+                    ViewMode::Image
+                } else {
+                    ViewMode::Text
+                };
             } else {
                 self.state.add_tab(path_str.clone(), doc);
             }
@@ -134,8 +132,8 @@ impl eframe::App for FolixApp {
         self.render_tab_bar(ctx);
 
         // Sidebar (Reading mode only)
-        let sidebar = self.state.current_tab().map_or(false, |t| {
-            t.document.is_some() && matches!(t.mode, Mode::Reading(ref rs) if rs.show_sidebar)
+        let sidebar = self.state.current_tab().is_some_and(|t| {
+            t.document.is_some() && t.modes.active == ModeKind::Reading && t.modes.reading.show_sidebar
         });
         if sidebar {
             let doc = self.state.current_tab()
@@ -146,9 +144,9 @@ impl eframe::App for FolixApp {
                 .default_width(260.0)
                 .show(ctx, |ui| {
                     if let Some(tab) = self.state.current_tab_mut() {
-                        if let Mode::Reading(ref mut rs) = tab.mode {
+                        if tab.modes.active == ModeKind::Reading {
                             let total = doc.lock().page_count();
-                            mode_ui::render_sidebar(ui, &doc, rs, total);
+                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.reading, total);
                         }
                     }
                 });
@@ -195,17 +193,17 @@ impl FolixApp {
                 ui.menu_button("Mode", |ui| {
                     let modes = ["Reading", "Auto", "Annotate"];
                     let current_name = self.state.current_tab()
-                        .map(|t| t.mode.name().to_string())
+                        .map(|t| t.modes.active.name().to_string())
                         .unwrap_or_else(|| "Reading".to_string());
                     for mode_name in &modes {
                         let selected = current_name == *mode_name;
                         if ui.selectable_label(selected, *mode_name).clicked() {
                             if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                tab.mode = match *mode_name {
-                                    "Auto" => Mode::auto(),
-                                    "Annotate" => Mode::annotate(),
-                                    _ => Mode::reading(),
-                                };
+                                tab.modes.switch_to(match *mode_name {
+                                    "Auto" => ModeKind::Auto,
+                                    "Annotate" => ModeKind::Annotate,
+                                    _ => ModeKind::Reading,
+                                });
                             }
                             ui.close_menu();
                         }
@@ -214,27 +212,17 @@ impl FolixApp {
                     if current_name == "Reading" {
                         ui.separator();
                         let layout = self.state.current_tab()
-                            .and_then(|t| {
-                                if let Mode::Reading(ref rs) = t.mode {
-                                    Some(rs.reading_layout)
-                                } else {
-                                    None
-                                }
-                            });
+                            .map(|t| t.modes.reading.reading_layout);
                         if let Some(layout) = layout {
                             if ui.selectable_label(layout == ReadingLayout::Paged, "Paged").clicked() {
                                 if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                    if let Mode::Reading(ref mut rs) = tab.mode {
-                                        rs.reading_layout = ReadingLayout::Paged;
-                                    }
+                                    tab.modes.reading.reading_layout = ReadingLayout::Paged;
                                 }
                                 ui.close_menu();
                             }
                             if ui.selectable_label(layout == ReadingLayout::Scroll, "Scroll").clicked() {
                                 if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                    if let Mode::Reading(ref mut rs) = tab.mode {
-                                        rs.reading_layout = ReadingLayout::Scroll;
-                                    }
+                                    tab.modes.reading.reading_layout = ReadingLayout::Scroll;
                                 }
                                 ui.close_menu();
                             }
@@ -257,16 +245,14 @@ impl FolixApp {
             ui.horizontal(|ui| {
                 // Sidebar toggle — leftmost position
                 let has_doc = self.state.current_tab().map_or(false, |t| t.document.is_some());
-                let show_side = self.state.current_tab().and_then(|t| {
-                    if let Mode::Reading(ref rs) = t.mode { Some(rs.show_sidebar) } else { None }
-                }).unwrap_or(false);
+                let show_side = self.state.current_tab().map_or(false, |t| {
+                    t.modes.active == ModeKind::Reading && t.modes.reading.show_sidebar
+                });
                 let side_btn = if show_side { "📑 Sidebar" } else { "📑" };
                 if has_doc {
                     if ui.button(side_btn).clicked() {
                         if let Some(t) = self.state.current_tab_mut() {
-                            if let Mode::Reading(ref mut rs) = t.mode {
-                                rs.show_sidebar = !show_side;
-                            }
+                            t.modes.reading.show_sidebar = !show_side;
                         }
                     }
                     ui.separator();
@@ -344,7 +330,7 @@ impl FolixApp {
             return;
         }
 
-        let mode_name = self.state.tabs[idx].mode.name().to_string();
+        let mode_name = self.state.tabs[idx].modes.active.name().to_string();
         let pinned_names: Vec<String> = self.state.feature_system.pinned_features(&mode_name)
             .iter().map(|f| f.id.clone()).collect();
 
@@ -356,16 +342,16 @@ impl FolixApp {
 
         let document = self.state.tabs[idx].document.as_ref().unwrap().clone();
         let tab = &mut self.state.tabs[idx];
-        match &mut tab.mode {
-            Mode::Reading(ref mut rs) => {
-                mode_ui::render_reading(ui, &document, rs);
+        match tab.modes.active {
+            ModeKind::Reading => {
+                mode_ui::render_reading(ui, &document, &mut tab.modes.reading);
             }
-            Mode::Auto(ref mut aut) => {
+            ModeKind::Auto => {
                 let ctx = ui.ctx().clone();
-                mode_ui::render_auto(ui, &document, aut, ctx);
+                mode_ui::render_auto(ui, &document, &mut tab.modes.auto, ctx);
             }
-            Mode::Annotate(ref mut an) => {
-                mode_ui::render_annotate(ui, &document, an);
+            ModeKind::Annotate => {
+                mode_ui::render_annotate(ui, &document, &mut tab.modes.annotate);
             }
         }
     }
@@ -376,8 +362,8 @@ impl FolixApp {
             .unwrap_or(0);
 
         let reading_info = self.state.current_tab().and_then(|t| {
-            if let Mode::Reading(ref rs) = t.mode {
-                Some((rs.page, rs.scale, rs.reading_layout))
+            if t.modes.active == ModeKind::Reading {
+                Some((t.modes.reading.page, t.modes.reading.scale, t.modes.reading.reading_layout))
             } else {
                 None
             }
@@ -392,9 +378,7 @@ impl FolixApp {
                         let prev_enabled = page > 0;
                         if ui.add_enabled(prev_enabled, egui::Button::new("◀ Prev")).clicked() {
                             if let Some(t) = self.state.current_tab_mut() {
-                                if let Mode::Reading(ref mut r) = t.mode {
-                                    r.page -= 1;
-                                }
+                                t.modes.reading.page -= 1;
                             }
                         }
                     }
@@ -405,9 +389,7 @@ impl FolixApp {
                         let next_enabled = page + 1 < doc_count;
                         if ui.add_enabled(next_enabled, egui::Button::new("Next ▶")).clicked() {
                             if let Some(t) = self.state.current_tab_mut() {
-                                if let Mode::Reading(ref mut r) = t.mode {
-                                    r.page += 1;
-                                }
+                                t.modes.reading.page += 1;
                             }
                         }
                     }
@@ -418,9 +400,7 @@ impl FolixApp {
                     ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("x"));
                     if (new_scale - scale).abs() > 0.001 {
                         if let Some(t) = self.state.current_tab_mut() {
-                            if let Mode::Reading(ref mut r) = t.mode {
-                                r.scale = new_scale;
-                            }
+                            t.modes.reading.scale = new_scale;
                         }
                     }
 
@@ -428,14 +408,12 @@ impl FolixApp {
                     let layout_label = if is_paged { "Paged" } else { "Scroll" };
                     if ui.button(layout_label).clicked() {
                         if let Some(t) = self.state.current_tab_mut() {
-                            if let Mode::Reading(ref mut r) = t.mode {
-                                r.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
-                            }
+                            t.modes.reading.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
                         }
                     }
                 } else {
                     let name = self.state.current_tab()
-                        .map(|t| t.mode.name())
+                        .map(|t| t.modes.active.name())
                         .unwrap_or("N/A");
                     ui.label(format!("Mode: {}", name));
                 }
