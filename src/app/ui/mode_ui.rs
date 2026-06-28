@@ -244,7 +244,7 @@ fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>
         }
     }
 
-    let mut captured_vph = 0.0;
+    let captured_vph = ui.available_size().y;
 
     let mut sa = egui::ScrollArea::both()
         .id_salt(id)
@@ -253,8 +253,6 @@ fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>
         sa = sa.vertical_scroll_offset(off);
     }
     sa.show(ui, |ui| {
-            captured_vph = ui.clip_rect().height();
-
             let scroll_y = ui.ctx().data_mut(|d| {
                 d.get_persisted::<egui::scroll_area::State>(id)
                     .map(|s| s.offset.y)
