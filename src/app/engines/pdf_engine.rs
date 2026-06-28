@@ -20,16 +20,18 @@ fn flatten_outline(entries: &[mupdf::outline::Outline], depth: usize, out: &mut 
 
 pub struct PdfDocument {
     path: String,
-    pages: Vec<String>,
     doc_title: String,
-    page_sizes: Vec<(f32, f32)>,
+    page_count: usize,
+    toc: Vec<TocEntry>,
     render_cache: Mutex<HashMap<usize, (f32, RenderedPage)>>,
+    page_sizes_cache: Mutex<Option<Vec<(f32, f32)>>>,
+    text_cache: Mutex<HashMap<usize, String>>,
 }
 
 impl PdfDocument {
     pub fn open(path: &str) -> Option<Self> {
         let doc = MuDocument::open(path).ok()?;
-        let count = doc.page_count().ok()? as usize;
+        let page_count = doc.page_count().ok()? as usize;
 
         let doc_title = doc
             .metadata(MetadataName::Title)
@@ -43,28 +45,24 @@ impl PdfDocument {
             })
             .unwrap_or_else(|| "Untitled".to_string());
 
-        let mut pages = Vec::with_capacity(count);
-        let mut page_sizes = Vec::with_capacity(count);
-        for i in 0..count {
-            match doc.load_page(i as i32) {
-                Ok(page) => {
-                    pages.push(page.text(TextExtractOptions::default()).unwrap_or_default());
-                    let bounds = page.bounds().ok();
-                    page_sizes.push(bounds.map(|b| (b.width(), b.height())).unwrap_or((612.0, 792.0)));
-                }
-                Err(_) => {
-                    pages.push(String::new());
-                    page_sizes.push((612.0, 792.0));
-                }
-            }
-        }
+        let toc = doc
+            .outlines()
+            .ok()
+            .map(|outlines| {
+                let mut toc = Vec::new();
+                flatten_outline(&outlines, 0, &mut toc);
+                toc
+            })
+            .unwrap_or_default();
 
         Some(Self {
             path: path.to_string(),
-            pages,
             doc_title,
-            page_sizes,
+            page_count,
+            toc,
             render_cache: Mutex::new(HashMap::new()),
+            page_sizes_cache: Mutex::new(None),
+            text_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -74,18 +72,40 @@ impl PdfDocument {
 }
 
 impl Document for PdfDocument {
-    fn supports_image(&self) -> bool { true }
+    fn supports_image(&self) -> bool {
+        true
+    }
 
     fn page_count(&self) -> usize {
-        self.pages.len()
+        self.page_count
     }
 
     fn page_text(&self, page: usize) -> String {
-        if page < self.pages.len() {
-            self.pages[page].clone()
-        } else {
-            String::new()
+        {
+            let cache = self.text_cache.lock();
+            if let Some(text) = cache.get(&page) {
+                return text.clone();
+            }
         }
+
+        let text = match MuDocument::open(&self.path) {
+            Ok(doc) => match doc.load_page(page as i32) {
+                Ok(p) => p.text(TextExtractOptions::default()).unwrap_or_default(),
+                Err(_) => String::new(),
+            },
+            Err(_) => String::new(),
+        };
+
+        {
+            let mut cache = self.text_cache.lock();
+            cache.insert(page, text.clone());
+            if cache.len() > 5 {
+                let oldest = *cache.keys().min().unwrap();
+                cache.remove(&oldest);
+            }
+        }
+
+        text
     }
 
     fn title(&self) -> String {
@@ -97,17 +117,7 @@ impl Document for PdfDocument {
     }
 
     fn toc_entries(&self) -> Vec<TocEntry> {
-        let doc = match MuDocument::open(&self.path) {
-            Ok(d) => d,
-            Err(_) => return vec![],
-        };
-        let outlines = match doc.outlines() {
-            Ok(o) => o,
-            Err(_) => return vec![],
-        };
-        let mut toc = Vec::new();
-        flatten_outline(&outlines, 0, &mut toc);
-        toc
+        self.toc.clone()
     }
 
     fn render_page(&self, page: usize, scale: f32) -> Option<RenderedPage> {
@@ -147,7 +157,11 @@ impl Document for PdfDocument {
             }
         }
 
-        let rendered = RenderedPage { width: w, height: h, rgba };
+        let rendered = RenderedPage {
+            width: w,
+            height: h,
+            rgba,
+        };
         {
             let mut cache = self.render_cache.lock();
             cache.insert(page, (scale, rendered.clone()));
@@ -160,6 +174,42 @@ impl Document for PdfDocument {
     }
 
     fn page_size(&self, page: usize, scale: f32) -> Option<(f32, f32)> {
-        self.page_sizes.get(page).map(|&(w, h)| (w * scale, h * scale))
+        {
+            let cache = self.page_sizes_cache.lock();
+            if let Some(sizes) = cache.as_ref() {
+                return sizes.get(page).map(|&(w, h)| (w * scale, h * scale));
+            }
+        }
+
+        let sizes: Vec<(f32, f32)> = match MuDocument::open(&self.path) {
+            Ok(doc) => {
+                let count = self.page_count;
+                let mut sizes = Vec::with_capacity(count);
+                for i in 0..count {
+                    match doc.load_page(i as i32) {
+                        Ok(p) => {
+                            let bounds = p.bounds().ok();
+                            sizes.push(
+                                bounds
+                                    .map(|b| (b.width(), b.height()))
+                                    .unwrap_or((612.0, 792.0)),
+                            );
+                        }
+                        Err(_) => {
+                            sizes.push((612.0, 792.0));
+                        }
+                    }
+                }
+                sizes
+            }
+            Err(_) => return None,
+        };
+
+        {
+            let mut cache = self.page_sizes_cache.lock();
+            *cache = Some(sizes.clone());
+        }
+
+        sizes.get(page).map(|&(w, h)| (w * scale, h * scale))
     }
 }

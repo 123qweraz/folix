@@ -235,8 +235,12 @@ fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>
     }
 
     // Use previous frame's scroll position for visibility inside the closure.
-    // After show() we'll read back the authoritative offset from ScrollAreaOutput.
-    let prev_scroll_y = *out_scroll_y;
+    // When a mode transition sets initial_scroll, use that instead so the
+    // first frame shows the correct pages (no flicker).
+    let mut prev_scroll_y = *out_scroll_y;
+    if let Some(off) = initial_scroll {
+        prev_scroll_y = off;
+    }
     let approx_vph = ui.available_size().y;
 
     let mut sa = egui::ScrollArea::both()
