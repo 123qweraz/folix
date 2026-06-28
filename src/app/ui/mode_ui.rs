@@ -1,5 +1,5 @@
 use crate::app::engines::Document;
-use crate::app::core::mode_system::{ReadingState, ReadingLayout, ViewMode, Bookmark, AutoState, AnnotateState, AutoPlayMode, AnnotationTool};
+use crate::app::core::mode_system::{ReadingState, ReadingLayout, ViewMode, Bookmark, AutoState, AnnotateState};
 use std::sync::Arc;
 use parking_lot::Mutex;
 
@@ -203,7 +203,9 @@ fn render_page_image(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, pag
                 color_image,
                 egui::TextureOptions::default(),
             );
-            ui.image((texture.id(), egui::Vec2::new(p.width as f32, p.height as f32)));
+            ui.vertical_centered(|ui| {
+                ui.image((texture.id(), egui::Vec2::new(p.width as f32, p.height as f32)));
+            });
         }
         None => {
             ui.label("Image not available.");
@@ -292,27 +294,6 @@ fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>
 }
 
 pub fn render_auto(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, aut: &mut AutoState, ctx: egui::Context) {
-    ui.horizontal(|ui| {
-        let play_label = if aut.playing { "⏸ Pause" } else { "▶ Play" };
-        if ui.button(play_label).clicked() {
-            aut.playing = !aut.playing;
-        }
-        ui.separator();
-        ui.label("Speed:");
-        ui.add(egui::Slider::new(&mut aut.speed, 0.5..=5.0).text("x"));
-        ui.separator();
-        ui.label("Mode:");
-        egui::ComboBox::from_id_salt("auto_mode")
-            .selected_text(format!("{:?}", aut.auto_mode))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut aut.auto_mode, AutoPlayMode::PageFlow, "Page Flow");
-                ui.selectable_value(&mut aut.auto_mode, AutoPlayMode::GlyphReveal, "Glyph Reveal");
-                ui.selectable_value(&mut aut.auto_mode, AutoPlayMode::SentenceStream, "Sentence Stream");
-            });
-    });
-
-    ui.separator();
-
     let supports_image = document.lock().supports_image();
 
     if supports_image {
@@ -327,10 +308,6 @@ pub fn render_auto(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, 
         }
 
         let current_page = aut.progress as usize;
-        ui.horizontal(|ui| {
-            ui.label(format!("Page {}/{}", current_page + 1, document.lock().page_count()));
-        });
-
         let total = document.lock().page_count();
         let target_y = if total > 0 && current_page < total {
             let d = document.lock();
@@ -357,9 +334,6 @@ pub fn render_auto(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, 
             ctx.request_repaint();
         }
 
-        ui.horizontal(|ui| {
-            ui.label(format!("Progress: {:.1}%", aut.progress * 100.0));
-        });
         render_auto_text(ui, document, aut);
     }
 }
@@ -391,47 +365,9 @@ fn render_auto_text(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, aut:
 }
 
 pub fn render_annotate(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, an: &mut AnnotateState) {
-    ui.horizontal(|ui| {
-        ui.label("Tool:");
-        let tools = [
-            (AnnotationTool::Highlight, "🖊 Highlight"),
-            (AnnotationTool::Pen, "✏ Pen"),
-            (AnnotationTool::Note, "📝 Note"),
-            (AnnotationTool::Eraser, "🧹 Eraser"),
-            (AnnotationTool::Select, "👆 Select"),
-        ];
-        for (tool, label) in &tools {
-            let is_selected = std::mem::discriminant(&an.tool) == std::mem::discriminant(tool);
-            if ui.selectable_label(is_selected, *label).clicked() {
-                an.tool = tool.clone();
-            }
-        }
-        ui.separator();
-        if ui.button("Undo").clicked() {
-            an.annotations.pop();
-        }
-        if ui.button("Clear All").clicked() {
-            an.annotations.clear();
-        }
-    });
-
-    ui.separator();
-
     let supports_image = document.lock().supports_image();
 
     if supports_image {
-        ui.horizontal(|ui| {
-            if ui.button("◀ Prev").clicked() && an.page > 0 {
-                an.page -= 1;
-            }
-            ui.label(format!("Page {}/{}", an.page + 1, document.lock().page_count()));
-            if ui.button("Next ▶").clicked() {
-                if an.page + 1 < document.lock().page_count() {
-                    an.page += 1;
-                }
-            }
-        });
-        ui.separator();
         let total = document.lock().page_count();
         let mut annotate_page = an.page;
         let mut dummy_scroll = 0.0;

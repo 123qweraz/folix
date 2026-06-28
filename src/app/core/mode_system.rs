@@ -164,7 +164,10 @@ impl TabModes {
             ModeKind::Annotate => self.annotate.page as f32,
         };
         match target {
-            ModeKind::Reading => self.reading.page = pos as usize,
+            ModeKind::Reading => {
+                self.reading.page = pos as usize;
+                self.reading.scroll_offset_y = 0.0;
+            }
             ModeKind::Auto => self.auto.progress = pos,
             ModeKind::Annotate => self.annotate.page = pos as usize,
         }

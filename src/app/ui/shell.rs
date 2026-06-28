@@ -1,5 +1,5 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
-use crate::app::core::mode_system::ViewMode;
+use crate::app::core::mode_system::{ViewMode, AnnotationTool, AutoPlayMode};
 use crate::app::platform::font_loader::FontLoader;
 use super::mode_ui;
 
@@ -357,65 +357,127 @@ impl FolixApp {
     }
 
     fn render_status_bar(&mut self, ctx: &egui::Context) {
-        let doc_count = self.state.current_tab()
-            .and_then(|t| t.document.as_ref().map(|d| d.lock().page_count()))
-            .unwrap_or(0);
-
-        let reading_info = self.state.current_tab().and_then(|t| {
-            if t.modes.active == ModeKind::Reading {
-                Some((t.modes.reading.page, t.modes.reading.scale, t.modes.reading.reading_layout))
-            } else {
-                None
-            }
-        });
-
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if let Some((page, scale, layout)) = reading_info {
-                    let is_paged = layout == ReadingLayout::Paged;
+                let tab = self.state.current_tab_mut();
+                if tab.is_none() { return; }
+                let tab = tab.unwrap();
 
-                    if is_paged && doc_count > 0 {
-                        let prev_enabled = page > 0;
-                        if ui.add_enabled(prev_enabled, egui::Button::new("◀ Prev")).clicked() {
-                            if let Some(t) = self.state.current_tab_mut() {
-                                t.modes.reading.page -= 1;
+                let doc_count = tab.document.as_ref()
+                    .map(|d| d.lock().page_count())
+                    .unwrap_or(0);
+
+                // Mode tabs — always visible
+                let mode_names = [ModeKind::Reading, ModeKind::Auto, ModeKind::Annotate];
+                for &mk in &mode_names {
+                    let selected = tab.modes.active == mk;
+                    if ui.selectable_label(selected, mk.name()).clicked() {
+                        tab.modes.switch_to(mk);
+                    }
+                }
+                ui.separator();
+
+                // Mode-specific controls
+                match tab.modes.active {
+                    ModeKind::Reading => {
+                        let is_paged = tab.modes.reading.reading_layout == ReadingLayout::Paged;
+                        if doc_count > 0 {
+                            if is_paged {
+                                if ui.add_enabled(tab.modes.reading.page > 0, egui::Button::new("◀ Prev")).clicked() {
+                                    tab.modes.reading.page -= 1;
+                                }
+                                if ui.add_enabled(tab.modes.reading.page + 1 < doc_count, egui::Button::new("Next ▶")).clicked() {
+                                    tab.modes.reading.page += 1;
+                                }
+                                ui.separator();
+                            }
+                            ui.label("Zoom:");
+                            let mut new_scale = tab.modes.reading.scale;
+                            ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("x"));
+                            if (new_scale - tab.modes.reading.scale).abs() > 0.001 {
+                                tab.modes.reading.scale = new_scale;
+                            }
+                            ui.separator();
+                            let layout_label = if is_paged { "Paged" } else { "Scroll" };
+                            if ui.button(layout_label).clicked() {
+                                tab.modes.reading.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
                             }
                         }
                     }
+                    ModeKind::Auto => {
+                        if doc_count > 0 {
+                            let play_label = if tab.modes.auto.playing { "⏸" } else { "▶" };
+                            if ui.button(play_label).clicked() {
+                                tab.modes.auto.playing = !tab.modes.auto.playing;
+                            }
+                            ui.label("Speed:");
+                            ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
+                            ui.separator();
+                            ui.label("Mode:");
+                            egui::ComboBox::from_id_salt("auto_mode")
+                                .selected_text(format!("{:?}", tab.modes.auto.auto_mode))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::PageFlow, "Page Flow");
+                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::GlyphReveal, "Glyph Reveal");
+                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::SentenceStream, "Sentence Stream");
+                                });
+                        }
+                    }
+                    ModeKind::Annotate => {
+                        if doc_count > 0 {
+                            let tools = [
+                                (AnnotationTool::Highlight, "🖊  High"),
+                                (AnnotationTool::Pen, "✏  Pen"),
+                                (AnnotationTool::Note, "📝  Note"),
+                                (AnnotationTool::Eraser, "🧹  Eraser"),
+                                (AnnotationTool::Select, "👆  Select"),
+                            ];
+                            for (tool, label) in &tools {
+                                let is_selected = std::mem::discriminant(&tab.modes.annotate.tool) == std::mem::discriminant(tool);
+                                if ui.selectable_label(is_selected, *label).clicked() {
+                                    tab.modes.annotate.tool = tool.clone();
+                                }
+                            }
+                            ui.separator();
+                            if ui.button("Undo").clicked() {
+                                tab.modes.annotate.annotations.pop();
+                            }
+                            if ui.button("Clr").clicked() {
+                                tab.modes.annotate.annotations.clear();
+                            }
 
-                    ui.label(format!("Page {}/{}", page + 1, doc_count));
-
-                    if is_paged && doc_count > 0 {
-                        let next_enabled = page + 1 < doc_count;
-                        if ui.add_enabled(next_enabled, egui::Button::new("Next ▶")).clicked() {
-                            if let Some(t) = self.state.current_tab_mut() {
-                                t.modes.reading.page += 1;
+                            let supports_image = tab.document.as_ref()
+                                .map(|d| d.lock().supports_image())
+                                .unwrap_or(false);
+                            if supports_image {
+                                ui.separator();
+                                if ui.add_enabled(tab.modes.annotate.page > 0, egui::Button::new("◀")).clicked() {
+                                    tab.modes.annotate.page -= 1;
+                                }
+                                if ui.add_enabled(tab.modes.annotate.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
+                                    tab.modes.annotate.page += 1;
+                                }
                             }
                         }
                     }
+                }
 
-                    ui.separator();
-                    ui.label("Zoom:");
-                    let mut new_scale = scale;
-                    ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("x"));
-                    if (new_scale - scale).abs() > 0.001 {
-                        if let Some(t) = self.state.current_tab_mut() {
-                            t.modes.reading.scale = new_scale;
+                // Page number on the right
+                if doc_count > 0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        match tab.modes.active {
+                            ModeKind::Reading => {
+                                ui.label(format!("Page {}/{}", tab.modes.reading.page + 1, doc_count));
+                            }
+                            ModeKind::Auto => {
+                                let cp = tab.modes.auto.progress as usize;
+                                ui.label(format!("Page {}/{}", cp + 1, doc_count));
+                            }
+                            ModeKind::Annotate => {
+                                ui.label(format!("Page {}/{}", tab.modes.annotate.page + 1, doc_count));
+                            }
                         }
-                    }
-
-                    ui.separator();
-                    let layout_label = if is_paged { "Paged" } else { "Scroll" };
-                    if ui.button(layout_label).clicked() {
-                        if let Some(t) = self.state.current_tab_mut() {
-                            t.modes.reading.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
-                        }
-                    }
-                } else {
-                    let name = self.state.current_tab()
-                        .map(|t| t.modes.active.name())
-                        .unwrap_or("N/A");
-                    ui.label(format!("Mode: {}", name));
+                    });
                 }
             });
         });
