@@ -234,6 +234,11 @@ fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>
         }
     }
 
+    // Use previous frame's scroll position for visibility inside the closure.
+    // After show() we'll read back the authoritative offset from ScrollAreaOutput.
+    let prev_scroll_y = *out_scroll_y;
+    let approx_vph = ui.available_size().y;
+
     let mut sa = egui::ScrollArea::both()
         .id_salt(id)
         .auto_shrink([false; 2]);
@@ -242,11 +247,17 @@ fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>
     }
 
     // show() returns ScrollAreaOutput with authoritative state.
-    // Inside the closure we render every page; egui clips off-screen content automatically,
-    // and PdfDocument's render cache (max 5) keeps memory in check.
     let output = sa.show(ui, |ui| {
-        for i in 0..total {
-            render_page_image(ui, doc, i, scale);
+        let approx_bottom = prev_scroll_y + approx_vph;
+
+        for (i, &(_pw, ph, py)) in layouts.iter().enumerate() {
+            // Fast visibility check using previous frame's scroll position.
+            // Slightly stale is fine — one frame lag is invisible to the user.
+            if py + ph >= prev_scroll_y && py <= approx_bottom {
+                render_page_image(ui, doc, i, scale);
+            } else {
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), ph), egui::Sense::hover());
+            }
             if i + 1 < total {
                 ui.add_space(spacing);
             }
