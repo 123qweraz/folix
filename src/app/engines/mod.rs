@@ -1,6 +1,7 @@
 pub mod pdf_engine;
 pub mod reflow_engine;
 
+#[derive(Clone)]
 pub struct RenderedPage {
     pub width: u32,
     pub height: u32,
@@ -21,6 +22,11 @@ pub trait Document: Send + Sync {
 
     /// Render a page as RGBA image. Returns None if not supported (e.g. EPUB/TXT).
     fn render_page(&self, page: usize, scale: f32) -> Option<RenderedPage>;
+
+    /// Page dimensions at given scale. Returns None if unknown.
+    fn page_size(&self, page: usize, scale: f32) -> Option<(f32, f32)> {
+        self.render_page(page, scale).map(|p| (p.width as f32, p.height as f32))
+    }
 
     /// Whether this document type supports image rendering (i.e. PDF).
     fn supports_image(&self) -> bool { false }

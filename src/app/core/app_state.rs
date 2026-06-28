@@ -31,6 +31,7 @@ pub struct AppState {
     pub tabs: Vec<OpenTab>,
     pub active_tab: usize,
     pub feature_system: FeatureSystem,
+    pub ui_visible: bool,
 }
 
 impl AppState {
@@ -39,6 +40,7 @@ impl AppState {
             tabs: Vec::new(),
             active_tab: 0,
             feature_system: FeatureSystem::new(),
+            ui_visible: false,
         };
         state.add_new_tab();
         state

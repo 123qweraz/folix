@@ -4,6 +4,12 @@ pub enum ViewMode {
     Image,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ReadingLayout {
+    Paged,
+    Scroll,
+}
+
 #[derive(Clone)]
 pub struct SearchState {
     pub query: String,
@@ -24,12 +30,22 @@ impl SearchState {
 }
 
 #[derive(Clone)]
+pub struct Bookmark {
+    pub page: usize,
+    pub label: String,
+}
+
+#[derive(Clone)]
 pub struct ReadingState {
     pub page: usize,
     pub scale: f32,
     pub view_mode: ViewMode,
-    pub show_toc: bool,
+    pub reading_layout: ReadingLayout,
+    pub show_sidebar: bool,
     pub search: SearchState,
+    pub bookmarks: Vec<Bookmark>,
+    pub scroll_offset_y: f32,
+    pub total_height: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -87,8 +103,12 @@ impl Mode {
             page: 0,
             scale: 1.0,
             view_mode: ViewMode::Text,
-            show_toc: false,
+            reading_layout: ReadingLayout::Scroll,
+            show_sidebar: false,
             search: SearchState::new(),
+            bookmarks: vec![],
+            scroll_offset_y: 0.0,
+            total_height: 0.0,
         })
     }
 

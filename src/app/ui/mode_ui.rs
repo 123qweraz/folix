@@ -1,5 +1,5 @@
-use crate::app::engines::{Document, TocEntry};
-use crate::app::core::mode_system::{ReadingState, ViewMode, AutoState, AnnotateState, AutoPlayMode, AnnotationTool};
+use crate::app::engines::Document;
+use crate::app::core::mode_system::{ReadingState, ReadingLayout, ViewMode, Bookmark, AutoState, AnnotateState, AutoPlayMode, AnnotationTool};
 use std::sync::Arc;
 use parking_lot::Mutex;
 
@@ -9,164 +9,161 @@ pub fn render_reading(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
         rs.view_mode = ViewMode::Text;
     }
 
-    // Ctrl+F toggle search
+    // Ctrl+F opens sidebar and focuses search
     if ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::F)) {
-        rs.search.show_search = !rs.search.show_search;
-        if !rs.search.show_search {
-            rs.search.query.clear();
-            rs.search.matches.clear();
-            rs.search.current_match = 0;
+        rs.show_sidebar = true;
+        rs.search.show_search = true;
+    }
+
+    match rs.reading_layout {
+        ReadingLayout::Paged => {
+            if rs.view_mode == ViewMode::Image && supports_image {
+                render_paged_image(ui, document, rs);
+            } else {
+                render_text_continuous(ui, document, rs);
+            }
+        }
+        ReadingLayout::Scroll => {
+            if rs.view_mode == ViewMode::Image && supports_image {
+                let total = document.lock().page_count();
+
+                // If Paged→Scroll transition (or external jump via ToC/bookmark),
+                // compute scroll offset from current page.
+                let initial_scroll = if total > 0 && rs.scroll_offset_y == 0.0 && rs.page > 0 {
+                    let limit = rs.page.min(total - 1);
+                    let mut y = 0.0;
+                    let d = document.lock();
+                    for i in 0..limit {
+                        let (_, h) = d.page_size(i, rs.scale).unwrap_or((800.0, 1000.0));
+                        y += h + 12.0;
+                    }
+                    Some(y)
+                } else {
+                    None
+                };
+
+                render_continuous_images(ui, document, &mut rs.page, rs.scale, total, initial_scroll);
+
+                // Save scroll offset after user interaction
+                if total > 0 {
+                    let id = ui.make_persistent_id("pdf_scroll");
+                    rs.scroll_offset_y = ui.ctx().data_mut(|d| {
+                        d.get_persisted::<egui::scroll_area::State>(id)
+                            .map(|s| s.offset.y)
+                            .unwrap_or(0.0)
+                    });
+                }
+            } else {
+                render_text_continuous(ui, document, rs);
+            }
         }
     }
+}
 
-    if supports_image {
-        ui.horizontal(|ui| {
-            if ui.button("◀ Prev").clicked() && rs.page > 0 {
-                rs.page -= 1;
-            }
-            ui.label(format!("Page {}/{}", rs.page + 1, document.lock().page_count()));
-            if ui.button("Next ▶").clicked() {
-                if rs.page + 1 < document.lock().page_count() {
-                    rs.page += 1;
-                }
-            }
-            ui.separator();
-            ui.label("Zoom:");
-            ui.add(egui::Slider::new(&mut rs.scale, 0.5..=3.0).text("x"));
-            ui.separator();
-            if ui.selectable_label(rs.view_mode == ViewMode::Text, "Text").clicked() {
-                rs.view_mode = ViewMode::Text;
-            }
-            if ui.selectable_label(rs.view_mode == ViewMode::Image, "Image").clicked() {
-                rs.view_mode = ViewMode::Image;
-            }
-            ui.separator();
-            if ui.toggle_value(&mut rs.show_toc, "📖 ToC").clicked() {
-            }
-            if ui.toggle_value(&mut rs.search.show_search, "🔍 Search").clicked() {
-                if !rs.search.show_search {
-                    rs.search.query.clear();
-                    rs.search.matches.clear();
-                    rs.search.current_match = 0;
-                }
-            }
-        });
-    } else {
-        ui.horizontal(|ui| {
-            ui.label("📖 Continuous");
-            ui.separator();
-            if ui.toggle_value(&mut rs.show_toc, "📖 ToC").clicked() {
-            }
-            if ui.toggle_value(&mut rs.search.show_search, "🔍 Search").clicked() {
-                if !rs.search.show_search {
-                    rs.search.query.clear();
-                    rs.search.matches.clear();
-                    rs.search.current_match = 0;
-                }
-            }
-        });
-    }
-
+pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, rs: &mut ReadingState, total: usize) {
+    ui.heading("Sidebar");
     ui.separator();
 
-    if rs.show_toc {
-        let toc = document.lock().toc_entries();
-        render_toc_panel(ui, &toc, supports_image, Some(rs));
-    }
-
-    // Search bar
-    if rs.search.show_search {
-        let full_text = document.lock().page_text(0);
-        render_search_bar(ui, rs, &full_text);
-        ui.separator();
-    }
-
-    match rs.view_mode {
-        ViewMode::Image if supports_image => render_reading_image(ui, document, rs),
-        _ => render_text_continuous(ui, document, rs),
-    }
-}
-
-fn render_search_bar(ui: &mut egui::Ui, rs: &mut ReadingState, full_text: &str) {
-    ui.horizontal(|ui| {
-        let prev_query = rs.search.query.clone();
-        ui.add(egui::TextEdit::singleline(&mut rs.search.query)
-            .hint_text("Search...")
-            .desired_width(200.0));
-
-        // Re-run search when query changes
-        if rs.search.query != prev_query {
-            rs.search.matches.clear();
-            rs.search.current_match = 0;
-            if !rs.search.query.is_empty() {
-                let lower_query = rs.search.query.to_lowercase();
-                let mut search_start = 0;
-                while let Some(pos) = full_text[search_start..].to_lowercase().find(&lower_query) {
-                    let byte_offset = search_start + pos;
-                    let char_offset = full_text[..byte_offset].chars().count();
-                    rs.search.matches.push(char_offset);
-                    // Advance past the match, handling multi-byte UTF-8
-                    if let Some(c) = full_text[byte_offset..].chars().next() {
-                        search_start = byte_offset + c.len_utf8();
-                    } else {
-                        break;
-                    }
-                    if search_start >= full_text.len() { break; }
-                }
-            }
-        }
-
-        let total = rs.search.matches.len();
-        let current = rs.search.current_match;
-        if total > 0 {
-            ui.label(format!("{}/{}", current + 1, total));
-        } else if !rs.search.query.is_empty() {
-            ui.label("0 matches");
-        }
-
-        let prev_enabled = total > 0;
-        if ui.add_enabled(prev_enabled, egui::Button::new("▲")).clicked() {
-            rs.search.current_match = if current == 0 { total - 1 } else { current - 1 };
-        }
-        if ui.add_enabled(prev_enabled, egui::Button::new("▼")).clicked() {
-            rs.search.current_match = if current + 1 >= total { 0 } else { current + 1 };
-        }
-        if ui.button("✕").clicked() {
-            rs.search.show_search = false;
-            rs.search.query.clear();
-            rs.search.matches.clear();
-            rs.search.current_match = 0;
-        }
-    });
-}
-
-fn render_toc_panel(ui: &mut egui::Ui, toc: &[TocEntry], is_pdf: bool, mut rs: Option<&mut ReadingState>) {
-    egui::CollapsingHeader::new("Table of Contents")
+    // Table of Contents
+    egui::CollapsingHeader::new("📖 Table of Contents")
         .default_open(true)
         .show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(300.0)
-                .show(ui, |ui| {
-                    for entry in toc {
-                        let label = if is_pdf {
-                            format!("{} (p.{})", entry.label, entry.page_index + 1)
-                        } else {
-                            entry.label.clone()
-                        };
-                        if is_pdf {
-                            let is_selected = rs.as_ref().map_or(false, |r| r.page == entry.page_index);
-                            if ui.selectable_label(is_selected, &label).clicked() {
-                                if let Some(ref mut r) = rs {
-                                    r.page = entry.page_index;
-                                }
+            let toc = document.lock().toc_entries();
+            if toc.is_empty() {
+                ui.label("No table of contents");
+            } else {
+                egui::ScrollArea::vertical()
+                    .max_height(f32::INFINITY)
+                    .show(ui, |ui| {
+                        for entry in &toc {
+                            let selected = rs.page == entry.page_index;
+                            if ui.selectable_label(selected, &entry.label).clicked() {
+                                let target = entry.page_index.min(total.saturating_sub(1));
+                                rs.page = target;
+                                // Reset scroll offset so continuous rendering jumps to this page
+                                rs.scroll_offset_y = 0.0;
                             }
-                        } else {
-                            ui.label(&label);
                         }
+                    });
+            }
+        });
+
+    ui.separator();
+
+    // Search
+    egui::CollapsingHeader::new("🔍 Search")
+        .default_open(true)
+        .show(ui, |ui| {
+            let full_text = document.lock().page_text(0);
+            let prev_query = rs.search.query.clone();
+            ui.add(egui::TextEdit::singleline(&mut rs.search.query)
+                .hint_text("Search text...")
+                .desired_width(f32::INFINITY));
+
+            if rs.search.query != prev_query {
+                rs.search.matches.clear();
+                rs.search.current_match = 0;
+                if !rs.search.query.is_empty() {
+                    let lower_query = rs.search.query.to_lowercase();
+                    let mut search_start = 0;
+                    while let Some(pos) = full_text[search_start..].to_lowercase().find(&lower_query) {
+                        let byte_offset = search_start + pos;
+                        let char_offset = full_text[..byte_offset].chars().count();
+                        rs.search.matches.push(char_offset);
+                        if let Some(c) = full_text[byte_offset..].chars().next() {
+                            search_start = byte_offset + c.len_utf8();
+                        } else {
+                            break;
+                        }
+                        if search_start >= full_text.len() { break; }
+                    }
+                }
+            }
+
+            let total_matches = rs.search.matches.len();
+            let current = rs.search.current_match;
+            ui.horizontal(|ui| {
+                if total_matches > 0 {
+                    ui.label(format!("{}/{}", current + 1, total_matches));
+                } else if !rs.search.query.is_empty() {
+                    ui.label("0 matches");
+                }
+                let enabled = total_matches > 0;
+                if ui.add_enabled(enabled, egui::Button::new("▲")).clicked() {
+                    rs.search.current_match = if current == 0 { total_matches - 1 } else { current - 1 };
+                }
+                if ui.add_enabled(enabled, egui::Button::new("▼")).clicked() {
+                    rs.search.current_match = if current + 1 >= total_matches { 0 } else { current + 1 };
+                }
+            });
+        });
+
+    ui.separator();
+
+    // Bookmarks
+    egui::CollapsingHeader::new("🔖 Bookmarks")
+        .default_open(true)
+        .show(ui, |ui| {
+            let mut remove_idx: Option<usize> = None;
+            for (idx, bm) in rs.bookmarks.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(false, format!("{} (p.{})", bm.label, bm.page + 1)).clicked() {
+                        rs.page = bm.page;
+                    }
+                    if ui.button("×").clicked() {
+                        remove_idx = Some(idx);
                     }
                 });
+            }
+            if let Some(idx) = remove_idx {
+                rs.bookmarks.remove(idx);
+            }
+
+            if ui.button("+ Add Bookmark").clicked() {
+                let label = format!("Page {}", rs.page + 1);
+                rs.bookmarks.push(Bookmark { page: rs.page, label });
+            }
         });
-    ui.separator();
 }
 
 fn render_text_continuous(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, rs: &mut ReadingState) {
@@ -212,7 +209,7 @@ fn render_page_image(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, pag
                 &p.rgba,
             );
             let texture = ui.ctx().load_texture(
-                "doc_page",
+                format!("doc_page_{}", page),
                 color_image,
                 egui::TextureOptions::default(),
             );
@@ -224,52 +221,83 @@ fn render_page_image(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, pag
     }
 }
 
-fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, page: &mut usize, scale: f32, total: usize) {
-    use egui::scroll_area::State as ScrollState;
-    let window = 3;
-    let p = *page;
-    let start = p.saturating_sub(window);
-    let end = std::cmp::min(total, p + window + 1);
-    let id = ui.make_persistent_id("pdf_scroll");
+fn render_paged_image(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, rs: &mut ReadingState) {
+    render_page_image(ui, doc, rs.page, rs.scale);
+}
 
-    egui::ScrollArea::both()
+fn render_continuous_images(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, page: &mut usize, scale: f32, total: usize, initial_scroll: Option<f32>) {
+    let id = ui.make_persistent_id("pdf_scroll");
+    let spacing = 12.0;
+
+    if total == 0 { return; }
+    *page = (*page).min(total - 1);
+
+    // Build page layout: (width, height, y_offset) for every page
+    let mut layouts: Vec<(f32, f32, f32)> = Vec::with_capacity(total);
+    {
+        let d = doc.lock();
+        let mut y = 0.0;
+        for i in 0..total {
+            let (w, h) = d.page_size(i, scale).unwrap_or((800.0, 1000.0));
+            layouts.push((w, h, y));
+            y += h + spacing;
+        }
+    }
+
+    let mut captured_vph = 0.0;
+
+    let mut sa = egui::ScrollArea::both()
         .id_salt(id)
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            ui.vertical(|ui| {
-                for i in start..end {
-                    render_page_image(ui, doc, i, scale);
-                    if i + 1 < end {
-                        ui.add_space(12.0);
-                    }
-                }
+        .auto_shrink([false; 2]);
+    if let Some(off) = initial_scroll {
+        sa = sa.vertical_scroll_offset(off);
+    }
+    sa.show(ui, |ui| {
+            captured_vph = ui.clip_rect().height();
+
+            let scroll_y = ui.ctx().data_mut(|d| {
+                d.get_persisted::<egui::scroll_area::State>(id)
+                    .map(|s| s.offset.y)
+                    .unwrap_or(0.0)
             });
+            let viewport_bottom = scroll_y + captured_vph;
+
+            for (i, &(_pw, ph, _py)) in layouts.iter().enumerate() {
+                let cursor_y = ui.cursor().top();
+                let visible = cursor_y + ph >= scroll_y && cursor_y <= viewport_bottom;
+                if visible {
+                    render_page_image(ui, doc, i, scale);
+                } else {
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ph), egui::Sense::hover());
+                }
+                if i + 1 < total {
+                    ui.add_space(spacing);
+                }
+            }
         });
 
-    // Read scroll offset and update page number when user scrolls
+    // Determine current page by largest visible ratio
     let scroll_y = ui.ctx().data_mut(|d| {
-        d.get_persisted::<ScrollState>(id)
+        d.get_persisted::<egui::scroll_area::State>(id)
             .map(|s| s.offset.y)
             .unwrap_or(0.0)
     });
+    let viewport_bottom = scroll_y + captured_vph;
 
-    if scroll_y.abs() > 20.0 {
-        // Estimate page height: use first page's height as heuristic
-        let page_h = doc.lock().render_page(0, scale)
-            .map(|p| p.height as f32)
-            .unwrap_or(1000.0);
-        let spacing = 12.0;
-        let pages_shift = (scroll_y / (page_h + spacing)).round() as isize;
-        if pages_shift != 0 {
-            *page = (*page as isize + pages_shift)
-                .max(0).min(total as isize - 1) as usize;
+    let mut best_page = *page;
+    let mut best_ratio = 0.0;
+    for (i, &(_pw, ph, py)) in layouts.iter().enumerate() {
+        let visible_top = py.max(scroll_y);
+        let visible_bottom = (py + ph).min(viewport_bottom);
+        if visible_top < visible_bottom {
+            let ratio = (visible_bottom - visible_top) / ph;
+            if ratio > best_ratio {
+                best_ratio = ratio;
+                best_page = i;
+            }
         }
     }
-}
-
-fn render_reading_image(ui: &mut egui::Ui, doc: &Arc<Mutex<Box<dyn Document>>>, rs: &mut ReadingState) {
-    let total = doc.lock().page_count();
-    render_continuous_images(ui, doc, &mut rs.page, rs.scale, total);
+    *page = best_page;
 }
 
 pub fn render_auto(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, aut: &mut AutoState, ctx: egui::Context) {
@@ -313,7 +341,7 @@ pub fn render_auto(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, 
         });
         let total = document.lock().page_count();
         let mut auto_page = current_page;
-        render_continuous_images(ui, document, &mut auto_page, 1.0, total);
+        render_continuous_images(ui, document, &mut auto_page, 1.0, total, None);
     } else {
         if aut.playing {
             let dt = ui.input(|i| i.unstable_dt);
@@ -401,7 +429,7 @@ pub fn render_annotate(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>
         ui.separator();
         let total = document.lock().page_count();
         let mut annotate_page = an.page;
-        render_continuous_images(ui, document, &mut annotate_page, 1.0, total);
+        render_continuous_images(ui, document, &mut annotate_page, 1.0, total, None);
     } else {
         let text = document.lock().page_text(0);
         egui::ScrollArea::vertical()

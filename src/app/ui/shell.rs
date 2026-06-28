@@ -1,4 +1,4 @@
-use crate::app::core::{AppState, Mode, document_manager::DocumentManager};
+use crate::app::core::{AppState, Mode, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::mode_system::ViewMode;
 use crate::app::platform::font_loader::FontLoader;
 use super::mode_ui;
@@ -123,15 +123,49 @@ impl eframe::App for FolixApp {
             self.open_file(path);
         }
 
-        self.render_menu_bar(ctx);
-        self.render_toolbar(ctx);
+        // Tab toggles UI visibility
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
+            self.state.ui_visible = !self.state.ui_visible;
+        }
+
+        if self.state.ui_visible {
+            self.render_menu_bar(ctx);
+        }
         self.render_tab_bar(ctx);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        // Sidebar (Reading mode only)
+        let sidebar = self.state.current_tab().map_or(false, |t| {
+            t.document.is_some() && matches!(t.mode, Mode::Reading(ref rs) if rs.show_sidebar)
+        });
+        if sidebar {
+            let doc = self.state.current_tab()
+                .and_then(|t| t.document.clone())
+                .unwrap();
+            egui::SidePanel::left("reading_sidebar")
+                .resizable(true)
+                .default_width(260.0)
+                .show(ctx, |ui| {
+                    if let Some(tab) = self.state.current_tab_mut() {
+                        if let Mode::Reading(ref mut rs) = tab.mode {
+                            let total = doc.lock().page_count();
+                            mode_ui::render_sidebar(ui, &doc, rs, total);
+                        }
+                    }
+                });
+        }
+
+        let panel_resp = egui::CentralPanel::default().show(ctx, |ui| {
             self.render_document_view(ui);
         });
 
-        self.render_status_bar(ctx);
+        // Left-click on the document panel toggles UI visibility
+        if panel_resp.response.clicked() {
+            self.state.ui_visible = !self.state.ui_visible;
+        }
+
+        if self.state.ui_visible {
+            self.render_status_bar(ctx);
+        }
         self.handle_open_dialog(ctx);
         self.render_about(ctx);
     }
@@ -149,7 +183,6 @@ impl FolixApp {
                     if ui.button("Close").clicked() {
                         if !self.state.tabs.is_empty() {
                             self.state.close_tab(self.state.active_tab);
-                            self.status_message = "Closed document".to_string();
                         }
                         ui.close_menu();
                     }
@@ -177,6 +210,36 @@ impl FolixApp {
                             ui.close_menu();
                         }
                     }
+
+                    if current_name == "Reading" {
+                        ui.separator();
+                        let layout = self.state.current_tab()
+                            .and_then(|t| {
+                                if let Mode::Reading(ref rs) = t.mode {
+                                    Some(rs.reading_layout)
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(layout) = layout {
+                            if ui.selectable_label(layout == ReadingLayout::Paged, "Paged").clicked() {
+                                if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
+                                    if let Mode::Reading(ref mut rs) = tab.mode {
+                                        rs.reading_layout = ReadingLayout::Paged;
+                                    }
+                                }
+                                ui.close_menu();
+                            }
+                            if ui.selectable_label(layout == ReadingLayout::Scroll, "Scroll").clicked() {
+                                if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
+                                    if let Mode::Reading(ref mut rs) = tab.mode {
+                                        rs.reading_layout = ReadingLayout::Scroll;
+                                    }
+                                }
+                                ui.close_menu();
+                            }
+                        }
+                    }
                 });
 
                 ui.menu_button("Help", |ui| {
@@ -189,32 +252,26 @@ impl FolixApp {
         });
     }
 
-    fn render_toolbar(&mut self, ctx: &egui::Context) {
-        let current_name = self.state.current_tab()
-            .map(|t| t.mode.name().to_string())
-            .unwrap_or_else(|| "Reading".to_string());
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Mode:");
-                for name in ["Reading", "Auto", "Annotate"] {
-                    let selected = current_name == name;
-                    if ui.selectable_label(selected, name).clicked() && !selected {
-                        if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                            tab.mode = match name {
-                                "Auto" => Mode::auto(),
-                                "Annotate" => Mode::annotate(),
-                                _ => Mode::reading(),
-                            };
-                        }
-                    }
-                }
-            });
-        });
-    }
-
     fn render_tab_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                // Sidebar toggle — leftmost position
+                let has_doc = self.state.current_tab().map_or(false, |t| t.document.is_some());
+                let show_side = self.state.current_tab().and_then(|t| {
+                    if let Mode::Reading(ref rs) = t.mode { Some(rs.show_sidebar) } else { None }
+                }).unwrap_or(false);
+                let side_btn = if show_side { "📑 Sidebar" } else { "📑" };
+                if has_doc {
+                    if ui.button(side_btn).clicked() {
+                        if let Some(t) = self.state.current_tab_mut() {
+                            if let Mode::Reading(ref mut rs) = t.mode {
+                                rs.show_sidebar = !show_side;
+                            }
+                        }
+                    }
+                    ui.separator();
+                }
+
                 // "+" button to create a new tab page
                 if ui.button(" + ").clicked() {
                     self.state.add_new_tab();
@@ -314,28 +371,74 @@ impl FolixApp {
     }
 
     fn render_status_bar(&mut self, ctx: &egui::Context) {
+        let doc_count = self.state.current_tab()
+            .and_then(|t| t.document.as_ref().map(|d| d.lock().page_count()))
+            .unwrap_or(0);
+
+        let reading_info = self.state.current_tab().and_then(|t| {
+            if let Mode::Reading(ref rs) = t.mode {
+                Some((rs.page, rs.scale, rs.reading_layout))
+            } else {
+                None
+            }
+        });
+
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let tab = self.state.current_tab();
-                let mode_name = tab.map(|t| t.mode.name()).unwrap_or("N/A");
-                ui.label(format!("Mode: {}", mode_name));
-                ui.separator();
-                if let Some(tab) = tab {
-                    if let Some(path) = &tab.path {
-                        let name = std::path::Path::new(path)
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("");
-                        ui.label(format!("Document: {}", name));
-                    } else {
-                        ui.label("New Tab");
+                if let Some((page, scale, layout)) = reading_info {
+                    let is_paged = layout == ReadingLayout::Paged;
+
+                    if is_paged && doc_count > 0 {
+                        let prev_enabled = page > 0;
+                        if ui.add_enabled(prev_enabled, egui::Button::new("◀ Prev")).clicked() {
+                            if let Some(t) = self.state.current_tab_mut() {
+                                if let Mode::Reading(ref mut r) = t.mode {
+                                    r.page -= 1;
+                                }
+                            }
+                        }
+                    }
+
+                    ui.label(format!("Page {}/{}", page + 1, doc_count));
+
+                    if is_paged && doc_count > 0 {
+                        let next_enabled = page + 1 < doc_count;
+                        if ui.add_enabled(next_enabled, egui::Button::new("Next ▶")).clicked() {
+                            if let Some(t) = self.state.current_tab_mut() {
+                                if let Mode::Reading(ref mut r) = t.mode {
+                                    r.page += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    ui.separator();
+                    ui.label("Zoom:");
+                    let mut new_scale = scale;
+                    ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("x"));
+                    if (new_scale - scale).abs() > 0.001 {
+                        if let Some(t) = self.state.current_tab_mut() {
+                            if let Mode::Reading(ref mut r) = t.mode {
+                                r.scale = new_scale;
+                            }
+                        }
+                    }
+
+                    ui.separator();
+                    let layout_label = if is_paged { "Paged" } else { "Scroll" };
+                    if ui.button(layout_label).clicked() {
+                        if let Some(t) = self.state.current_tab_mut() {
+                            if let Mode::Reading(ref mut r) = t.mode {
+                                r.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
+                            }
+                        }
                     }
                 } else {
-                    ui.label("No document open");
+                    let name = self.state.current_tab()
+                        .map(|t| t.mode.name())
+                        .unwrap_or("N/A");
+                    ui.label(format!("Mode: {}", name));
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(&self.status_message);
-                });
             });
         });
     }

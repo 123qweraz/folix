@@ -1,5 +1,7 @@
 use super::{Document, RenderedPage, TocEntry};
 use mupdf::{Document as MuDocument, MetadataName, TextExtractOptions, Colorspace, Matrix};
+use parking_lot::Mutex;
+use std::collections::HashMap;
 
 fn flatten_outline(entries: &[mupdf::outline::Outline], depth: usize, out: &mut Vec<TocEntry>) {
     for entry in entries {
@@ -20,6 +22,8 @@ pub struct PdfDocument {
     path: String,
     pages: Vec<String>,
     doc_title: String,
+    page_sizes: Vec<(f32, f32)>,
+    render_cache: Mutex<HashMap<usize, (f32, RenderedPage)>>,
 }
 
 impl PdfDocument {
@@ -40,18 +44,27 @@ impl PdfDocument {
             .unwrap_or_else(|| "Untitled".to_string());
 
         let mut pages = Vec::with_capacity(count);
+        let mut page_sizes = Vec::with_capacity(count);
         for i in 0..count {
-            let text = match doc.load_page(i as i32) {
-                Ok(page) => page.text(TextExtractOptions::default()).unwrap_or_default(),
-                Err(_) => String::new(),
-            };
-            pages.push(text);
+            match doc.load_page(i as i32) {
+                Ok(page) => {
+                    pages.push(page.text(TextExtractOptions::default()).unwrap_or_default());
+                    let bounds = page.bounds().ok();
+                    page_sizes.push(bounds.map(|b| (b.width(), b.height())).unwrap_or((612.0, 792.0)));
+                }
+                Err(_) => {
+                    pages.push(String::new());
+                    page_sizes.push((612.0, 792.0));
+                }
+            }
         }
 
         Some(Self {
             path: path.to_string(),
             pages,
             doc_title,
+            page_sizes,
+            render_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -98,6 +111,19 @@ impl Document for PdfDocument {
     }
 
     fn render_page(&self, page: usize, scale: f32) -> Option<RenderedPage> {
+        {
+            let cache = self.render_cache.lock();
+            if let Some((cached_scale, cached)) = cache.get(&page) {
+                if (*cached_scale - scale).abs() < 0.001 {
+                    return Some(RenderedPage {
+                        width: cached.width,
+                        height: cached.height,
+                        rgba: cached.rgba.clone(),
+                    });
+                }
+            }
+        }
+
         let doc = MuDocument::open(&self.path).ok()?;
         let page_obj = doc.load_page(page as i32).ok()?;
         let cs = Colorspace::device_rgb();
@@ -121,6 +147,19 @@ impl Document for PdfDocument {
             }
         }
 
-        Some(RenderedPage { width: w, height: h, rgba })
+        let rendered = RenderedPage { width: w, height: h, rgba };
+        {
+            let mut cache = self.render_cache.lock();
+            cache.insert(page, (scale, rendered.clone()));
+            if cache.len() > 5 {
+                let oldest = *cache.keys().min().unwrap();
+                cache.remove(&oldest);
+            }
+        }
+        Some(rendered)
+    }
+
+    fn page_size(&self, page: usize, scale: f32) -> Option<(f32, f32)> {
+        self.page_sizes.get(page).map(|&(w, h)| (w * scale, h * scale))
     }
 }
