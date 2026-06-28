@@ -1,5 +1,6 @@
 pub mod pdf_engine;
 pub mod reflow_engine;
+pub mod edit_operations;
 
 #[derive(Clone)]
 pub struct RenderedPage {

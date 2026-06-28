@@ -96,11 +96,29 @@ pub struct AnnotateState {
     pub page: usize,
 }
 
+#[derive(Clone)]
+pub struct EditState {
+    pub page: usize,
+}
+
+impl Default for EditState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EditState {
+    pub fn new() -> Self {
+        Self { page: 0 }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum ModeKind {
     Reading,
     Auto,
     Annotate,
+    Edit,
 }
 
 impl ModeKind {
@@ -109,6 +127,7 @@ impl ModeKind {
             ModeKind::Reading => "Reading",
             ModeKind::Auto => "Auto",
             ModeKind::Annotate => "Annotate",
+            ModeKind::Edit => "Edit",
         }
     }
 }
@@ -118,6 +137,7 @@ pub struct TabModes {
     pub reading: ReadingState,
     pub auto: AutoState,
     pub annotate: AnnotateState,
+    pub edit: EditState,
     pub active: ModeKind,
 }
 
@@ -153,6 +173,7 @@ impl TabModes {
                 stroke_points: vec![],
                 page: 0,
             },
+            edit: EditState::new(),
             active: ModeKind::Reading,
         }
     }
@@ -162,6 +183,7 @@ impl TabModes {
             ModeKind::Reading => self.reading.page as f32,
             ModeKind::Auto => self.auto.progress,
             ModeKind::Annotate => self.annotate.page as f32,
+            ModeKind::Edit => self.edit.page as f32,
         };
         match target {
             ModeKind::Reading => {
@@ -170,6 +192,7 @@ impl TabModes {
             }
             ModeKind::Auto => self.auto.progress = pos,
             ModeKind::Annotate => self.annotate.page = pos as usize,
+            ModeKind::Edit => self.edit.page = pos as usize,
         }
         self.active = target;
     }

@@ -1,5 +1,6 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::mode_system::{ViewMode, AnnotationTool, AutoPlayMode};
+use crate::app::engines::edit_operations;
 use crate::app::platform::font_loader::FontLoader;
 use super::mode_ui;
 
@@ -104,6 +105,25 @@ impl FolixApp {
             self.status_message = format!("Opened: {}", path_str);
         } else {
             self.status_message = format!("Failed to open: {}", path_str);
+        }
+    }
+
+    fn reload_document(&mut self, path: &str) {
+        if let Some(doc) = DocumentManager::open(path) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.document = Some(doc);
+                if let Some(d) = &tab.document {
+                    let count = d.lock().page_count();
+                    let max = count.saturating_sub(1);
+                    tab.modes.annotate.page = tab.modes.annotate.page.min(max);
+                    tab.modes.reading.page = tab.modes.reading.page.min(max);
+                    tab.modes.edit.page = tab.modes.edit.page.min(max);
+                    tab.modes.auto.progress = (tab.modes.auto.progress as usize).min(max) as f32;
+                }
+                self.status_message = format!("Saved: {}", path);
+            }
+        } else {
+            self.status_message = format!("Failed to reload: {}", path);
         }
     }
 }
@@ -353,10 +373,15 @@ impl FolixApp {
             ModeKind::Annotate => {
                 mode_ui::render_annotate(ui, &document, &mut tab.modes.annotate);
             }
+            ModeKind::Edit => {
+                mode_ui::render_edit(ui, &document, &mut tab.modes.edit);
+            }
         }
     }
 
     fn render_status_bar(&mut self, ctx: &egui::Context) {
+        let mut needs_reload: Option<String> = None;
+
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let tab = self.state.current_tab_mut();
@@ -368,7 +393,7 @@ impl FolixApp {
                     .unwrap_or(0);
 
                 // Mode tabs — always visible
-                let mode_names = [ModeKind::Reading, ModeKind::Auto, ModeKind::Annotate];
+                let mode_names = [ModeKind::Reading, ModeKind::Auto, ModeKind::Annotate, ModeKind::Edit];
                 for &mk in &mode_names {
                     let selected = tab.modes.active == mk;
                     if ui.selectable_label(selected, mk.name()).clicked() {
@@ -460,6 +485,51 @@ impl FolixApp {
                             }
                         }
                     }
+                    ModeKind::Edit => {
+                        if doc_count > 0 {
+                            let supports_image = tab.document.as_ref()
+                                .map(|d| d.lock().supports_image())
+                                .unwrap_or(false);
+                            if supports_image {
+                                if ui.add_enabled(tab.modes.edit.page > 0, egui::Button::new("◀")).clicked() {
+                                    tab.modes.edit.page -= 1;
+                                }
+                                if ui.add_enabled(tab.modes.edit.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
+                                    tab.modes.edit.page += 1;
+                                }
+                                ui.separator();
+                                let path = tab.path.clone();
+                                if let Some(ref p) = path {
+                                    if ui.button("↻ CW").clicked() {
+                                        let page = tab.modes.edit.page;
+                                        if edit_operations::rotate_page(p, page, 90).is_ok() {
+                                            needs_reload = Some(p.clone());
+                                        }
+                                    }
+                                    if ui.button("↻ CCW").clicked() {
+                                        let page = tab.modes.edit.page;
+                                        if edit_operations::rotate_page(p, page, 270).is_ok() {
+                                            needs_reload = Some(p.clone());
+                                        }
+                                    }
+                                    if ui.button("Del").clicked() {
+                                        let page = tab.modes.edit.page;
+                                        if doc_count > 1 {
+                                            if edit_operations::delete_page(p, page).is_ok() {
+                                                needs_reload = Some(p.clone());
+                                            }
+                                        }
+                                    }
+                                    if ui.button("+ Page").clicked() {
+                                        let page = tab.modes.edit.page;
+                                        if edit_operations::insert_blank_page(p, page).is_ok() {
+                                            needs_reload = Some(p.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Page number on the right
@@ -476,11 +546,18 @@ impl FolixApp {
                             ModeKind::Annotate => {
                                 ui.label(format!("Page {}/{}", tab.modes.annotate.page + 1, doc_count));
                             }
+                            ModeKind::Edit => {
+                                ui.label(format!("Page {}/{}", tab.modes.edit.page + 1, doc_count));
+                            }
                         }
                     });
                 }
             });
         });
+
+        if let Some(path) = needs_reload {
+            self.reload_document(&path);
+        }
     }
 
     fn handle_open_dialog(&mut self, _ctx: &egui::Context) {

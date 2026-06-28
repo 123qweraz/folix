@@ -1,5 +1,5 @@
 use crate::app::engines::Document;
-use crate::app::core::mode_system::{ReadingState, ReadingLayout, ViewMode, Bookmark, AutoState, AnnotateState};
+use crate::app::core::mode_system::{ReadingState, ReadingLayout, ViewMode, Bookmark, AutoState, AnnotateState, EditState};
 use std::sync::Arc;
 use parking_lot::Mutex;
 
@@ -376,6 +376,29 @@ pub fn render_annotate(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>
         let mut annotate_page = an.page;
         let mut dummy_scroll = 0.0;
         render_continuous_images(ui, document, &mut annotate_page, 1.0, total, Some(0.0), &mut dummy_scroll, "pdf_scroll_annotate");
+    } else {
+        let text = document.lock().page_text(0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::symmetric(20, 10))
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(&text).wrap().selectable(true));
+                    });
+            });
+    }
+}
+
+pub fn render_edit(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>>, es: &mut EditState) {
+    let supports_image = document.lock().supports_image();
+
+    if supports_image {
+        let total = document.lock().page_count();
+        let mut edit_page = es.page;
+        let mut dummy_scroll = 0.0;
+        render_continuous_images(ui, document, &mut edit_page, 1.0, total, Some(0.0), &mut dummy_scroll, "pdf_scroll_edit");
+        es.page = edit_page.min(total.saturating_sub(1));
     } else {
         let text = document.lock().page_text(0);
         egui::ScrollArea::vertical()
