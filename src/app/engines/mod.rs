@@ -2,6 +2,8 @@ pub mod pdf_engine;
 pub mod reflow_engine;
 pub mod edit_operations;
 
+use egui::{TextureId, TextureHandle};
+
 #[derive(Clone)]
 pub struct RenderedPage {
     pub width: u32,
@@ -51,4 +53,11 @@ pub trait Document: Send + Sync {
     fn page_text_positions(&self, _page: usize) -> Vec<TextWordPosition> {
         vec![]
     }
+
+    /// Look up a cached GPU texture for a page at the given scale.
+    /// Returns the texture ID and its dimensions `[width, height]`.
+    fn get_texture_handle(&self, _page: usize, _scale: f32) -> Option<(TextureId, [usize; 2])> { None }
+
+    /// Store a GPU texture handle for a page at the given scale.
+    fn set_texture_handle(&self, _page: usize, _scale: f32, _handle: TextureHandle) {}
 }

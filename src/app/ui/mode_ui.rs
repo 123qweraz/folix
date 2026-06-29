@@ -24,35 +24,37 @@ pub fn render_document(
     }
 
     if let Some(aut) = auto {
-        let dt = ui.input(|i| i.unstable_dt);
-        if supports_image {
-            let total = document.lock().page_count();
-            let max_page = total.saturating_sub(1);
-            match reading_layout {
-                ReadingLayout::Paged => {
-                    aut.progress += dt * aut.speed * 0.3;
-                    let advance = aut.progress as usize;
-                    if advance > 0 {
-                        *page = (*page + advance).min(max_page);
-                        aut.progress -= advance as f32;
-                        if *page >= max_page && total > 0 {
-                            aut.playing = false;
-                            aut.progress = 0.0;
+        if aut.playing {
+            let dt = ui.input(|i| i.unstable_dt);
+            if supports_image {
+                let total = document.lock().page_count();
+                let max_page = total.saturating_sub(1);
+                match reading_layout {
+                    ReadingLayout::Paged => {
+                        aut.progress += dt * aut.speed * 0.3;
+                        let advance = aut.progress as usize;
+                        if advance > 0 {
+                            *page = (*page + advance).min(max_page);
+                            aut.progress -= advance as f32;
+                            if *page >= max_page && total > 0 {
+                                aut.playing = false;
+                                aut.progress = 0.0;
+                            }
                         }
                     }
+                    ReadingLayout::Scroll => {
+                        reading.scroll_offset_y += dt * 200.0 * aut.speed;
+                    }
                 }
-                ReadingLayout::Scroll => {
-                    reading.scroll_offset_y += dt * 200.0 * aut.speed;
+            } else {
+                aut.progress += dt * aut.speed * 0.05;
+                if aut.progress >= 1.0 {
+                    aut.progress -= 1.0;
                 }
             }
-        } else {
-            aut.progress += dt * aut.speed * 0.05;
-            if aut.progress >= 1.0 {
-                aut.progress -= 1.0;
+            if let Some(ctx) = ctx {
+                ctx.request_repaint();
             }
-        }
-        if let Some(ctx) = ctx {
-            ctx.request_repaint();
         }
     }
 
@@ -205,24 +207,32 @@ fn render_image_page(
     selection: &mut SelectionState,
     mut _annotate: Option<&mut AnnotateState>,
 ) {
-    let page_data = doc.lock().render_page(page_idx, scale);
-
-    let Some(p) = page_data else {
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1000.0), egui::Sense::hover());
-        return;
+    // Acquire texture (from GPU cache or render + upload)
+    let cached_tex = doc.lock().get_texture_handle(page_idx, scale);
+    let (tex_id, image_size) = match cached_tex {
+        Some((id, [w, h])) => (id, egui::Vec2::new(w as f32, h as f32)),
+        None => {
+            let page_data = doc.lock().render_page(page_idx, scale);
+            let Some(p) = page_data else {
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 1000.0), egui::Sense::hover());
+                return;
+            };
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                [p.width as usize, p.height as usize],
+                &p.rgba,
+            );
+            let tex = ui.ctx().load_texture(
+                format!("doc_page_{}", page_idx),
+                color_image,
+                egui::TextureOptions::default(),
+            );
+            let size = egui::Vec2::new(p.width as f32, p.height as f32);
+            doc.lock().set_texture_handle(page_idx, scale, tex.clone());
+            (tex.id(), size)
+        }
     };
 
-    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-        [p.width as usize, p.height as usize],
-        &p.rgba,
-    );
-    let texture = ui.ctx().load_texture(
-        format!("doc_page_{}", page_idx),
-        color_image,
-        egui::TextureOptions::default(),
-    );
-    let image_size = egui::Vec2::new(p.width as f32, p.height as f32);
-
+    // Layout
     let avail_w = ui.available_width();
     let x_off = ((avail_w - image_size.x) * 0.5).max(0.0);
     let (rect, response) = ui.allocate_exact_size(
@@ -233,10 +243,9 @@ fn render_image_page(
         rect.min + egui::vec2(x_off, 0.0),
         image_size,
     );
-    let painter = ui.painter();
 
-    painter.image(
-        texture.id(),
+    ui.painter().image(
+        tex_id,
         image_rect,
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         egui::Color32::WHITE,

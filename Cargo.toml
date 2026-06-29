@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tikv-jemallocator = "0.6"
 eframe = "0.31"
 egui = "0.31"
 wgpu = "24.0"

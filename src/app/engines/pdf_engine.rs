@@ -2,6 +2,7 @@ use super::{Document, RenderedPage, TocEntry, TextWordPosition};
 use mupdf::{Document as MuDocument, MetadataName, TextExtractOptions, Colorspace, Matrix};
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use egui::{TextureId, TextureHandle};
 
 fn flatten_outline(entries: &[mupdf::outline::Outline], depth: usize, out: &mut Vec<TocEntry>) {
     for entry in entries {
@@ -27,6 +28,7 @@ pub struct PdfDocument {
     page_sizes_cache: Mutex<Option<Vec<(f32, f32)>>>,
     text_cache: Mutex<HashMap<usize, String>>,
     text_positions_cache: Mutex<HashMap<usize, Vec<TextWordPosition>>>,
+    texture_handles: Mutex<HashMap<usize, (u32, TextureHandle)>>,
 }
 
 impl PdfDocument {
@@ -65,6 +67,7 @@ impl PdfDocument {
             page_sizes_cache: Mutex::new(None),
             text_cache: Mutex::new(HashMap::new()),
             text_positions_cache: Mutex::new(HashMap::new()),
+            texture_handles: Mutex::new(HashMap::new()),
         })
     }
 
@@ -206,7 +209,7 @@ impl Document for PdfDocument {
         {
             let mut cache = self.render_cache.lock();
             cache.insert(page, (scale, rendered.clone()));
-            if cache.len() > 5 {
+            if cache.len() > 2 {
                 let oldest = *cache.keys().min().unwrap();
                 cache.remove(&oldest);
             }
@@ -252,5 +255,21 @@ impl Document for PdfDocument {
         }
 
         sizes.get(page).map(|&(w, h)| (w * scale, h * scale))
+    }
+
+    fn get_texture_handle(&self, page: usize, scale: f32) -> Option<(TextureId, [usize; 2])> {
+        let cache = self.texture_handles.lock();
+        cache.get(&page)
+            .filter(|(s, _)| *s == scale.to_bits())
+            .map(|(_, h)| (h.id(), h.size()))
+    }
+
+    fn set_texture_handle(&self, page: usize, scale: f32, handle: TextureHandle) {
+        let mut cache = self.texture_handles.lock();
+        cache.insert(page, (scale.to_bits(), handle));
+        if cache.len() > 10 {
+            let oldest = *cache.keys().min().unwrap();
+            cache.remove(&oldest);
+        }
     }
 }
