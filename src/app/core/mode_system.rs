@@ -42,16 +42,35 @@ pub struct Bookmark {
 }
 
 #[derive(Clone)]
-pub struct ReadingState {
+pub struct SelectionState {
+    pub selecting: bool,
+    pub anchor: Option<(f32, f32)>,
+    pub focus: Option<(f32, f32)>,
     pub page: usize,
-    pub scale: f32,
+    pub selected_word_indices: Vec<usize>,
+}
+
+impl Default for SelectionState {
+    fn default() -> Self {
+        Self {
+            selecting: false,
+            anchor: None,
+            focus: None,
+            page: 0,
+            selected_word_indices: vec![],
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ReadingState {
     pub view_mode: ViewMode,
-    pub reading_layout: ReadingLayout,
     pub show_sidebar: bool,
     pub search: SearchState,
     pub bookmarks: Vec<Bookmark>,
     pub scroll_offset_y: f32,
     pub total_height: f32,
+    pub selection: SelectionState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -69,13 +88,12 @@ pub struct AutoState {
     pub progress: f32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum AnnotationTool {
     Highlight,
     Pen,
     Note,
     Eraser,
-    Select,
 }
 
 #[derive(Clone)]
@@ -93,40 +111,28 @@ pub struct AnnotateState {
     pub tool: AnnotationTool,
     pub annotations: Vec<Annotation>,
     pub stroke_points: Vec<[f32; 2]>,
-    pub page: usize,
+    pub selecting: bool,
+    pub selection_anchor: Option<(f32, f32)>,
+    pub selection_focus: Option<(f32, f32)>,
+    pub selection_page: usize,
+    pub selected_word_indices: Vec<usize>,
 }
 
 #[derive(Clone)]
-pub struct EditState {
-    pub page: usize,
-}
-
-impl Default for EditState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EditState {
-    pub fn new() -> Self {
-        Self { page: 0 }
-    }
-}
+pub struct EditState;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ModeKind {
-    Reading,
-    Auto,
-    Annotate,
+    LightReading,
+    DeepReading,
     Edit,
 }
 
 impl ModeKind {
     pub fn name(&self) -> &str {
         match self {
-            ModeKind::Reading => "Reading",
-            ModeKind::Auto => "Auto",
-            ModeKind::Annotate => "Annotate",
+            ModeKind::LightReading => "Light",
+            ModeKind::DeepReading => "Deep",
             ModeKind::Edit => "Edit",
         }
     }
@@ -134,6 +140,9 @@ impl ModeKind {
 
 #[derive(Clone)]
 pub struct TabModes {
+    pub page: usize,
+    pub scale: f32,
+    pub reading_layout: ReadingLayout,
     pub reading: ReadingState,
     pub auto: AutoState,
     pub annotate: AnnotateState,
@@ -150,16 +159,17 @@ impl Default for TabModes {
 impl TabModes {
     pub fn new() -> Self {
         Self {
+            page: 0,
+            scale: 1.0,
+            reading_layout: ReadingLayout::Scroll,
             reading: ReadingState {
-                page: 0,
-                scale: 1.0,
                 view_mode: ViewMode::Text,
-                reading_layout: ReadingLayout::Scroll,
                 show_sidebar: false,
                 search: SearchState::new(),
                 bookmarks: vec![],
                 scroll_offset_y: 0.0,
                 total_height: 0.0,
+                selection: SelectionState::default(),
             },
             auto: AutoState {
                 playing: false,
@@ -171,28 +181,20 @@ impl TabModes {
                 tool: AnnotationTool::Highlight,
                 annotations: vec![],
                 stroke_points: vec![],
-                page: 0,
+                selecting: false,
+                selection_anchor: None,
+                selection_focus: None,
+                selection_page: 0,
+                selected_word_indices: vec![],
             },
-            edit: EditState::new(),
-            active: ModeKind::Reading,
+            edit: EditState,
+            active: ModeKind::LightReading,
         }
     }
 
     pub fn switch_to(&mut self, target: ModeKind) {
-        let pos = match self.active {
-            ModeKind::Reading => self.reading.page as f32,
-            ModeKind::Auto => self.auto.progress,
-            ModeKind::Annotate => self.annotate.page as f32,
-            ModeKind::Edit => self.edit.page as f32,
-        };
-        match target {
-            ModeKind::Reading => {
-                self.reading.page = pos as usize;
-                self.reading.scroll_offset_y = 0.0;
-            }
-            ModeKind::Auto => self.auto.progress = pos,
-            ModeKind::Annotate => self.annotate.page = pos as usize,
-            ModeKind::Edit => self.edit.page = pos as usize,
+        if self.active == ModeKind::LightReading && target != ModeKind::LightReading {
+            self.auto.playing = false;
         }
         self.active = target;
     }

@@ -1,10 +1,35 @@
 use crate::app::engines::Document;
-use super::mode_system::TabModes;
+use super::mode_system::{TabModes, ViewMode};
 use super::feature_system::FeatureSystem;
 use std::sync::Arc;
 use parking_lot::Mutex;
 
+#[derive(Clone)]
+pub enum TabContent {
+    Document,
+    NewTab,
+    Settings,
+}
+
+#[derive(Clone)]
+pub struct AppSettings {
+    pub toolbar_icon_size: f32,
+    pub show_toolbar: bool,
+    pub background_color: [u8; 4],
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            toolbar_icon_size: 16.0,
+            show_toolbar: true,
+            background_color: [255, 255, 255, 255],
+        }
+    }
+}
+
 pub struct OpenTab {
+    pub content: TabContent,
     pub document: Option<Arc<Mutex<Box<dyn Document>>>>,
     pub path: Option<String>,
     pub modes: TabModes,
@@ -12,18 +37,29 @@ pub struct OpenTab {
 
 impl OpenTab {
     pub fn title(&self) -> String {
-        match &self.path {
-            Some(p) => std::path::Path::new(p)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Untitled")
-                .to_string(),
-            None => "+ New Tab".to_string(),
+        match self.content {
+            TabContent::Settings => "⚙ Settings".to_string(),
+            _ => match &self.path {
+                Some(p) => std::path::Path::new(p)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Untitled")
+                    .to_string(),
+                None => "+ New Tab".to_string(),
+            },
         }
     }
 
     pub fn is_new_tab(&self) -> bool {
-        self.document.is_none()
+        matches!(self.content, TabContent::NewTab)
+    }
+
+    pub fn is_settings_tab(&self) -> bool {
+        matches!(self.content, TabContent::Settings)
+    }
+
+    pub fn has_document(&self) -> bool {
+        matches!(self.content, TabContent::Document) && self.document.is_some()
     }
 }
 
@@ -32,6 +68,7 @@ pub struct AppState {
     pub active_tab: usize,
     pub feature_system: FeatureSystem,
     pub ui_visible: bool,
+    pub settings: AppSettings,
 }
 
 impl AppState {
@@ -41,6 +78,7 @@ impl AppState {
             active_tab: 0,
             feature_system: FeatureSystem::new(),
             ui_visible: false,
+            settings: AppSettings::default(),
         };
         state.add_new_tab();
         state
@@ -50,11 +88,12 @@ impl AppState {
         let idx = self.tabs.len();
         let mut modes = TabModes::new();
         modes.reading.view_mode = if document.lock().supports_image() {
-            super::mode_system::ViewMode::Image
+            ViewMode::Image
         } else {
-            super::mode_system::ViewMode::Text
+            ViewMode::Text
         };
         self.tabs.push(OpenTab {
+            content: TabContent::Document,
             document: Some(document),
             path: Some(path),
             modes,
@@ -66,6 +105,26 @@ impl AppState {
     pub fn add_new_tab(&mut self) -> usize {
         let idx = self.tabs.len();
         self.tabs.push(OpenTab {
+            content: TabContent::NewTab,
+            document: None,
+            path: None,
+            modes: TabModes::new(),
+        });
+        self.active_tab = idx;
+        idx
+    }
+
+    pub fn add_settings_tab(&mut self) -> usize {
+        // Reuse existing settings tab if already open
+        for (i, tab) in self.tabs.iter().enumerate() {
+            if tab.is_settings_tab() {
+                self.active_tab = i;
+                return i;
+            }
+        }
+        let idx = self.tabs.len();
+        self.tabs.push(OpenTab {
+            content: TabContent::Settings,
             document: None,
             path: None,
             modes: TabModes::new(),

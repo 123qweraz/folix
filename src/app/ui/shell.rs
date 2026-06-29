@@ -1,5 +1,6 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
-use crate::app::core::mode_system::{ViewMode, AnnotationTool, AutoPlayMode};
+use crate::app::core::app_state::TabContent;
+use crate::app::core::mode_system::{ViewMode, AutoPlayMode};
 use crate::app::engines::edit_operations;
 use crate::app::platform::font_loader::FontLoader;
 use super::mode_ui;
@@ -64,13 +65,12 @@ impl FolixApp {
 
     fn init_features(&mut self) {
         let features = [
-            ("open_file", "Reading"),
-            ("save_progress", "Reading"),
-            ("toggle_mode", "Reading"),
-            ("play_pause", "Auto"),
-            ("speed_control", "Auto"),
-            ("select_tool", "Annotate"),
-            ("undo", "Annotate"),
+            ("open_file", "Light"),
+            ("toggle_mode", "Light"),
+            ("play_pause", "Light"),
+            ("speed_control", "Light"),
+            ("select_tool", "Deep"),
+            ("undo", "Deep"),
         ];
         for (id, scope) in &features {
             self.state.feature_system.register(id, scope);
@@ -90,6 +90,7 @@ impl FolixApp {
             if replace {
                 let idx = self.state.active_tab;
                 let tab = &mut self.state.tabs[idx];
+                tab.content = TabContent::Document;
                 tab.document = Some(doc);
                 tab.path = Some(path_str.clone());
                 tab.modes = TabModes::new();
@@ -115,9 +116,7 @@ impl FolixApp {
                 if let Some(d) = &tab.document {
                     let count = d.lock().page_count();
                     let max = count.saturating_sub(1);
-                    tab.modes.annotate.page = tab.modes.annotate.page.min(max);
-                    tab.modes.reading.page = tab.modes.reading.page.min(max);
-                    tab.modes.edit.page = tab.modes.edit.page.min(max);
+                    tab.modes.page = tab.modes.page.min(max);
                     tab.modes.auto.progress = (tab.modes.auto.progress as usize).min(max) as f32;
                 }
                 self.status_message = format!("Saved: {}", path);
@@ -146,14 +145,33 @@ impl eframe::App for FolixApp {
             self.state.ui_visible = !self.state.ui_visible;
         }
 
+        // Ctrl+C to copy selected text
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::C)) {
+            if let Some(tab) = self.state.current_tab() {
+                let sel = &tab.modes.reading.selection;
+                if !sel.selected_word_indices.is_empty() {
+                    if let Some(doc) = &tab.document {
+                        let words = doc.lock().page_text_positions(sel.page);
+                        let selected_text: String = sel.selected_word_indices
+                            .iter()
+                            .filter_map(|&i| words.get(i))
+                            .map(|w| w.text.as_str())
+                            .collect::<Vec<&str>>()
+                            .join(" ");
+                        ctx.copy_text(selected_text);
+                    }
+                }
+            }
+        }
+
         if self.state.ui_visible {
             self.render_menu_bar(ctx);
         }
         self.render_tab_bar(ctx);
 
-        // Sidebar (Reading mode only)
+        // Sidebar (LightReading & DeepReading only)
         let sidebar = self.state.current_tab().is_some_and(|t| {
-            t.document.is_some() && t.modes.active == ModeKind::Reading && t.modes.reading.show_sidebar
+            t.has_document() && (t.modes.active == ModeKind::LightReading || t.modes.active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
         });
         if sidebar {
             let doc = self.state.current_tab()
@@ -164,9 +182,10 @@ impl eframe::App for FolixApp {
                 .default_width(260.0)
                 .show(ctx, |ui| {
                     if let Some(tab) = self.state.current_tab_mut() {
-                        if tab.modes.active == ModeKind::Reading {
+                        let active = tab.modes.active;
+                        if active == ModeKind::LightReading || active == ModeKind::DeepReading {
                             let total = doc.lock().page_count();
-                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.reading, total);
+                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.reading, total);
                         }
                     }
                 });
@@ -182,7 +201,7 @@ impl eframe::App for FolixApp {
         }
 
         if self.state.ui_visible {
-            self.render_status_bar(ctx);
+            self.render_toolbars(ctx);
         }
         self.handle_open_dialog(ctx);
         self.render_about(ctx);
@@ -211,38 +230,38 @@ impl FolixApp {
                 });
 
                 ui.menu_button("Mode", |ui| {
-                    let modes = ["Reading", "Auto", "Annotate"];
+                    let modes = ["LightReading", "DeepReading", "Edit"];
                     let current_name = self.state.current_tab()
                         .map(|t| t.modes.active.name().to_string())
-                        .unwrap_or_else(|| "Reading".to_string());
+                        .unwrap_or_else(|| "Light".to_string());
                     for mode_name in &modes {
                         let selected = current_name == *mode_name;
                         if ui.selectable_label(selected, *mode_name).clicked() {
                             if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
                                 tab.modes.switch_to(match *mode_name {
-                                    "Auto" => ModeKind::Auto,
-                                    "Annotate" => ModeKind::Annotate,
-                                    _ => ModeKind::Reading,
+                                    "DeepReading" => ModeKind::DeepReading,
+                                    "Edit" => ModeKind::Edit,
+                                    _ => ModeKind::LightReading,
                                 });
                             }
                             ui.close_menu();
                         }
                     }
 
-                    if current_name == "Reading" {
+                    if current_name == "LightReading" {
                         ui.separator();
                         let layout = self.state.current_tab()
-                            .map(|t| t.modes.reading.reading_layout);
+                            .map(|t| t.modes.reading_layout);
                         if let Some(layout) = layout {
                             if ui.selectable_label(layout == ReadingLayout::Paged, "Paged").clicked() {
                                 if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                    tab.modes.reading.reading_layout = ReadingLayout::Paged;
+                                    tab.modes.reading_layout = ReadingLayout::Paged;
                                 }
                                 ui.close_menu();
                             }
                             if ui.selectable_label(layout == ReadingLayout::Scroll, "Scroll").clicked() {
                                 if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                    tab.modes.reading.reading_layout = ReadingLayout::Scroll;
+                                    tab.modes.reading_layout = ReadingLayout::Scroll;
                                 }
                                 ui.close_menu();
                             }
@@ -264,9 +283,10 @@ impl FolixApp {
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 // Sidebar toggle — leftmost position
-                let has_doc = self.state.current_tab().map_or(false, |t| t.document.is_some());
+                let has_doc = self.state.current_tab().map_or(false, |t| t.has_document());
                 let show_side = self.state.current_tab().map_or(false, |t| {
-                    t.modes.active == ModeKind::Reading && t.modes.reading.show_sidebar
+                    let active = t.modes.active;
+                    (active == ModeKind::LightReading || active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
                 });
                 let side_btn = if show_side { "📑 Sidebar" } else { "📑" };
                 if has_doc {
@@ -278,7 +298,12 @@ impl FolixApp {
                     ui.separator();
                 }
 
-                // "+" button to create a new tab page
+                // Settings button
+                if ui.button("⚙").clicked() {
+                    self.state.add_settings_tab();
+                }
+
+                // "+" button to create a new tab
                 if ui.button(" + ").clicked() {
                     self.state.add_new_tab();
                 }
@@ -341,6 +366,40 @@ impl FolixApp {
         });
     }
 
+    fn render_settings_tab(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(60.0);
+            ui.heading("⚙ Settings");
+            ui.add_space(20.0);
+
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(40, 20))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Toolbar Icon Size:");
+                        ui.add(egui::Slider::new(&mut self.state.settings.toolbar_icon_size, 12.0..=32.0));
+                    });
+                    ui.add_space(10.0);
+                    ui.checkbox(&mut self.state.settings.show_toolbar, "Show Toolbar");
+                    ui.add_space(20.0);
+                    ui.label("Background Color:");
+                    let mut color = [
+                        self.state.settings.background_color[0] as f32 / 255.0,
+                        self.state.settings.background_color[1] as f32 / 255.0,
+                        self.state.settings.background_color[2] as f32 / 255.0,
+                        self.state.settings.background_color[3] as f32 / 255.0,
+                    ];
+                    ui.color_edit_button_rgba_unmultiplied(&mut color);
+                    self.state.settings.background_color = [
+                        (color[0] * 255.0) as u8,
+                        (color[1] * 255.0) as u8,
+                        (color[2] * 255.0) as u8,
+                        (color[3] * 255.0) as u8,
+                    ];
+                });
+        });
+    }
+
     fn render_document_view(&mut self, ui: &mut egui::Ui) {
         let idx = self.state.active_tab;
 
@@ -350,6 +409,13 @@ impl FolixApp {
             return;
         }
 
+        // Settings tab
+        if self.state.tabs[idx].is_settings_tab() {
+            self.render_settings_tab(ui);
+            return;
+        }
+
+        // Document tab
         let mode_name = self.state.tabs[idx].modes.active.name().to_string();
         let pinned_names: Vec<String> = self.state.feature_system.pinned_features(&mode_name)
             .iter().map(|f| f.id.clone()).collect();
@@ -362,27 +428,29 @@ impl FolixApp {
 
         let document = self.state.tabs[idx].document.as_ref().unwrap().clone();
         let tab = &mut self.state.tabs[idx];
-        match tab.modes.active {
-            ModeKind::Reading => {
-                mode_ui::render_reading(ui, &document, &mut tab.modes.reading);
-            }
-            ModeKind::Auto => {
-                let ctx = ui.ctx().clone();
-                mode_ui::render_auto(ui, &document, &mut tab.modes.auto, ctx);
-            }
-            ModeKind::Annotate => {
-                mode_ui::render_annotate(ui, &document, &mut tab.modes.annotate);
-            }
-            ModeKind::Edit => {
-                mode_ui::render_edit(ui, &document, &mut tab.modes.edit);
-            }
-        }
+        let ctx = ui.ctx().clone();
+        let is_light = tab.modes.active == ModeKind::LightReading;
+        let is_deep = tab.modes.active == ModeKind::DeepReading;
+        mode_ui::render_document(
+            ui, &document,
+            &mut tab.modes.page,
+            &mut tab.modes.scale,
+            &mut tab.modes.reading_layout,
+            &mut tab.modes.reading,
+            if is_light { Some(&mut tab.modes.auto) } else { None },
+            if is_deep { Some(&mut tab.modes.annotate) } else { None },
+            Some(ctx),
+        );
     }
 
-    fn render_status_bar(&mut self, ctx: &egui::Context) {
+    fn render_toolbars(&mut self, ctx: &egui::Context) {
+        if !self.state.settings.show_toolbar {
+            return;
+        }
+
         let mut needs_reload: Option<String> = None;
 
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("toolbar_row1").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let tab = self.state.current_tab_mut();
                 if tab.is_none() { return; }
@@ -392,8 +460,8 @@ impl FolixApp {
                     .map(|d| d.lock().page_count())
                     .unwrap_or(0);
 
-                // Mode tabs — always visible
-                let mode_names = [ModeKind::Reading, ModeKind::Auto, ModeKind::Annotate, ModeKind::Edit];
+                // Row 1: Mode tabs + Basic Reading Toolbar + Page number
+                let mode_names = [ModeKind::LightReading, ModeKind::DeepReading, ModeKind::Edit];
                 for &mk in &mode_names {
                     let selected = tab.modes.active == mk;
                     if ui.selectable_label(selected, mk.name()).clicked() {
@@ -402,62 +470,86 @@ impl FolixApp {
                 }
                 ui.separator();
 
-                // Mode-specific controls
+                if doc_count > 0 {
+                    // Prev/Next
+                    let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
+                    if is_paged || tab.modes.active == ModeKind::DeepReading {
+                        if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
+                            tab.modes.page = tab.modes.page.saturating_sub(1);
+                        }
+                        if ui.add_enabled(tab.modes.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
+                            tab.modes.page += 1;
+                        }
+                        ui.separator();
+                    }
+
+                    // Zoom
+                    ui.label("Zoom:");
+                    let mut new_scale = tab.modes.scale;
+                    ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("x"));
+                    if (new_scale - tab.modes.scale).abs() > 0.001 {
+                        tab.modes.scale = new_scale;
+                    }
+                    ui.separator();
+
+                    // Layout toggle
+                    let layout_label = if is_paged { "Paged" } else { "Scroll" };
+                    if ui.button(layout_label).clicked() {
+                        tab.modes.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
+                    }
+                    ui.separator();
+
+                    // Page number on the right
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!("Page {}/{}", tab.modes.page + 1, doc_count));
+                    });
+                }
+            });
+        });
+
+        egui::TopBottomPanel::bottom("toolbar_row2").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let tab = self.state.current_tab_mut();
+                if tab.is_none() { return; }
+                let tab = tab.unwrap();
+
+                let doc_count = tab.document.as_ref()
+                    .map(|d| d.lock().page_count())
+                    .unwrap_or(0);
+
+                if doc_count == 0 { return; }
+
+                // Row 2: Mode-specific controls
                 match tab.modes.active {
-                    ModeKind::Reading => {
-                        let is_paged = tab.modes.reading.reading_layout == ReadingLayout::Paged;
-                        if doc_count > 0 {
-                            if is_paged {
-                                if ui.add_enabled(tab.modes.reading.page > 0, egui::Button::new("◀ Prev")).clicked() {
-                                    tab.modes.reading.page -= 1;
-                                }
-                                if ui.add_enabled(tab.modes.reading.page + 1 < doc_count, egui::Button::new("Next ▶")).clicked() {
-                                    tab.modes.reading.page += 1;
-                                }
-                                ui.separator();
-                            }
-                            ui.label("Zoom:");
-                            let mut new_scale = tab.modes.reading.scale;
-                            ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("x"));
-                            if (new_scale - tab.modes.reading.scale).abs() > 0.001 {
-                                tab.modes.reading.scale = new_scale;
-                            }
-                            ui.separator();
-                            let layout_label = if is_paged { "Paged" } else { "Scroll" };
-                            if ui.button(layout_label).clicked() {
-                                tab.modes.reading.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
+                    ModeKind::LightReading => {
+                        let play_label = if tab.modes.auto.playing { "⏸" } else { "▶" };
+                        if ui.button(play_label).clicked() {
+                            tab.modes.auto.playing = !tab.modes.auto.playing;
+                            if tab.modes.auto.playing {
+                                tab.modes.auto.progress = 0.0;
                             }
                         }
+                        ui.label("Speed:");
+                        ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
+                        ui.separator();
+                        ui.label("Mode:");
+                        egui::ComboBox::from_id_salt("auto_mode")
+                            .selected_text(format!("{:?}", tab.modes.auto.auto_mode))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::PageFlow, "Page Flow");
+                                ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::GlyphReveal, "Glyph Reveal");
+                                ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::SentenceStream, "Sentence Stream");
+                            });
                     }
-                    ModeKind::Auto => {
-                        if doc_count > 0 {
-                            let play_label = if tab.modes.auto.playing { "⏸" } else { "▶" };
-                            if ui.button(play_label).clicked() {
-                                tab.modes.auto.playing = !tab.modes.auto.playing;
-                            }
-                            ui.label("Speed:");
-                            ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
-                            ui.separator();
-                            ui.label("Mode:");
-                            egui::ComboBox::from_id_salt("auto_mode")
-                                .selected_text(format!("{:?}", tab.modes.auto.auto_mode))
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::PageFlow, "Page Flow");
-                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::GlyphReveal, "Glyph Reveal");
-                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::SentenceStream, "Sentence Stream");
-                                });
-                        }
-                    }
-                    ModeKind::Annotate => {
-                        if doc_count > 0 {
+                    ModeKind::DeepReading => {
+                        if tab.modes.active == ModeKind::DeepReading {
                             let tools = [
-                                (AnnotationTool::Highlight, "🖊  High"),
-                                (AnnotationTool::Pen, "✏  Pen"),
-                                (AnnotationTool::Note, "📝  Note"),
-                                (AnnotationTool::Eraser, "🧹  Eraser"),
-                                (AnnotationTool::Select, "👆  Select"),
+                                ("🖊  High", crate::app::core::mode_system::AnnotationTool::Highlight),
+                                ("✏  Pen", crate::app::core::mode_system::AnnotationTool::Pen),
+                                ("📝  Note", crate::app::core::mode_system::AnnotationTool::Note),
+                                ("🧹  Eraser", crate::app::core::mode_system::AnnotationTool::Eraser),
                             ];
-                            for (tool, label) in &tools {
+                            for (label, tool) in &tools {
                                 let is_selected = std::mem::discriminant(&tab.modes.annotate.tool) == std::mem::discriminant(tool);
                                 if ui.selectable_label(is_selected, *label).clicked() {
                                     tab.modes.annotate.tool = tool.clone();
@@ -470,87 +562,44 @@ impl FolixApp {
                             if ui.button("Clr").clicked() {
                                 tab.modes.annotate.annotations.clear();
                             }
-
-                            let supports_image = tab.document.as_ref()
-                                .map(|d| d.lock().supports_image())
-                                .unwrap_or(false);
-                            if supports_image {
-                                ui.separator();
-                                if ui.add_enabled(tab.modes.annotate.page > 0, egui::Button::new("◀")).clicked() {
-                                    tab.modes.annotate.page -= 1;
-                                }
-                                if ui.add_enabled(tab.modes.annotate.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
-                                    tab.modes.annotate.page += 1;
-                                }
-                            }
                         }
                     }
                     ModeKind::Edit => {
-                        if doc_count > 0 {
-                            let supports_image = tab.document.as_ref()
-                                .map(|d| d.lock().supports_image())
-                                .unwrap_or(false);
-                            if supports_image {
-                                if ui.add_enabled(tab.modes.edit.page > 0, egui::Button::new("◀")).clicked() {
-                                    tab.modes.edit.page -= 1;
+                        let supports_image = tab.document.as_ref()
+                            .map(|d| d.lock().supports_image())
+                            .unwrap_or(false);
+                        if supports_image {
+                            let path = tab.path.clone();
+                            if let Some(ref p) = path {
+                                if ui.button("↻ CW").clicked() {
+                                    let page = tab.modes.page;
+                                    if edit_operations::rotate_page(p, page, 90).is_ok() {
+                                        needs_reload = Some(p.clone());
+                                    }
                                 }
-                                if ui.add_enabled(tab.modes.edit.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
-                                    tab.modes.edit.page += 1;
+                                if ui.button("↻ CCW").clicked() {
+                                    let page = tab.modes.page;
+                                    if edit_operations::rotate_page(p, page, 270).is_ok() {
+                                        needs_reload = Some(p.clone());
+                                    }
                                 }
-                                ui.separator();
-                                let path = tab.path.clone();
-                                if let Some(ref p) = path {
-                                    if ui.button("↻ CW").clicked() {
-                                        let page = tab.modes.edit.page;
-                                        if edit_operations::rotate_page(p, page, 90).is_ok() {
+                                if ui.button("Del").clicked() {
+                                    let page = tab.modes.page;
+                                    if doc_count > 1 {
+                                        if edit_operations::delete_page(p, page).is_ok() {
                                             needs_reload = Some(p.clone());
                                         }
                                     }
-                                    if ui.button("↻ CCW").clicked() {
-                                        let page = tab.modes.edit.page;
-                                        if edit_operations::rotate_page(p, page, 270).is_ok() {
-                                            needs_reload = Some(p.clone());
-                                        }
-                                    }
-                                    if ui.button("Del").clicked() {
-                                        let page = tab.modes.edit.page;
-                                        if doc_count > 1 {
-                                            if edit_operations::delete_page(p, page).is_ok() {
-                                                needs_reload = Some(p.clone());
-                                            }
-                                        }
-                                    }
-                                    if ui.button("+ Page").clicked() {
-                                        let page = tab.modes.edit.page;
-                                        if edit_operations::insert_blank_page(p, page).is_ok() {
-                                            needs_reload = Some(p.clone());
-                                        }
+                                }
+                                if ui.button("+ Page").clicked() {
+                                    let page = tab.modes.page;
+                                    if edit_operations::insert_blank_page(p, page).is_ok() {
+                                        needs_reload = Some(p.clone());
                                     }
                                 }
                             }
                         }
                     }
-                }
-
-                // Page number on the right
-                if doc_count > 0 {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        match tab.modes.active {
-                            ModeKind::Reading => {
-                                ui.label(format!("Page {}/{}", tab.modes.reading.page + 1, doc_count));
-                            }
-                            ModeKind::Auto => {
-                                let cp = tab.modes.auto.progress as usize;
-                                ui.label(format!("Page {}/{}", cp + 1, doc_count));
-                            }
-                            ModeKind::Annotate => {
-                                ui.label(format!("Page {}/{}", tab.modes.annotate.page + 1, doc_count));
-                            }
-                            ModeKind::Edit => {
-                                ui.label(format!("Page {}/{}", tab.modes.edit.page + 1, doc_count));
-                            }
-                        }
-                    });
                 }
             });
         });

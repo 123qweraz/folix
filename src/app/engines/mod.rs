@@ -15,6 +15,15 @@ pub struct TocEntry {
     pub page_index: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct TextWordPosition {
+    pub text: String,
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
 pub trait Document: Send + Sync {
     fn page_count(&self) -> usize;
     fn page_text(&self, page: usize) -> String;
@@ -34,6 +43,12 @@ pub trait Document: Send + Sync {
 
     /// Table of contents. Each entry maps a label to a page index.
     fn toc_entries(&self) -> Vec<TocEntry> {
+        vec![]
+    }
+
+    /// Positioned text words for a page (bounding boxes in page coordinates).
+    /// Used for hit-testing during text selection. Empty by default.
+    fn page_text_positions(&self, _page: usize) -> Vec<TextWordPosition> {
         vec![]
     }
 }

@@ -20,7 +20,22 @@ cargo build          # compile (no warnings)
 ```
 
 ## Architecture
-Core model: **Mode state machine** — `Reading` / `Auto` / `Annotate`.
+Core model: **Mode state machine** — `LightReading` / `DeepReading` / `Edit`.
+
+```
+TabModes {
+    page            // shared page number — single source of truth
+    scale           // shared zoom
+    reading_layout  // Paged / Scroll
+    reading         // ReadingState (view_mode, sidebar, search, bookmarks, scroll)
+    auto            // AutoState (playing, speed, auto_mode, progress)
+    annotate        // AnnotateState (tool, annotations, selection, stroke_points)
+    edit            // EditState (empty)
+    active          // ModeKind
+}
+```
+
+Toolbars: two-row layout at bottom. Row 1 = mode tabs + basic reading controls (◀ ▶ Zoom Paged/Scroll). Row 2 = mode-specific (Light=Auto-play, Deep=Annotation tools, Edit=Page ops).
 
 ```
 Input → Mode System → Mode Handler → per-mode UI + scoped features
@@ -29,7 +44,7 @@ Input → Mode System → Mode Handler → per-mode UI + scoped features
 Directory structure follows `plan.md`:
 - `src/app/core/` — `AppState`, `Mode` enum, `DocumentManager`, `FeatureSystem`
 - `src/app/engines/` — `Document` trait + `PdfDocument` / `ReflowDocument`
-- `src/app/ui/` — egui shell (`FolixApp`), mode-specific UI
+- `src/app/ui/` — egui shell (`FolixApp`), unified rendering (`mode_ui.rs`)
 - `src/app/render/` — `TextRenderer` (cosmic-text wrapper), wgpu stubs
 - `src/app/storage/` — SQLite `Database` with schema for books/progress/annotations/etc.
 - `src/app/interaction/`, `auto_reading/`, `annotation/`, `layout/`, `services/`, `platform/` — stubs
@@ -44,17 +59,21 @@ Reading mode's Text view uses `TextRenderer` (`render/text_renderer.rs`):
 Benefits over egui's native text: HarfBuzz shaping for all scripts, per-char font fallback via fontdb, color emoji via Swash.
 
 ## Key conventions
-- UI never operates on documents directly; it routes through modes (`ModeController` trait).
+- `page`/`scale`/`reading_layout` are shared in `TabModes` (not per-mode) — single source of truth.
 - Document is wrapped in `Arc<Mutex<Box<dyn Document>>>` — cheaply cloneable for UI.
-- `render_reading`/`render_auto`/`render_annotate` take `document: &Option<Arc<...>>` separately to avoid borrow conflicts with mode state.
+- **Unified rendering**: ALL modes use the same `render_document()` function. Mode-specific features (auto-play, annotations) pass as optional params. Images are always centered, scroll state uses a single `"pdf_scroll_reading"` id_salt.
+- Auto-play is integrated into `render_document` as an overlay (Paged = timer-based page advance, Scroll = auto-scroll).
 
 ## What's implemented (working)
 - egui window with menu bar (File → Open/Close/Quit, Mode switch, Help → About)
-- Mode toolbar: switches between Reading / Auto / Annotate
+- 3 modes: LightReading (basic + auto-play), DeepReading (basic + annotation), Edit (basic + page ops)
+- Two-row bottom toolbar: Row 1 = shared controls, Row 2 = mode-specific
+- Settings tab (⚙) with toolbar icon size, visibility, background color
 - File open dialog (rfd) for PDF, EPUB, TXT
-- Reading mode: page nav, zoom slider, Text view (cosmic-text) / Image view (MuPDF Pixmap) toggle
-- Auto mode: play/pause, speed control, auto-play mode selector (PageFlow/GlyphReveal/SentenceStream)
-- Annotate mode: tool selector (Highlight/Pen/Note/Eraser/Select), undo/clear
+- All modes: page nav, zoom slider, Paged/Scroll layout toggle
+- LightReading: play/pause, speed control, auto-play mode selector
+- DeepReading: tool selector (Highlight/Pen/Note/Eraser/Select), undo/clear, text selection + copy
+- Edit mode: page rotate (CW/CCW), delete, insert blank page
 - SQLite schema creation (6 tables)
 - CJK text rendering (cosmic-text font fallback via fontdb)
 - Multi-encoding TXT (UTF-8, GBK, Big5, Shift_JIS)

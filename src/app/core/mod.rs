@@ -4,4 +4,4 @@ pub mod document_manager;
 pub mod feature_system;
 
 pub use mode_system::{ModeKind, TabModes, ReadingLayout};
-pub use app_state::{AppState, OpenTab};
+pub use app_state::{AppState, OpenTab, TabContent, AppSettings};

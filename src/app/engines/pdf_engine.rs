@@ -1,4 +1,4 @@
-use super::{Document, RenderedPage, TocEntry};
+use super::{Document, RenderedPage, TocEntry, TextWordPosition};
 use mupdf::{Document as MuDocument, MetadataName, TextExtractOptions, Colorspace, Matrix};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -26,6 +26,7 @@ pub struct PdfDocument {
     render_cache: Mutex<HashMap<usize, (f32, RenderedPage)>>,
     page_sizes_cache: Mutex<Option<Vec<(f32, f32)>>>,
     text_cache: Mutex<HashMap<usize, String>>,
+    text_positions_cache: Mutex<HashMap<usize, Vec<TextWordPosition>>>,
 }
 
 impl PdfDocument {
@@ -63,6 +64,7 @@ impl PdfDocument {
             render_cache: Mutex::new(HashMap::new()),
             page_sizes_cache: Mutex::new(None),
             text_cache: Mutex::new(HashMap::new()),
+            text_positions_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -118,6 +120,45 @@ impl Document for PdfDocument {
 
     fn toc_entries(&self) -> Vec<TocEntry> {
         self.toc.clone()
+    }
+
+    fn page_text_positions(&self, page: usize) -> Vec<TextWordPosition> {
+        {
+            let cache = self.text_positions_cache.lock();
+            if let Some(positions) = cache.get(&page) {
+                return positions.clone();
+            }
+        }
+
+        let doc = match MuDocument::open(&self.path) {
+            Ok(d) => d,
+            Err(_) => return vec![],
+        };
+        let page_obj = match doc.load_page(page as i32) {
+            Ok(p) => p,
+            Err(_) => return vec![],
+        };
+        let words = match page_obj.words(TextExtractOptions::default()) {
+            Ok(w) => w,
+            Err(_) => return vec![],
+        };
+        let positions: Vec<TextWordPosition> = words
+            .into_iter()
+            .map(|w| TextWordPosition {
+                text: w.text,
+                x0: w.bounds.x0,
+                y0: w.bounds.y0,
+                x1: w.bounds.x1,
+                y1: w.bounds.y1,
+            })
+            .collect();
+
+        {
+            let mut cache = self.text_positions_cache.lock();
+            cache.insert(page, positions.clone());
+        }
+
+        positions
     }
 
     fn render_page(&self, page: usize, scale: f32) -> Option<RenderedPage> {

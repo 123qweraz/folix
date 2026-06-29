@@ -4,33 +4,22 @@ pub trait ModeHandler {
     fn handle(&mut self, state: &mut AppState);
 }
 
-pub struct ReadingHandler;
-impl ModeHandler for ReadingHandler {
+pub struct LightReadingHandler;
+impl ModeHandler for LightReadingHandler {
     fn handle(&mut self, state: &mut AppState) {
         if let Some(tab) = state.current_tab_mut() {
-            if tab.modes.active == ModeKind::Reading {
+            if tab.modes.active == ModeKind::LightReading {
                 let _ = &tab.modes.reading;
             }
         }
     }
 }
 
-pub struct AutoHandler;
-impl ModeHandler for AutoHandler {
+pub struct DeepReadingHandler;
+impl ModeHandler for DeepReadingHandler {
     fn handle(&mut self, state: &mut AppState) {
         if let Some(tab) = state.current_tab_mut() {
-            if tab.modes.active == ModeKind::Auto {
-                let _ = &tab.modes.auto;
-            }
-        }
-    }
-}
-
-pub struct AnnotateHandler;
-impl ModeHandler for AnnotateHandler {
-    fn handle(&mut self, state: &mut AppState) {
-        if let Some(tab) = state.current_tab_mut() {
-            if tab.modes.active == ModeKind::Annotate {
+            if tab.modes.active == ModeKind::DeepReading {
                 let _ = &tab.modes.annotate;
             }
         }
