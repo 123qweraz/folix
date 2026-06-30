@@ -93,4 +93,5 @@ Benefits over egui's native text: HarfBuzz shaping for all scripts, per-char fon
 - `cosmic_text::FontSystem::new()` scans all system fonts (slow first call, ok at startup)
 - `cosmic_text::Buffer::draw()` takes `(&mut FontSystem, &mut SwashCache, Color, FnMut)` — the `FontSystem` must NOT be borrowed by `borrow_with` at call time
 - `TextRenderer::render()` creates a new `Buffer` per call; OK for document text, not for realtime UI
+- **Git discipline**: after every successful `cargo build`, run `git add -A && git commit -m "..."` to save progress.
 - Read `plan.md` for full design doc.

@@ -617,22 +617,64 @@ impl FolixApp {
                     ModeKind::DeepReading => {
                         if tab.modes.active == ModeKind::DeepReading {
                             let tool = &tab.modes.annotate.tool;
-                            let is_high = *tool == AnnotationTool::Highlight;
+                            let is_sel = *tool == AnnotationTool::Highlight;
                             let is_pen = *tool == AnnotationTool::Pen;
-                            let is_note = *tool == AnnotationTool::Note;
                             let is_eraser = *tool == AnnotationTool::Eraser;
-                            if ui.selectable_label(is_high, "High").clicked() {
+                            if ui.selectable_label(is_sel, "Sel").clicked() {
                                 tab.modes.annotate.tool = AnnotationTool::Highlight;
                             }
                             if ui.selectable_label(is_pen, "Pen").clicked() {
                                 tab.modes.annotate.tool = AnnotationTool::Pen;
                             }
-                            if ui.selectable_label(is_note, "Note").clicked() {
-                                tab.modes.annotate.tool = AnnotationTool::Note;
-                            }
                             if ui.selectable_label(is_eraser, "Eraser").clicked() {
                                 tab.modes.annotate.tool = AnnotationTool::Eraser;
                             }
+                            ui.separator();
+
+                            // Highlight Selected button
+                            let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
+                                && tab.modes.reading.selection.page == tab.modes.page;
+                            if ui.add_enabled(has_sel, egui::Button::new("High")).clicked() {
+                                if let Some(ref doc) = tab.document {
+                                    let page = tab.modes.page;
+                                    let words = doc.lock().page_text_positions(page);
+                                    let indices = &tab.modes.reading.selection.selected_word_indices;
+                                    let mut x0 = f32::MAX; let mut y0 = f32::MAX;
+                                    let mut x1 = f32::MIN; let mut y1 = f32::MIN;
+                                    for &idx in indices {
+                                        if let Some(w) = words.get(idx) {
+                                            x0 = x0.min(w.x0); y0 = y0.min(w.y0);
+                                            x1 = x1.max(w.x1); y1 = y1.max(w.y1);
+                                        }
+                                    }
+                                    if x0 != f32::MAX {
+                                        tab.modes.annotate.annotations.push(Annotation {
+                                            id: uuid::Uuid::new_v4().to_string(),
+                                            doc_id: String::new(),
+                                            kind: AnnotationTool::Highlight,
+                                            page,
+                                            rect: [x0, y0, x1, y1],
+                                            note: None,
+                                            color: tab.modes.annotate.current_color,
+                                        });
+                                        tab.modes.reading.selection.selected_word_indices.clear();
+                                        tab.modes.reading.selection.anchor = None;
+                                        tab.modes.reading.selection.focus = None;
+                                    }
+                                }
+                            }
+
+                            // Note on last highlight button
+                            if ui.button("Note").clicked() {
+                                let page = tab.modes.page;
+                                if let Some(last) = tab.modes.annotate.annotations.iter().rev().find(|a| {
+                                    a.page == page && a.kind == AnnotationTool::Highlight
+                                }) {
+                                    tab.modes.annotate.editing_note_id = Some(last.id.clone());
+                                    tab.modes.annotate.note_text_buffer = last.note.clone().unwrap_or_default();
+                                }
+                            }
+
                             ui.separator();
                             // Color swatches
                             for &c in &crate::app::core::mode_system::HIGHLIGHT_COLORS {
@@ -651,8 +693,6 @@ impl FolixApp {
                             if ui.button("Clr").clicked() {
                                 tab.modes.annotate.annotations.clear();
                             }
-                            ui.separator();
-                            ui.label("High / Pen / Note / Eraser");
                         }
                     }
                     ModeKind::Edit => {

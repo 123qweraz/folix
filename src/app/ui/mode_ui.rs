@@ -261,296 +261,170 @@ fn render_image_page(
 
     let words = all_words.get(&page_idx);
 
-    // --- Tool-based interaction (only in DeepReading mode) ---
+    // --- Interaction (selection in all modes, tool-specific overrides) ---
     let tool = annotate.as_ref().map(|a| a.tool.clone());
 
-    match tool {
-        Some(AnnotationTool::Highlight) => {
-            // Drag → create highlight annotation (always creates rect-based)
-            if response.drag_started() {
-                if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rx = (mouse_pos.x - image_rect.left()) / scale;
-                    let ry = (mouse_pos.y - image_rect.top()) / scale;
-                    if let Some(ann) = annotate.as_mut() {
-                        ann.selecting = true;
-                        ann.selection_anchor = Some((rx, ry));
-                        ann.selection_focus = Some((rx, ry));
-                        ann.selection_page = page_idx;
-                    }
+    // Render text selection overlay (always, regardless of tool)
+    if let Some(words_data) = words {
+        if !selection.selected_word_indices.is_empty() && selection.page == page_idx {
+            for &idx in &selection.selected_word_indices {
+                if let Some(w) = words_data.get(idx) {
+                    let r = egui::Rect::from_min_max(
+                        egui::pos2(image_rect.left() + w.x0 * scale, image_rect.top() + w.y0 * scale),
+                        egui::pos2(image_rect.left() + w.x1 * scale, image_rect.top() + w.y1 * scale),
+                    );
+                    ui.painter().rect_filled(
+                        r, 0.0,
+                        egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
+                    );
                 }
             }
+        }
+    }
 
+    // Dispatch interaction based on active tool
+    if tool == Some(AnnotationTool::Pen) {
+        // --- Pen: freehand drawing (monopolizes drag events) ---
+        if response.drag_started() {
+            if let Some(mouse_pos) = response.interact_pointer_pos() {
+                let rx = (mouse_pos.x - image_rect.left()) / scale;
+                let ry = (mouse_pos.y - image_rect.top()) / scale;
+                if let Some(ann) = annotate.as_mut() {
+                    ann.stroke_points.clear();
+                    ann.stroke_points.push([rx, ry]);
+                }
+            }
+        }
+
+        if let Some(ann) = annotate.as_mut() {
             if response.dragged() {
-                if let Some(ann) = annotate.as_mut() {
-                    if ann.selecting && ann.selection_page == page_idx {
-                        if let Some(mouse_pos) = response.interact_pointer_pos() {
-                            let rx = (mouse_pos.x - image_rect.left()) / scale;
-                            let ry = (mouse_pos.y - image_rect.top()) / scale;
-                            ann.selection_focus = Some((rx, ry));
-                        }
-                    }
+                if let Some(mouse_pos) = response.interact_pointer_pos() {
+                    let rx = (mouse_pos.x - image_rect.left()) / scale;
+                    let ry = (mouse_pos.y - image_rect.top()) / scale;
+                    ann.stroke_points.push([rx, ry]);
                 }
             }
 
             if response.drag_stopped() {
-                if let Some(ann) = annotate.as_mut() {
-                    if ann.selecting {
-                        ann.selecting = false;
-                        if let (Some(a), Some(f)) = (ann.selection_anchor, ann.selection_focus) {
-                            let x0 = a.0.min(f.0);
-                            let y0 = a.1.min(f.1);
-                            let x1 = a.0.max(f.0);
-                            let y1 = a.1.max(f.1);
-                            if (x1 - x0).abs() > 2.0 / scale || (y1 - y0).abs() > 2.0 / scale {
-                                ann.annotations.push(Annotation {
-                                    id: uuid::Uuid::new_v4().to_string(),
-                                    doc_id: String::new(),
-                                    kind: AnnotationTool::Highlight,
-                                    page: page_idx,
-                                    rect: [x0, y0, x1, y1],
-                                    note: None,
-                                    color: ann.current_color,
-                                });
-                            }
-                            ann.selection_anchor = None;
-                            ann.selection_focus = None;
-                        }
-                    }
-                }
-            }
-
-            // Drag preview
-            if let Some(ann) = annotate.as_ref() {
-                if ann.selecting && ann.selection_page == page_idx {
-                    if let (Some(a), Some(f)) = (ann.selection_anchor, ann.selection_focus) {
-                        let x0 = a.0.min(f.0);
-                        let y0 = a.1.min(f.1);
-                        let x1 = a.0.max(f.0);
-                        let y1 = a.1.max(f.1);
-                        let r = egui::Rect::from_min_max(
-                            egui::pos2(image_rect.left() + x0 * scale, image_rect.top() + y0 * scale),
-                            egui::pos2(image_rect.left() + x1 * scale, image_rect.top() + y1 * scale),
-                        );
-                        let c = ann.current_color;
-                        ui.painter().rect_filled(r, 0.0, egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]));
-                    }
-                }
-            }
-        }
-
-        Some(AnnotationTool::Pen) => {
-            // Drag → draw freehand stroke
-            if response.drag_started() {
-                if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rx = (mouse_pos.x - image_rect.left()) / scale;
-                    let ry = (mouse_pos.y - image_rect.top()) / scale;
-                    if let Some(ann) = annotate.as_mut() {
-                        ann.stroke_points.clear();
-                        ann.stroke_points.push([rx, ry]);
-                    }
-                }
-            }
-
-            if let Some(ann) = annotate.as_mut() {
-                if response.dragged() {
-                    if let Some(mouse_pos) = response.interact_pointer_pos() {
-                        let rx = (mouse_pos.x - image_rect.left()) / scale;
-                        let ry = (mouse_pos.y - image_rect.top()) / scale;
-                        ann.stroke_points.push([rx, ry]);
-                    }
-                }
-
-                if response.drag_stopped() {
-                    if !ann.stroke_points.is_empty() {
-                        let pts = ann.stroke_points.clone();
-                        let data = serde_json::to_string(&pts).unwrap_or_default();
-                        ann.annotations.push(Annotation {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            doc_id: String::new(),
-                            kind: AnnotationTool::Pen,
-                            page: page_idx,
-                            rect: [0.0, 0.0, 0.0, 0.0],
-                            note: Some(data),
-                            color: ann.current_color,
-                        });
-                        ann.stroke_points.clear();
-                    }
-                }
-
-                // Draw in-progress stroke
                 if !ann.stroke_points.is_empty() {
-                    let points: Vec<egui::Pos2> = ann.stroke_points.iter().map(|&[x, y]| {
-                        egui::pos2(image_rect.left() + x * scale, image_rect.top() + y * scale)
-                    }).collect();
-                    if points.len() > 1 {
-                        for w in points.windows(2) {
-                            ui.painter().line_segment(
-                                [w[0], w[1]],
-                                egui::Stroke::new(3.0, egui::Color32::from_rgba_premultiplied(255, 100, 50, 200)),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        Some(AnnotationTool::Note) => {
-            // Short drag/click → place note marker, then open edit popup
-            if response.drag_started() {
-                if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rx = (mouse_pos.x - image_rect.left()) / scale;
-                    let ry = (mouse_pos.y - image_rect.top()) / scale;
-                    if let Some(ann) = annotate.as_mut() {
-                        ann.selection_anchor = Some((rx, ry));
-                    }
-                }
-            }
-
-            if response.drag_stopped() {
-                if let Some(ann) = annotate.as_mut() {
-                    if let (Some(mouse_pos), Some(anchor)) = (response.interact_pointer_pos(), ann.selection_anchor) {
-                        let rx = (mouse_pos.x - image_rect.left()) / scale;
-                        let ry = (mouse_pos.y - image_rect.top()) / scale;
-                        let dx = rx - anchor.0;
-                        let dy = ry - anchor.1;
-                        if (dx * dx + dy * dy).sqrt() * scale < 8.0 {
-                            // Check if clicking on existing note
-                            let hit = ann.annotations.iter().position(|a| {
-                                a.page == page_idx && a.kind == AnnotationTool::Note && {
-                                    let ddx = a.rect[0] - rx;
-                                    let ddy = a.rect[1] - ry;
-                                    (ddx * ddx + ddy * ddy).sqrt() < 20.0 / scale
-                                }
-                            });
-                            if let Some(idx) = hit {
-                                ann.editing_note_id = Some(ann.annotations[idx].id.clone());
-                                ann.note_text_buffer = ann.annotations[idx].note.clone().unwrap_or_default();
-                            } else {
-                                ann.annotations.push(Annotation {
-                                    id: uuid::Uuid::new_v4().to_string(),
-                                    doc_id: String::new(),
-                                    kind: AnnotationTool::Note,
-                                    page: page_idx,
-                                    rect: [rx, ry, 0.0, 0.0],
-                                    note: None,
-                                    color: [0; 4],
-                                });
-                                if let Some(last) = ann.annotations.last() {
-                                    ann.editing_note_id = Some(last.id.clone());
-                                    ann.note_text_buffer = String::new();
-                                }
-                            }
-                        }
-                    }
-                    ann.selection_anchor = None;
-                }
-            }
-
-            // Note edit popup
-            if let Some(ann) = annotate.as_mut() {
-                if let Some(ref edit_id) = ann.editing_note_id.clone() {
-                    let mut keep = true;
-                    egui::Window::new("Edit Note")
-                        .open(&mut keep)
-                        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                        .show(ui.ctx(), |ui| {
-                            ui.label("Note text:");
-                            ui.add_space(4.0);
-                            ui.add(egui::TextEdit::multiline(&mut ann.note_text_buffer)
-                                .desired_width(200.0)
-                                .desired_rows(4));
-                            ui.add_space(8.0);
-                            if ui.button("Save").clicked() {
-                                if let Some(a) = ann.annotations.iter_mut().find(|a| a.id == *edit_id) {
-                                    a.note = if ann.note_text_buffer.is_empty() {
-                                        None
-                                    } else {
-                                        Some(ann.note_text_buffer.clone())
-                                    };
-                                }
-                                ann.editing_note_id = None;
-                                ann.note_text_buffer.clear();
-                            }
-                        });
-                    if !keep {
-                        ann.editing_note_id = None;
-                        ann.note_text_buffer.clear();
-                    }
-                }
-            }
-        }
-
-        Some(AnnotationTool::Eraser) => {
-            // Short drag/click → erase annotation under cursor
-            let mut erase_pos: Option<(f32, f32)> = None;
-            if response.drag_started() {
-                if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rx = (mouse_pos.x - image_rect.left()) / scale;
-                    let ry = (mouse_pos.y - image_rect.top()) / scale;
-                    if let Some(ann) = annotate.as_mut() {
-                        ann.selection_anchor = Some((rx, ry));
-                    }
-                }
-            }
-            if response.drag_stopped() {
-                if let Some(ann) = annotate.as_mut() {
-                    if let (Some(mouse_pos), Some(anchor)) = (response.interact_pointer_pos(), ann.selection_anchor) {
-                        let rx = (mouse_pos.x - image_rect.left()) / scale;
-                        let ry = (mouse_pos.y - image_rect.top()) / scale;
-                        let dx = rx - anchor.0;
-                        let dy = ry - anchor.1;
-                        if (dx * dx + dy * dy).sqrt() * scale < 8.0 {
-                            erase_pos = Some((rx, ry));
-                        }
-                    }
-                    ann.selection_anchor = None;
-                }
-            }
-            if let Some((rx, ry)) = erase_pos {
-                if let Some(ann) = annotate.as_mut() {
-                    let hit = ann.annotations.iter().position(|a| {
-                        if a.page != page_idx { return false; }
-                        match a.kind {
-                            AnnotationTool::Highlight => {
-                                rx >= a.rect[0] && rx <= a.rect[2] && ry >= a.rect[1] && ry <= a.rect[3]
-                            }
-                            AnnotationTool::Pen => {
-                                if let Some(data) = &a.note {
-                                    if let Ok(pts) = serde_json::from_str::<Vec<[f32; 2]>>(data) {
-                                        let th = 15.0 / scale;
-                                        pts.iter().any(|&[x, y]| {
-                                            let ddx = x - rx;
-                                            let ddy = y - ry;
-                                            (ddx * ddx + ddy * ddy).sqrt() < th
-                                        })
-                                    } else { false }
-                                } else { false }
-                            }
-                            AnnotationTool::Note => {
-                                let ddx = a.rect[0] - rx;
-                                let ddy = a.rect[1] - ry;
-                                (ddx * ddx + ddy * ddy).sqrt() < 25.0 / scale
-                            }
-                            AnnotationTool::Eraser => false,
-                        }
+                    let pts = ann.stroke_points.clone();
+                    let data = serde_json::to_string(&pts).unwrap_or_default();
+                    ann.annotations.push(Annotation {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        doc_id: String::new(),
+                        kind: AnnotationTool::Pen,
+                        page: page_idx,
+                        rect: [0.0, 0.0, 0.0, 0.0],
+                        note: Some(data),
+                        color: ann.current_color,
                     });
-                    if let Some(idx) = hit {
-                        ann.annotations.remove(idx);
+                    ann.stroke_points.clear();
+                }
+            }
+
+            // Draw in-progress stroke
+            if !ann.stroke_points.is_empty() {
+                let points: Vec<egui::Pos2> = ann.stroke_points.iter().map(|&[x, y]| {
+                    egui::pos2(image_rect.left() + x * scale, image_rect.top() + y * scale)
+                }).collect();
+                if points.len() > 1 {
+                    for w in points.windows(2) {
+                        ui.painter().line_segment(
+                            [w[0], w[1]],
+                            egui::Stroke::new(3.0, egui::Color32::from_rgba_premultiplied(255, 100, 50, 200)),
+                        );
+                    }
+                }
+            }
+        }
+    } else if tool == Some(AnnotationTool::Eraser) {
+        // --- Eraser: click-to-delete annotation (monopolizes drag events) ---
+        let mut erase_pos: Option<(f32, f32)> = None;
+        if response.drag_started() {
+            if let Some(mouse_pos) = response.interact_pointer_pos() {
+                let rx = (mouse_pos.x - image_rect.left()) / scale;
+                let ry = (mouse_pos.y - image_rect.top()) / scale;
+                if let Some(ann) = annotate.as_mut() {
+                    ann.selection_anchor = Some((rx, ry));
+                }
+            }
+        }
+        if response.drag_stopped() {
+            if let Some(ann) = annotate.as_mut() {
+                if let (Some(mouse_pos), Some(anchor)) = (response.interact_pointer_pos(), ann.selection_anchor) {
+                    let rx = (mouse_pos.x - image_rect.left()) / scale;
+                    let ry = (mouse_pos.y - image_rect.top()) / scale;
+                    let dx = rx - anchor.0;
+                    let dy = ry - anchor.1;
+                    if (dx * dx + dy * dy).sqrt() * scale < 8.0 {
+                        erase_pos = Some((rx, ry));
+                    }
+                }
+                ann.selection_anchor = None;
+            }
+        }
+        if let Some((rx, ry)) = erase_pos {
+            if let Some(ann) = annotate.as_mut() {
+                let hit = ann.annotations.iter().position(|a| {
+                    if a.page != page_idx { return false; }
+                    match a.kind {
+                        AnnotationTool::Highlight => {
+                            rx >= a.rect[0] && rx <= a.rect[2] && ry >= a.rect[1] && ry <= a.rect[3]
+                        }
+                        AnnotationTool::Pen => {
+                            if let Some(data) = &a.note {
+                                if let Ok(pts) = serde_json::from_str::<Vec<[f32; 2]>>(data) {
+                                    let th = 15.0 / scale;
+                                    pts.iter().any(|&[x, y]| {
+                                        let ddx = x - rx;
+                                        let ddy = y - ry;
+                                        (ddx * ddx + ddy * ddy).sqrt() < th
+                                    })
+                                } else { false }
+                            } else { false }
+                        }
+                        AnnotationTool::Note => {
+                            let ddx = a.rect[0] - rx;
+                            let ddy = a.rect[1] - ry;
+                            (ddx * ddx + ddy * ddy).sqrt() < 25.0 / scale
+                        }
+                        AnnotationTool::Eraser => false,
+                    }
+                });
+                if let Some(idx) = hit {
+                    ann.annotations.remove(idx);
+                }
+            }
+        }
+    } else {
+        // --- Text selection (Highlight / None / Note tools) ---
+        let shift_held = ui.input(|i| i.modifiers.shift);
+
+        // Double-click → select word
+        if response.double_clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let rx = (pos.x - image_rect.left()) / scale;
+                let ry = (pos.y - image_rect.top()) / scale;
+                if let Some(words_data) = words {
+                    if let Some(idx) = find_word_at(words_data, rx, ry) {
+                        let w = &words_data[idx];
+                        selection.selected_word_indices = vec![idx];
+                        selection.anchor = Some((w.x0, w.y0));
+                        selection.focus = Some((w.x1, w.y1));
+                        selection.page = page_idx;
+                        selection.selecting = false;
                     }
                 }
             }
         }
 
-        None => {
-            // --- Text selection (LightReading / Edit mode) ---
-            let shift_held = ui.input(|i| i.modifiers.shift);
-
-            // Double-click → select word
-            if response.double_clicked() {
-                if let Some(pos) = response.interact_pointer_pos() {
-                    let rx = (pos.x - image_rect.left()) / scale;
-                    let ry = (pos.y - image_rect.top()) / scale;
-                    if let Some(words_data) = words {
+        // Shift+click → extend selection from anchor to click position
+        if shift_held && response.clicked() && !response.double_clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let rx = (pos.x - image_rect.left()) / scale;
+                let ry = (pos.y - image_rect.top()) / scale;
+                if let Some(words_data) = words {
+                    if selection.selected_word_indices.is_empty() || selection.page != page_idx {
                         if let Some(idx) = find_word_at(words_data, rx, ry) {
                             let w = &words_data[idx];
                             selection.selected_word_indices = vec![idx];
@@ -559,112 +433,125 @@ fn render_image_page(
                             selection.page = page_idx;
                             selection.selecting = false;
                         }
+                    } else if let Some(anchor) = selection.anchor {
+                        selection.focus = Some((rx, ry));
+                        selection.selected_word_indices = find_words_in_range(
+                            words_data,
+                            anchor.0.min(rx),
+                            anchor.1.min(ry),
+                            anchor.0.max(rx),
+                            anchor.1.max(ry),
+                        );
+                        selection.selecting = false;
                     }
                 }
             }
+        }
 
-            // Shift+click → extend selection from anchor to click position
-            if shift_held && response.clicked() && !response.double_clicked() {
-                if let Some(pos) = response.interact_pointer_pos() {
-                    let rx = (pos.x - image_rect.left()) / scale;
-                    let ry = (pos.y - image_rect.top()) / scale;
-                    if let Some(words_data) = words {
-                        if selection.selected_word_indices.is_empty() || selection.page != page_idx {
-                            if let Some(idx) = find_word_at(words_data, rx, ry) {
-                                let w = &words_data[idx];
-                                selection.selected_word_indices = vec![idx];
-                                selection.anchor = Some((w.x0, w.y0));
-                                selection.focus = Some((w.x1, w.y1));
-                                selection.page = page_idx;
-                                selection.selecting = false;
-                            }
-                        } else if let Some(anchor) = selection.anchor {
-                            selection.focus = Some((rx, ry));
-                            selection.selected_word_indices = find_words_in_range(
-                                words_data,
-                                anchor.0.min(rx),
-                                anchor.1.min(ry),
-                                anchor.0.max(rx),
-                                anchor.1.max(ry),
-                            );
-                            selection.selecting = false;
-                        }
-                    }
+        // Drag selection
+        if !shift_held && !response.double_clicked() && response.drag_started() {
+            if let Some(mouse_pos) = response.interact_pointer_pos() {
+                let rx = (mouse_pos.x - image_rect.left()) / scale;
+                let ry = (mouse_pos.y - image_rect.top()) / scale;
+                selection.selecting = true;
+                selection.anchor = Some((rx, ry));
+                selection.focus = Some((rx, ry));
+                selection.page = page_idx;
+                if let Some(words_data) = words {
+                    selection.selected_word_indices = find_words_in_range(words_data, rx, ry, rx, ry);
                 }
             }
+        }
 
-            // Render selected word highlights
-            if let Some(words_data) = words {
-                if !selection.selected_word_indices.is_empty() && selection.page == page_idx {
-                    for &idx in &selection.selected_word_indices {
-                        if let Some(w) = words_data.get(idx) {
-                            let r = egui::Rect::from_min_max(
-                                egui::pos2(image_rect.left() + w.x0 * scale, image_rect.top() + w.y0 * scale),
-                                egui::pos2(image_rect.left() + w.x1 * scale, image_rect.top() + w.y1 * scale),
-                            );
-                            ui.painter().rect_filled(
-                                r, 0.0,
-                                egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Drag selection (independent from click/double-click)
-            if !shift_held && !response.double_clicked() && response.drag_started() {
-                if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rx = (mouse_pos.x - image_rect.left()) / scale;
-                    let ry = (mouse_pos.y - image_rect.top()) / scale;
-                    selection.selecting = true;
-                    selection.anchor = Some((rx, ry));
-                    selection.focus = Some((rx, ry));
-                    selection.page = page_idx;
-                    if let Some(words_data) = words {
-                        selection.selected_word_indices = find_words_in_range(words_data, rx, ry, rx, ry);
-                    }
-                }
-            }
-
-            if selection.selecting && selection.page == page_idx && response.dragged() {
-                if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rx = (mouse_pos.x - image_rect.left()) / scale;
-                    let ry = (mouse_pos.y - image_rect.top()) / scale;
-                    selection.focus = Some((rx, ry));
-                    if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
-                        if let Some(words_data) = words {
-                            selection.selected_word_indices = find_words_in_range(
-                                words_data,
-                                anchor.0.min(focus.0),
-                                anchor.1.min(focus.1),
-                                anchor.0.max(focus.0),
-                                anchor.1.max(focus.1),
-                            );
-                        }
-                    }
-                }
-            }
-
-            if response.drag_stopped() {
-                selection.selecting = false;
-            }
-
-            // Drag preview line
-            if selection.selecting && selection.page == page_idx {
+        if selection.selecting && selection.page == page_idx && response.dragged() {
+            if let Some(mouse_pos) = response.interact_pointer_pos() {
+                let rx = (mouse_pos.x - image_rect.left()) / scale;
+                let ry = (mouse_pos.y - image_rect.top()) / scale;
+                selection.focus = Some((rx, ry));
                 if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
-                    let from = egui::pos2(
-                        image_rect.left() + anchor.0 * scale,
-                        image_rect.top() + anchor.1 * scale,
-                    );
-                    let to = egui::pos2(
-                        image_rect.left() + focus.0 * scale,
-                        image_rect.top() + focus.1 * scale,
-                    );
-                    ui.painter().line_segment(
-                        [from, to],
-                        egui::Stroke::new(2.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 200)),
-                    );
+                    if let Some(words_data) = words {
+                        selection.selected_word_indices = find_words_in_range(
+                            words_data,
+                            anchor.0.min(focus.0),
+                            anchor.1.min(focus.1),
+                            anchor.0.max(focus.0),
+                            anchor.1.max(focus.1),
+                        );
+                    }
                 }
+            }
+        }
+
+        if response.drag_stopped() {
+            selection.selecting = false;
+        }
+
+        // Drag preview line
+        if selection.selecting && selection.page == page_idx {
+            if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
+                let from = egui::pos2(
+                    image_rect.left() + anchor.0 * scale,
+                    image_rect.top() + anchor.1 * scale,
+                );
+                let to = egui::pos2(
+                    image_rect.left() + focus.0 * scale,
+                    image_rect.top() + focus.1 * scale,
+                );
+                ui.painter().line_segment(
+                    [from, to],
+                    egui::Stroke::new(2.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 200)),
+                );
+            }
+        }
+
+        // Note tool: click on existing highlight to edit note
+        if tool == Some(AnnotationTool::Note) && !shift_held && response.clicked() && !response.double_clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let rx = (pos.x - image_rect.left()) / scale;
+                let ry = (pos.y - image_rect.top()) / scale;
+                if let Some(ann) = annotate.as_mut() {
+                    let hit = ann.annotations.iter().position(|a| {
+                        a.page == page_idx && a.kind == AnnotationTool::Highlight &&
+                        rx >= a.rect[0] && rx <= a.rect[2] && ry >= a.rect[1] && ry <= a.rect[3]
+                    });
+                    if let Some(idx) = hit {
+                        ann.editing_note_id = Some(ann.annotations[idx].id.clone());
+                        ann.note_text_buffer = ann.annotations[idx].note.clone().unwrap_or_default();
+                    }
+                }
+            }
+        }
+    }
+
+    // Note edit popup (shown when editing_note_id is set, regardless of tool)
+    if let Some(ann) = annotate.as_mut() {
+        if let Some(ref edit_id) = ann.editing_note_id.clone() {
+            let mut keep = true;
+            egui::Window::new("Edit Note")
+                .open(&mut keep)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    ui.label("Note text:");
+                    ui.add_space(4.0);
+                    ui.add(egui::TextEdit::multiline(&mut ann.note_text_buffer)
+                        .desired_width(200.0)
+                        .desired_rows(4));
+                    ui.add_space(8.0);
+                    if ui.button("Save").clicked() {
+                        if let Some(a) = ann.annotations.iter_mut().find(|a| a.id == *edit_id) {
+                            a.note = if ann.note_text_buffer.is_empty() {
+                                None
+                            } else {
+                                Some(ann.note_text_buffer.clone())
+                            };
+                        }
+                        ann.editing_note_id = None;
+                        ann.note_text_buffer.clear();
+                    }
+                });
+            if !keep {
+                ann.editing_note_id = None;
+                ann.note_text_buffer.clear();
             }
         }
     }
