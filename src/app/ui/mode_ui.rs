@@ -463,8 +463,9 @@ fn render_image_page(
             }
         }
 
-        // Drag selection
+        // Drag selection (normal drag replaces, Ctrl+drag adds to selection)
         if !shift_held && !response.double_clicked() && response.drag_started() {
+            let ctrl_held = ui.input(|i| i.modifiers.ctrl);
             if let Some(mouse_pos) = response.interact_pointer_pos() {
                 let rx = (mouse_pos.x - image_rect.left()) / scale;
                 let ry = (mouse_pos.y - image_rect.top()) / scale;
@@ -472,26 +473,39 @@ fn render_image_page(
                 selection.anchor = Some((rx, ry));
                 selection.focus = Some((rx, ry));
                 selection.page = page_idx;
-                if let Some(words_data) = words {
-                    selection.selected_word_indices = find_words_in_range(words_data, rx, ry, rx, ry);
+                if !ctrl_held {
+                    if let Some(words_data) = words {
+                        selection.selected_word_indices = find_words_in_range(words_data, rx, ry, rx, ry);
+                    }
                 }
+                // Ctrl+drag: keep existing selection, just begin tracking
             }
         }
 
         if selection.selecting && selection.page == page_idx && response.dragged() {
+            let ctrl_held = ui.input(|i| i.modifiers.ctrl);
             if let Some(mouse_pos) = response.interact_pointer_pos() {
                 let rx = (mouse_pos.x - image_rect.left()) / scale;
                 let ry = (mouse_pos.y - image_rect.top()) / scale;
                 selection.focus = Some((rx, ry));
                 if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
                     if let Some(words_data) = words {
-                        selection.selected_word_indices = find_words_in_range(
+                        let range_words = find_words_in_range(
                             words_data,
                             anchor.0.min(focus.0),
                             anchor.1.min(focus.1),
                             anchor.0.max(focus.0),
                             anchor.1.max(focus.1),
                         );
+                        if ctrl_held {
+                            for &idx in &range_words {
+                                if !selection.selected_word_indices.contains(&idx) {
+                                    selection.selected_word_indices.push(idx);
+                                }
+                            }
+                        } else {
+                            selection.selected_word_indices = range_words;
+                        }
                     }
                 }
             }
