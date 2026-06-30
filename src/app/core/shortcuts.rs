@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
+
+pub static DEFAULT_SHORTCUTS: LazyLock<ShortcutMap> = LazyLock::new(default_shortcuts);
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 pub enum ShortcutAction {

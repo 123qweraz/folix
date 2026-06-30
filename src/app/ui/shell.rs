@@ -1,11 +1,12 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
 use crate::app::core::mode_system::{ViewMode, AutoPlayMode, Annotation, AnnotationTool};
-use crate::app::core::shortcuts::{ShortcutAction, ALL_ACTIONS, AVAILABLE_KEYS};
+use crate::app::core::shortcuts::{ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::edit_operations;
 use crate::app::platform::font_loader::FontLoader;
 use crate::app::storage::sqlite::Database;
 use super::mode_ui;
+use std::collections::HashMap;
 
 pub struct FolixApp {
     pub state: AppState,
@@ -14,6 +15,7 @@ pub struct FolixApp {
     pub status_message: String,
     pub recent_files: Vec<String>,
     pub db: Option<Database>,
+    pub image_texture_cache: HashMap<String, egui::TextureHandle>,
 }
 
 impl FolixApp {
@@ -36,6 +38,7 @@ impl FolixApp {
             status_message: String::new(),
             recent_files,
             db,
+            image_texture_cache: HashMap::new(),
         };
         app.init_features();
         app
@@ -109,6 +112,7 @@ impl FolixApp {
     }
 
     fn open_file(&mut self, path_str: String) {
+        self.image_texture_cache.clear();
         self.recent_files.retain(|p| p != &path_str);
         self.recent_files.insert(0, path_str.clone());
         self.recent_files.truncate(10);
@@ -202,10 +206,45 @@ impl FolixApp {
         }
     }
 
-    fn shortcut(&self, ctx: &egui::Context, action: ShortcutAction) -> bool {
+    fn shortcut(&self, ctx: &egui::Context, action: SA) -> bool {
         self.state.settings.shortcuts.get(&action)
+            .or_else(|| crate::app::core::shortcuts::DEFAULT_SHORTCUTS.get(&action))
             .map(|combo| combo.check(ctx))
             .unwrap_or(false)
+    }
+
+    fn apply_highlight_selection(tab: &mut crate::app::core::app_state::OpenTab) {
+        let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
+            && tab.modes.reading.selection.page == tab.modes.page;
+        if has_sel {
+            if let Some(ref doc) = tab.document {
+                let page = tab.modes.page;
+                let words = doc.lock().page_text_positions(page);
+                let indices = &tab.modes.reading.selection.selected_word_indices;
+                let mut x0 = f32::MAX; let mut y0 = f32::MAX;
+                let mut x1 = f32::MIN; let mut y1 = f32::MIN;
+                for &idx in indices {
+                    if let Some(w) = words.get(idx) {
+                        x0 = x0.min(w.x0); y0 = y0.min(w.y0);
+                        x1 = x1.max(w.x1); y1 = y1.max(w.y1);
+                    }
+                }
+                if x0 != f32::MAX {
+                    tab.modes.annotate.annotations.push(Annotation {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        doc_id: String::new(),
+                        kind: AnnotationTool::Highlight,
+                        page,
+                        rect: [x0, y0, x1, y1],
+                        note: None,
+                        color: tab.modes.annotate.current_color,
+                    });
+                    tab.modes.reading.selection.selected_word_indices.clear();
+                    tab.modes.reading.selection.anchor = None;
+                    tab.modes.reading.selection.focus = None;
+                }
+            }
+        }
     }
 }
 
@@ -234,62 +273,61 @@ impl eframe::App for FolixApp {
             self.state.ui_visible = !self.state.ui_visible;
         }
 
-        // Configurable keyboard shortcuts
-        use ShortcutAction as SA;
-
+        // Keyboard shortcuts (from config, with built-in defaults)
         if self.shortcut(ctx, SA::OpenFile) { self.open_dialog = true; }
+
         if self.shortcut(ctx, SA::CloseTab) {
             self.state.close_tab(self.state.active_tab);
             self.sync_progress();
         }
+
         if self.shortcut(ctx, SA::Quit) {
             self.sync_progress();
             std::process::exit(0);
         }
+
         if self.shortcut(ctx, SA::Reload) {
             if let Some(ref p) = self.state.current_tab().and_then(|t| t.path.clone()) {
                 self.reload_document(&p);
             }
         }
+
         if self.shortcut(ctx, SA::ZoomIn) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.scale = (tab.modes.scale + 0.1).min(3.0);
             }
         }
+
         if self.shortcut(ctx, SA::ZoomOut) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.scale = (tab.modes.scale - 0.1).max(0.5);
             }
         }
-        if self.shortcut(ctx, SA::FitPage) {
-            if let Some(tab) = self.state.current_tab_mut() { tab.modes.scale = 1.0; }
-        }
-        if self.shortcut(ctx, SA::ActualSize) {
-            if let Some(tab) = self.state.current_tab_mut() { tab.modes.scale = 1.0; }
-        }
-        if self.shortcut(ctx, SA::FitWidth) {
-            if let Some(tab) = self.state.current_tab_mut() { tab.modes.scale = 1.0; }
-        }
+
         if self.shortcut(ctx, SA::PrevPage) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.page > 0 { tab.modes.page -= 1; }
             }
         }
+
         if self.shortcut(ctx, SA::NextPage) {
             if let Some(tab) = self.state.current_tab_mut() {
                 let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
                 if tab.modes.page < max { tab.modes.page += 1; }
             }
         }
+
         if self.shortcut(ctx, SA::FirstPage) {
             if let Some(tab) = self.state.current_tab_mut() { tab.modes.page = 0; }
         }
+
         if self.shortcut(ctx, SA::LastPage) {
             if let Some(tab) = self.state.current_tab_mut() {
                 let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
                 tab.modes.page = max;
             }
         }
+
         if self.shortcut(ctx, SA::ScrollDown) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
@@ -300,6 +338,7 @@ impl eframe::App for FolixApp {
                 }
             }
         }
+
         if self.shortcut(ctx, SA::ScrollUp) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
@@ -307,90 +346,42 @@ impl eframe::App for FolixApp {
                 } else if tab.modes.page > 0 { tab.modes.page -= 1; }
             }
         }
+
         if self.shortcut(ctx, SA::HighlightSel) {
             if let Some(tab) = self.state.current_tab_mut() {
-                let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
-                    && tab.modes.reading.selection.page == tab.modes.page;
-                if has_sel {
-                    if let Some(ref doc) = tab.document {
-                        let page = tab.modes.page;
-                        let words = doc.lock().page_text_positions(page);
-                        let indices = &tab.modes.reading.selection.selected_word_indices;
-                        let mut x0 = f32::MAX; let mut y0 = f32::MAX;
-                        let mut x1 = f32::MIN; let mut y1 = f32::MIN;
-                        for &idx in indices {
-                            if let Some(w) = words.get(idx) {
-                                x0 = x0.min(w.x0); y0 = y0.min(w.y0);
-                                x1 = x1.max(w.x1); y1 = y1.max(w.y1);
-                            }
-                        }
-                        if x0 != f32::MAX {
-                            tab.modes.annotate.annotations.push(Annotation {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                doc_id: String::new(),
-                                kind: AnnotationTool::Highlight,
-                                page,
-                                rect: [x0, y0, x1, y1],
-                                note: None,
-                                color: tab.modes.annotate.current_color,
-                            });
-                            tab.modes.reading.selection.selected_word_indices.clear();
-                            tab.modes.reading.selection.anchor = None;
-                            tab.modes.reading.selection.focus = None;
-                        }
-                    }
-                }
+                Self::apply_highlight_selection(tab);
             }
         }
+
         if self.shortcut(ctx, SA::AddBookmark) {
             if let Some(tab) = self.state.current_tab_mut() {
-                let label = format!("Page {}", tab.modes.page + 1);
                 tab.modes.reading.bookmarks.push(crate::app::core::mode_system::Bookmark {
                     page: tab.modes.page,
-                    label,
+                    label: format!("Page {}", tab.modes.page + 1),
                 });
             }
         }
+
         if self.shortcut(ctx, SA::ToggleSidebar) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.reading.show_sidebar = !tab.modes.reading.show_sidebar;
             }
         }
+
         if self.shortcut(ctx, SA::Copy) {
             if let Some(tab) = self.state.current_tab() {
                 let sel = &tab.modes.reading.selection;
                 if !sel.selected_word_indices.is_empty() {
                     if let Some(doc) = &tab.document {
                         let words = doc.lock().page_text_positions(sel.page);
-                        let selected_text: String = sel.selected_word_indices
-                            .iter()
+                        let text: String = sel.selected_word_indices.iter()
                             .filter_map(|&i| words.get(i))
                             .map(|w| w.text.as_str())
-                            .collect::<Vec<&str>>()
-                            .join(" ");
-                        ctx.copy_text(selected_text);
+                            .collect::<Vec<&str>>().join(" ");
+                        ctx.copy_text(text);
                     }
-                }
-            }
-        }
-
-        // Ctrl+C is also handled by the Copy shortcut above, but we keep the egui-native copy as fallback
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::C)) {
-            // Already handled by Copy shortcut if configured; this ensures copy still works
-            // even if user removes the Copy bind
-            if let Some(tab) = self.state.current_tab() {
-                let sel = &tab.modes.reading.selection;
-                if !sel.selected_word_indices.is_empty() {
-                    if let Some(doc) = &tab.document {
-                        let words = doc.lock().page_text_positions(sel.page);
-                        let selected_text: String = sel.selected_word_indices
-                            .iter()
-                            .filter_map(|&i| words.get(i))
-                            .map(|w| w.text.as_str())
-                            .collect::<Vec<&str>>()
-                            .join(" ");
-                        ctx.copy_text(selected_text);
-                    }
+                } else if !sel.selected_text.is_empty() {
+                    ctx.copy_text(sel.selected_text.clone());
                 }
             }
         }
@@ -751,6 +742,7 @@ impl FolixApp {
             if is_deep { Some(&mut tab.modes.annotate) } else { None },
             Some(ctx),
             dark_mode,
+            &mut self.image_texture_cache,
         );
 
         // Sync annotations to database

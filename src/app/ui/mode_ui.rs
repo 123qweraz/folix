@@ -1,5 +1,4 @@
-use crate::app::engines::Document;
-use crate::app::engines::TextWordPosition;
+use crate::app::engines::{Document, ContentBlock, TextWordPosition};
 use crate::app::core::mode_system::{ReadingState, ReadingLayout, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool};
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -16,6 +15,7 @@ pub fn render_document(
     annotate: Option<&mut AnnotateState>,
     ctx: Option<egui::Context>,
     dark_mode: bool,
+    image_cache: &mut HashMap<String, egui::TextureHandle>,
 ) {
     let supports_image = document.lock().supports_image();
 
@@ -71,16 +71,90 @@ pub fn render_document(
             }
         }
     } else {
-        let text = document.lock().page_text(0);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false; 2])
-            .show(ui, |ui| {
-                egui::Frame::NONE
-                    .inner_margin(egui::Margin::symmetric(20, 10))
-                    .show(ui, |ui| {
-                        ui.add(egui::Label::new(&text).wrap().selectable(true));
-                    });
-            });
+        let blocks = document.lock().content_blocks(0);
+
+        // Handle TOC scroll target for non-image docs
+        let mut init_scroll_y: Option<f32> = None;
+        if let Some(char_off) = reading.scroll_to_char_offset.take() {
+            let font_size = 16.0;
+            let line_h = font_size * 1.5;
+            let text_width = ui.available_width().max(100.0).max(100.0) - 40.0;
+            let cpl = (text_width / (font_size * 0.55)).max(10.0);
+            let lines = char_off as f32 / cpl;
+            init_scroll_y = Some(lines * line_h);
+        }
+
+        let mut sa = egui::ScrollArea::vertical()
+            .auto_shrink([false; 2]);
+        if let Some(y) = init_scroll_y {
+            sa = sa.vertical_scroll_offset(y);
+        }
+
+        sa.show(ui, |ui| {
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(20, 10))
+                .show(ui, |ui| {
+                    for (idx, block) in blocks.iter().enumerate() {
+                        match block {
+                            ContentBlock::Text(text) => {
+                                let mut display = text.clone();
+                                let resp = ui.add(
+                                    egui::TextEdit::multiline(&mut display)
+                                        .font(egui::TextStyle::Body)
+                                        .lock_focus(true)
+                                        .desired_width(f32::INFINITY),
+                                );
+                                // Capture selection state from this TextEdit block
+                                if let Some(state) = egui::widgets::text_edit::TextEditState::load(ui.ctx(), resp.id) {
+                                    if let Some(range) = state.cursor.char_range() {
+                                        let sorted = range.sorted();
+                                        let cs = sorted[0].index;
+                                        let ce = sorted[1].index;
+                                        if cs != ce {
+                                            let bs = text.char_indices()
+                                                .nth(cs.min(ce))
+                                                .map(|(i, _)| i)
+                                                .unwrap_or(text.len());
+                                            let be = text.char_indices()
+                                                .nth(cs.max(ce))
+                                                .map(|(i, _)| i)
+                                                .unwrap_or(text.len());
+                                            reading.selection.selected_text = text[bs..be].to_string();
+                                        } else {
+                                            reading.selection.selected_text.clear();
+                                        }
+                                    }
+                                }
+                            }
+                            ContentBlock::Image(img) => {
+                                let key = format!("epub_img_{}", idx);
+                                let texture = image_cache.entry(key.clone()).or_insert_with(|| {
+                                    let decoded = image::load_from_memory(&img.raw_bytes)
+                                        .expect("Failed to decode image")
+                                        .into_rgba8();
+                                    let (w, h) = decoded.dimensions();
+                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                        [w as usize, h as usize],
+                                        decoded.as_raw(),
+                                    );
+                                    ui.ctx().load_texture(
+                                        &key,
+                                        color_image,
+                                        egui::TextureOptions::default(),
+                                    )
+                                });
+                                let aspect = img.width as f32 / img.height as f32;
+                                let max_w = ui.available_width().min(600.0);
+                                let h = max_w / aspect;
+                                ui.add_sized(
+                                    egui::vec2(max_w, h + 8.0),
+                                    egui::Image::new((texture.id(), egui::vec2(max_w, h))),
+                                );
+                            }
+                        }
+                    }
+                });
+        });
     }
 }
 
@@ -729,6 +803,7 @@ pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
         .default_open(true)
         .show(ui, |ui| {
             let toc = document.lock().toc_entries();
+            let is_image = document.lock().supports_image();
             if toc.is_empty() {
                 ui.label("No table of contents");
             } else {
@@ -736,11 +811,15 @@ pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
                     .max_height(f32::INFINITY)
                     .show(ui, |ui| {
                         for entry in &toc {
-                            let selected = *page == entry.page_index;
+                            let selected = if is_image { *page == entry.page_index } else { false };
                             if ui.selectable_label(selected, &entry.label).clicked() {
-                                let target = entry.page_index.min(total.saturating_sub(1));
-                                *page = target;
-                                rs.scroll_offset_y = 0.0;
+                                if is_image {
+                                    let target = entry.page_index.min(total.saturating_sub(1));
+                                    *page = target;
+                                    rs.scroll_offset_y = 0.0;
+                                } else {
+                                    rs.scroll_to_char_offset = Some(entry.page_index);
+                                }
                             }
                         }
                     });
@@ -814,6 +893,8 @@ pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
                                 rs.scroll_offset_y = 0.0;
                             }
                         }
+                    } else if let Some(&co) = rs.search.matches.get(rs.search.current_match) {
+                        rs.scroll_to_char_offset = Some(co);
                     }
                 }
                 if ui.add_enabled(enabled, egui::Button::new("▼")).clicked() {
@@ -825,6 +906,8 @@ pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
                                 rs.scroll_offset_y = 0.0;
                             }
                         }
+                    } else if let Some(&co) = rs.search.matches.get(rs.search.current_match) {
+                        rs.scroll_to_char_offset = Some(co);
                     }
                 }
             });

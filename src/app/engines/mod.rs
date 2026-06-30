@@ -26,6 +26,20 @@ pub struct TextWordPosition {
     pub y1: f32,
 }
 
+#[derive(Clone)]
+pub struct StoredImage {
+    /// Raw file bytes (JPEG/PNG/etc) from the EPUB resource.
+    pub raw_bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone)]
+pub enum ContentBlock {
+    Text(String),
+    Image(StoredImage),
+}
+
 pub trait Document: Send + Sync {
     fn page_count(&self) -> usize;
     fn page_text(&self, page: usize) -> String;
@@ -60,4 +74,10 @@ pub trait Document: Send + Sync {
 
     /// Store a GPU texture handle for a page at the given scale.
     fn set_texture_handle(&self, _page: usize, _scale: f32, _handle: TextureHandle) {}
+
+    /// Content blocks for a page (text segments + inline images).
+    /// Used by EPUB/TXT documents. Default returns a single text block.
+    fn content_blocks(&self, page: usize) -> Vec<ContentBlock> {
+        vec![ContentBlock::Text(self.page_text(page))]
+    }
 }

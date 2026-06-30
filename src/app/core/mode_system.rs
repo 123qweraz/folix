@@ -52,6 +52,10 @@ pub struct SelectionState {
     pub focus: Option<(f32, f32)>,
     pub page: usize,
     pub selected_word_indices: Vec<usize>,
+    // Character-based selection (for EPUB/TXT plain text)
+    pub char_anchor: Option<usize>,
+    pub char_focus: Option<usize>,
+    pub selected_text: String,
 }
 
 impl Default for SelectionState {
@@ -62,6 +66,9 @@ impl Default for SelectionState {
             focus: None,
             page: 0,
             selected_word_indices: vec![],
+            char_anchor: None,
+            char_focus: None,
+            selected_text: String::new(),
         }
     }
 }
@@ -75,6 +82,7 @@ pub struct ReadingState {
     pub scroll_offset_y: f32,
     pub total_height: f32,
     pub selection: SelectionState,
+    pub scroll_to_char_offset: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -188,6 +196,7 @@ impl TabModes {
                 scroll_offset_y: 0.0,
                 total_height: 0.0,
                 selection: SelectionState::default(),
+                scroll_to_char_offset: None,
             },
             auto: AutoState {
                 playing: false,

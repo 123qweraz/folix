@@ -1,10 +1,12 @@
-use super::{Document, RenderedPage, TocEntry};
+use super::{Document, RenderedPage, TocEntry, StoredImage, ContentBlock};
+use std::collections::HashMap;
 
 pub struct ReflowDocument {
     path: String,
     full_text: String,
     doc_title: String,
     toc: Vec<TocEntry>,
+    blocks: Vec<ContentBlock>,
 }
 
 impl ReflowDocument {
@@ -36,29 +38,75 @@ impl ReflowDocument {
             })
             .unwrap_or_else(|| "Untitled".to_string());
 
-        let mut full_text = String::new();
-        let mut chapter_texts: Vec<String> = Vec::new();
-
-        for result in epub.reader() {
-            let data = result.ok()?;
-            let html = data.content();
-            let plain = Self::strip_html(html).trim().to_string();
-            if !plain.is_empty() {
-                chapter_texts.push(plain);
+        // Build image map: normalized href → decoded StoredImage
+        let mut image_map: HashMap<String, StoredImage> = HashMap::new();
+        for entry in epub.manifest().iter() {
+            let kind = entry.kind();
+            if kind.is_image() {
+                let href = entry.href().as_ref().to_string();
+                if let Ok(bytes) = epub.read_resource_bytes(href.as_str()) {
+                    // Probe dimensions from image headers (fast, no full decode)
+                    let (w, h) = image::image_dimensions(&bytes).unwrap_or((0, 0));
+                    let si = StoredImage {
+                        raw_bytes: bytes,
+                        width: w,
+                        height: h,
+                    };
+                    image_map.insert(normalize_path(&href), si);
+                }
             }
         }
 
-        // Concatenate all chapters, record char offsets for each
+        let mut full_text = String::new();
+        let mut all_blocks: Vec<ContentBlock> = Vec::new();
         let mut chapter_char_offsets: Vec<usize> = Vec::new();
-        for (i, ct) in chapter_texts.iter().enumerate() {
-            chapter_char_offsets.push(full_text.len());
-            if i > 0 {
+
+        // Use a single reader for the loop
+        let reader = epub.reader();
+        let len = reader.len();
+
+        for i in 0..len {
+            chapter_char_offsets.push(full_text.chars().count());
+            let Ok(result) = reader.get(i) else { continue };
+            let html = result.content();
+            let chapter_id = result.spine_entry().idref().to_string();
+
+            // Find the manifest entry for this chapter to get its href (for resolving relative image paths)
+            let chapter_href = epub.manifest().iter()
+                .find(|e| e.id() == chapter_id)
+                .map(|e| e.href().as_ref().to_string())
+                .unwrap_or_default();
+
+            // Parse HTML into blocks
+            let chapter_blocks = Self::parse_html(html, &chapter_href, &image_map);
+
+            for block in &chapter_blocks {
+                match block {
+                    ContentBlock::Text(t) => {
+                        if i > 0 || !all_blocks.is_empty() {
+                            // Only prepend newline if there's previous content
+                            if !full_text.is_empty() && !full_text.ends_with('\n') {
+                                full_text.push('\n');
+                            }
+                        }
+                        full_text.push_str(t);
+                    }
+                    ContentBlock::Image(_img) => {
+                        // Add a placeholder marker for text-based operations
+                        full_text.push_str("[IMAGE]");
+                    }
+                }
+            }
+
+            // Append a chapter separator
+            if i + 1 < len && !full_text.ends_with('\n') {
                 full_text.push('\n');
             }
-            full_text.push_str(ct);
+
+            all_blocks.extend(chapter_blocks);
         }
 
-        // Build ToC: each flattened entry maps to the chapter with same index
+        // Build ToC
         let mut toc: Vec<TocEntry> = Vec::new();
         let toc_data = epub.toc();
         if let Some(contents) = toc_data.contents() {
@@ -80,6 +128,7 @@ impl ReflowDocument {
             full_text,
             doc_title,
             toc,
+            blocks: all_blocks,
         })
     }
 
@@ -99,9 +148,10 @@ impl ReflowDocument {
 
         Some(Self {
             path: path.to_string(),
-            full_text: content,
+            full_text: content.clone(),
             doc_title,
             toc: vec![],
+            blocks: vec![ContentBlock::Text(content)],
         })
     }
 
@@ -126,18 +176,102 @@ impl ReflowDocument {
         String::from_utf8_lossy(data).to_string()
     }
 
-    fn strip_html(html: &str) -> String {
-        let mut result = String::new();
+    /// Parse HTML into text + image blocks.
+    /// `chapter_href` is the path of the chapter within the EPUB (for resolving relative image src).
+    /// `image_map` maps normalized hrefs to decoded images.
+    fn parse_html(
+        html: &str,
+        chapter_href: &str,
+        image_map: &HashMap<String, StoredImage>,
+    ) -> Vec<ContentBlock> {
+        let mut blocks = Vec::new();
+        let mut current_text = String::new();
         let mut in_tag = false;
+        let mut tag_content = String::new();
+
         for c in html.chars() {
             match c {
-                '<' => in_tag = true,
-                '>' => in_tag = false,
-                _ if !in_tag => result.push(c),
-                _ => {}
+                '<' => {
+                    in_tag = true;
+                    tag_content.clear();
+                }
+                '>' => {
+                    in_tag = false;
+                    let tag_lower = tag_content.to_lowercase();
+
+                    // Check for <img> tag
+                    if tag_lower.starts_with("img ") || tag_lower == "img" {
+                        if let Some(src) = Self::extract_attr(&tag_content, "src") {
+                            let resolved = resolve_path(chapter_href, &src);
+                            if let Some(img) = image_map.get(&resolved) {
+                                // Flush accumulated text
+                                let trimmed = current_text.trim().to_string();
+                                if !trimmed.is_empty() {
+                                    blocks.push(ContentBlock::Text(trimmed));
+                                    current_text.clear();
+                                }
+                                blocks.push(ContentBlock::Image(img.clone()));
+                            }
+                        }
+                    }
+                    // Check for <br>, <hr> etc.
+                    else if tag_lower.starts_with("br") || tag_lower.starts_with("hr") {
+                        current_text.push('\n');
+                    }
+                    // Check for <p>, <div>, <h1>-<h6> etc.
+                    else if tag_lower.starts_with('/') {
+                        let closing_tag = tag_lower.trim_start_matches('/').split_whitespace().next().unwrap_or("");
+                        matches!(
+                            closing_tag,
+                            "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "li" | "td" | "th"
+                        ).then(|| {
+                            if !current_text.ends_with('\n') {
+                                current_text.push('\n');
+                            }
+                        });
+                    }
+                }
+                _ if !in_tag => {
+                    current_text.push(c);
+                }
+                _ => {
+                    if in_tag {
+                        tag_content.push(c);
+                    }
+                }
             }
         }
-        result
+
+        // Flush remaining text
+        let trimmed = current_text.trim().to_string();
+        if !trimmed.is_empty() {
+            blocks.push(ContentBlock::Text(trimmed));
+        }
+
+        blocks
+    }
+
+    /// Extract an attribute value from a tag string like `img src="foo.png"`.
+    fn extract_attr(tag: &str, attr: &str) -> Option<String> {
+        let lower = tag.to_lowercase();
+        let search = format!("{}=\"", attr.to_lowercase());
+        if let Some(start) = lower.find(&search) {
+            let value_start = start + search.len();
+            let remaining = &tag[value_start..];
+            if let Some(end) = remaining.find('"') {
+                return Some(remaining[..end].to_string());
+            }
+        }
+        // Also try single quotes
+        let search = format!("{}='", attr.to_lowercase());
+        if let Some(start) = lower.find(&search) {
+            let value_start = start + search.len();
+            let remaining = &tag[value_start..];
+            if let Some(end) = remaining.find('\'') {
+                return Some(remaining[..end].to_string());
+            }
+        }
+        None
     }
 
     pub fn path(&self) -> &str {
@@ -169,4 +303,41 @@ impl Document for ReflowDocument {
     fn toc_entries(&self) -> Vec<TocEntry> {
         self.toc.clone()
     }
+
+    fn content_blocks(&self, _page: usize) -> Vec<ContentBlock> {
+        self.blocks.clone()
+    }
+}
+
+fn normalize_path(p: &str) -> String {
+    let p = p.trim_start_matches('/');
+    p.replace('\\', "/")
+}
+
+fn resolve_path(chapter_path: &str, src: &str) -> String {
+    if src.starts_with('/') || src.contains("://") {
+        return normalize_path(src);
+    }
+    let base = std::path::Path::new(chapter_path).parent().unwrap_or(std::path::Path::new(""));
+    let joined = base.join(src);
+    let normalized = normalize_path(joined.to_str().unwrap_or(src));
+    clean_path(&normalized)
+}
+
+/// Resolve `..` and `.` segments in a path.
+/// e.g. "OEBPS/Text/../Images/foo.jpeg" → "OEBPS/Images/foo.jpeg"
+fn clean_path(p: &str) -> String {
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in p.split('/') {
+        match seg {
+            "." => {}
+            ".." => {
+                segments.pop();
+            }
+            _ => {
+                segments.push(seg);
+            }
+        }
+    }
+    segments.join("/")
 }

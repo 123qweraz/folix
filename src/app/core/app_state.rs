@@ -18,6 +18,7 @@ pub struct AppSettings {
     pub show_toolbar: bool,
     pub background_color: [u8; 4],
     pub dark_mode: bool,
+    #[serde(default = "super::shortcuts::default_shortcuts")]
     pub shortcuts: ShortcutMap,
     #[serde(skip)]
     pub editing_shortcut: Option<usize>,
