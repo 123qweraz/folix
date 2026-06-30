@@ -73,9 +73,22 @@ impl Database {
             "INSERT INTO progress (id, book_id, page, progress_pct, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(id) DO UPDATE SET page=excluded.page, progress_pct=excluded.progress_pct, updated_at=excluded.updated_at",
-            params![uuid::Uuid::new_v4().to_string(), book_id, page as i64, progress_pct, now],
+            params![book_id, book_id, page as i64, progress_pct, now],
         )?;
         Ok(())
+    }
+
+    pub fn load_progress(&self, book_id: &str) -> Result<Option<(usize, f64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT page, progress_pct FROM progress WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query_map(params![book_id], |row| {
+            Ok((row.get::<_, i64>(0)? as usize, row.get::<_, f64>(1)?))
+        })?;
+        match rows.next() {
+            Some(Ok(result)) => Ok(Some(result)),
+            _ => Ok(None),
+        }
     }
 
     pub fn add_bookmark(&self, book_id: &str, page: usize, label: Option<&str>) -> Result<()> {

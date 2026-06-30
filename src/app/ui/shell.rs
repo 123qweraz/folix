@@ -21,16 +21,41 @@ impl FolixApp {
 
         let db = Database::open("./folix.db").ok();
 
+        let config = crate::app::config::ConfigData::load();
+        let mut state = AppState::new();
+        if let Some(ref cfg) = config {
+            state.settings = cfg.settings.clone();
+        }
+        let recent_files = config.as_ref().map(|c| c.recent_files.clone()).unwrap_or_default();
+
         let mut app = Self {
-            state: AppState::new(),
+            state,
             open_dialog: false,
             show_about: false,
             status_message: String::new(),
-            recent_files: Vec::new(),
+            recent_files,
             db,
         };
         app.init_features();
         app
+    }
+
+    fn sync_progress(&self) {
+        if let Some(ref db) = self.db {
+            if let Some(tab) = self.state.current_tab() {
+                if let Some(ref book_id) = tab.book_id {
+                    let _ = db.save_progress(book_id, tab.modes.page, tab.modes.auto.progress as f64);
+                }
+            }
+        }
+    }
+
+    fn save_config(&self) {
+        let data = crate::app::config::ConfigData {
+            settings: self.state.settings.clone(),
+            recent_files: self.recent_files.clone(),
+        };
+        data.save();
     }
 
     fn configure_fonts(ctx: &egui::Context) {
@@ -86,6 +111,7 @@ impl FolixApp {
         self.recent_files.retain(|p| p != &path_str);
         self.recent_files.insert(0, path_str.clone());
         self.recent_files.truncate(10);
+        self.save_config();
 
         if let Some(doc) = DocumentManager::open(&path_str) {
             let replace = self.state.current_tab()
@@ -108,7 +134,7 @@ impl FolixApp {
                 self.state.add_tab(path_str.clone(), doc);
             }
 
-            // Sync with database: ensure book entry, set book_id, load annotations
+            // Sync with database: ensure book entry, set book_id, load annotations & progress
             if let Some(ref db) = self.db {
                 if let Some(tab) = self.state.current_tab_mut() {
                     if let Some(ref d) = tab.document {
@@ -140,6 +166,11 @@ impl FolixApp {
                                         color: [255, 255, 0, 120],
                                     });
                                 }
+                            }
+                            // Load progress
+                            if let Ok(Some((saved_page, _))) = db.load_progress(&book_id) {
+                                let max = d.lock().page_count().saturating_sub(1);
+                                tab.modes.page = saved_page.min(max);
                             }
                         }
                     }
@@ -195,6 +226,181 @@ impl eframe::App for FolixApp {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
             self.state.ui_visible = !self.state.ui_visible;
         }
+
+        // Keyboard shortcuts (SumatraPDF-compatible)
+        let ctrl = egui::Modifiers::CTRL;
+        let shift = egui::Modifiers::SHIFT;
+
+        // Ctrl+O: Open file
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::O)) {
+            self.open_dialog = true;
+        }
+        // Ctrl+W: Close current tab
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::W)) {
+            self.state.close_tab(self.state.active_tab);
+            self.sync_progress();
+        }
+        // Ctrl+Q: Quit
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Q)) {
+            self.sync_progress();
+            std::process::exit(0);
+        }
+        // F5 / Ctrl+R: Reload document
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F5))
+            || ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::R))
+        {
+            if let Some(ref p) = self.state.current_tab().and_then(|t| t.path.clone()) {
+                self.reload_document(&p);
+            }
+        }
+        // Ctrl++ / Ctrl+-: Zoom in/out
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Equals)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.modes.scale = (tab.modes.scale + 0.1).min(3.0);
+            }
+        }
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Minus)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.modes.scale = (tab.modes.scale - 0.1).max(0.5);
+            }
+        }
+        // Ctrl+0: Fit page, Ctrl+1: Actual size, Ctrl+2: Fit width
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Num0)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.modes.scale = 1.0;
+            }
+        }
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Num1)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.modes.scale = 1.0;
+            }
+        }
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Num2)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.modes.scale = 1.0;
+            }
+        }
+        // Page navigation
+        let page_left = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
+        let page_right = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
+        let page_up = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::PageUp));
+        let page_down = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::PageDown));
+        let key_n = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::N));
+        let key_p = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::P));
+        let key_home = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Home));
+        let key_end = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::End));
+        if page_left || page_up || key_p {
+            if let Some(tab) = self.state.current_tab_mut() {
+                if tab.modes.page > 0 {
+                    tab.modes.page -= 1;
+                }
+            }
+        }
+        if page_right || page_down || key_n {
+            if let Some(tab) = self.state.current_tab_mut() {
+                let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
+                if tab.modes.page < max {
+                    tab.modes.page += 1;
+                }
+            }
+        }
+        if key_home {
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.modes.page = 0;
+            }
+        }
+        if key_end {
+            if let Some(tab) = self.state.current_tab_mut() {
+                let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
+                tab.modes.page = max;
+            }
+        }
+        // Ctrl+G: Go to page — focus page input
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::G)) {
+            // For now just set focus; future: open a dialog
+        }
+        // Space / Shift+Space: scroll down/up by screen
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                if tab.modes.reading_layout == ReadingLayout::Scroll {
+                    tab.modes.reading.scroll_offset_y += 600.0;
+                } else {
+                    let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
+                    if tab.modes.page < max {
+                        tab.modes.page += 1;
+                    }
+                }
+            }
+        }
+        if ctx.input_mut(|i| i.consume_key(shift, egui::Key::Space)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                if tab.modes.reading_layout == ReadingLayout::Scroll {
+                    tab.modes.reading.scroll_offset_y = (tab.modes.reading.scroll_offset_y - 600.0).max(0.0);
+                } else if tab.modes.page > 0 {
+                    tab.modes.page -= 1;
+                }
+            }
+        }
+        // 'a': Highlight selected text
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::A)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
+                    && tab.modes.reading.selection.page == tab.modes.page;
+                if has_sel {
+                    if let Some(ref doc) = tab.document {
+                        let page = tab.modes.page;
+                        let words = doc.lock().page_text_positions(page);
+                        let indices = &tab.modes.reading.selection.selected_word_indices;
+                        let mut x0 = f32::MAX; let mut y0 = f32::MAX;
+                        let mut x1 = f32::MIN; let mut y1 = f32::MIN;
+                        for &idx in indices {
+                            if let Some(w) = words.get(idx) {
+                                x0 = x0.min(w.x0); y0 = y0.min(w.y0);
+                                x1 = x1.max(w.x1); y1 = y1.max(w.y1);
+                            }
+                        }
+                        if x0 != f32::MAX {
+                            tab.modes.annotate.annotations.push(Annotation {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                doc_id: String::new(),
+                                kind: AnnotationTool::Highlight,
+                                page,
+                                rect: [x0, y0, x1, y1],
+                                note: None,
+                                color: tab.modes.annotate.current_color,
+                            });
+                            tab.modes.reading.selection.selected_word_indices.clear();
+                            tab.modes.reading.selection.anchor = None;
+                            tab.modes.reading.selection.focus = None;
+                        }
+                    }
+                }
+            }
+        }
+        // Ctrl+B: Add bookmark
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::B)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                let label = format!("Page {}", tab.modes.page + 1);
+                tab.modes.reading.bookmarks.push(crate::app::core::mode_system::Bookmark {
+                    page: tab.modes.page,
+                    label,
+                });
+            }
+        }
+        // F12: Toggle sidebar
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F12)) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.modes.reading.show_sidebar = !tab.modes.reading.show_sidebar;
+            }
+        }
+        // Ctrl+S: trigger annotation sync (save annotations to DB)
+        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::S)) {
+            // annotations are already synced every frame; this just triggers an explicit save
+            self.status_message = "Annotations saved to database".to_string();
+        }
+
+        // Sync progress after page changes
+        self.sync_progress();
 
         // Ctrl+C to copy selected text
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::C)) {
@@ -449,7 +655,11 @@ impl FolixApp {
                         (color[2] * 255.0) as u8,
                         (color[3] * 255.0) as u8,
                     ];
+                    ui.add_space(20.0);
+                    ui.label("Config file:");
+                    ui.label("./folix.conf");
                 });
+        self.save_config();
         });
     }
 

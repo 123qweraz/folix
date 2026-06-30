@@ -11,7 +11,7 @@ pub enum TabContent {
     Settings,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct AppSettings {
     pub toolbar_icon_size: f32,
     pub show_toolbar: bool,
