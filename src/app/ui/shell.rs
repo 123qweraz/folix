@@ -1,6 +1,7 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
 use crate::app::core::mode_system::{ViewMode, AutoPlayMode, Annotation, AnnotationTool};
+use crate::app::core::shortcuts::{ShortcutAction, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::edit_operations;
 use crate::app::platform::font_loader::FontLoader;
 use crate::app::storage::sqlite::Database;
@@ -200,6 +201,12 @@ impl FolixApp {
             self.status_message = format!("Failed to reload: {}", path);
         }
     }
+
+    fn shortcut(&self, ctx: &egui::Context, action: ShortcutAction) -> bool {
+        self.state.settings.shortcuts.get(&action)
+            .map(|combo| combo.check(ctx))
+            .unwrap_or(false)
+    }
 }
 
 impl eframe::App for FolixApp {
@@ -222,127 +229,85 @@ impl eframe::App for FolixApp {
             self.open_file(path);
         }
 
-        // Tab toggles UI visibility
+        // Tab toggles UI visibility (also available as configurable shortcut)
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
             self.state.ui_visible = !self.state.ui_visible;
         }
 
-        // Keyboard shortcuts (SumatraPDF-compatible)
-        let ctrl = egui::Modifiers::CTRL;
-        let shift = egui::Modifiers::SHIFT;
+        // Configurable keyboard shortcuts
+        use ShortcutAction as SA;
 
-        // Ctrl+O: Open file
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::O)) {
-            self.open_dialog = true;
-        }
-        // Ctrl+W: Close current tab
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::W)) {
+        if self.shortcut(ctx, SA::OpenFile) { self.open_dialog = true; }
+        if self.shortcut(ctx, SA::CloseTab) {
             self.state.close_tab(self.state.active_tab);
             self.sync_progress();
         }
-        // Ctrl+Q: Quit
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Q)) {
+        if self.shortcut(ctx, SA::Quit) {
             self.sync_progress();
             std::process::exit(0);
         }
-        // F5 / Ctrl+R: Reload document
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F5))
-            || ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::R))
-        {
+        if self.shortcut(ctx, SA::Reload) {
             if let Some(ref p) = self.state.current_tab().and_then(|t| t.path.clone()) {
                 self.reload_document(&p);
             }
         }
-        // Ctrl++ / Ctrl+-: Zoom in/out
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Equals)) {
+        if self.shortcut(ctx, SA::ZoomIn) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.scale = (tab.modes.scale + 0.1).min(3.0);
             }
         }
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Minus)) {
+        if self.shortcut(ctx, SA::ZoomOut) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.scale = (tab.modes.scale - 0.1).max(0.5);
             }
         }
-        // Ctrl+0: Fit page, Ctrl+1: Actual size, Ctrl+2: Fit width
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Num0)) {
+        if self.shortcut(ctx, SA::FitPage) {
+            if let Some(tab) = self.state.current_tab_mut() { tab.modes.scale = 1.0; }
+        }
+        if self.shortcut(ctx, SA::ActualSize) {
+            if let Some(tab) = self.state.current_tab_mut() { tab.modes.scale = 1.0; }
+        }
+        if self.shortcut(ctx, SA::FitWidth) {
+            if let Some(tab) = self.state.current_tab_mut() { tab.modes.scale = 1.0; }
+        }
+        if self.shortcut(ctx, SA::PrevPage) {
             if let Some(tab) = self.state.current_tab_mut() {
-                tab.modes.scale = 1.0;
+                if tab.modes.page > 0 { tab.modes.page -= 1; }
             }
         }
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Num1)) {
-            if let Some(tab) = self.state.current_tab_mut() {
-                tab.modes.scale = 1.0;
-            }
-        }
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::Num2)) {
-            if let Some(tab) = self.state.current_tab_mut() {
-                tab.modes.scale = 1.0;
-            }
-        }
-        // Page navigation
-        let page_left = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
-        let page_right = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
-        let page_up = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::PageUp));
-        let page_down = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::PageDown));
-        let key_n = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::N));
-        let key_p = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::P));
-        let key_home = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Home));
-        let key_end = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::End));
-        if page_left || page_up || key_p {
-            if let Some(tab) = self.state.current_tab_mut() {
-                if tab.modes.page > 0 {
-                    tab.modes.page -= 1;
-                }
-            }
-        }
-        if page_right || page_down || key_n {
+        if self.shortcut(ctx, SA::NextPage) {
             if let Some(tab) = self.state.current_tab_mut() {
                 let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
-                if tab.modes.page < max {
-                    tab.modes.page += 1;
-                }
+                if tab.modes.page < max { tab.modes.page += 1; }
             }
         }
-        if key_home {
-            if let Some(tab) = self.state.current_tab_mut() {
-                tab.modes.page = 0;
-            }
+        if self.shortcut(ctx, SA::FirstPage) {
+            if let Some(tab) = self.state.current_tab_mut() { tab.modes.page = 0; }
         }
-        if key_end {
+        if self.shortcut(ctx, SA::LastPage) {
             if let Some(tab) = self.state.current_tab_mut() {
                 let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
                 tab.modes.page = max;
             }
         }
-        // Ctrl+G: Go to page — focus page input
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::G)) {
-            // For now just set focus; future: open a dialog
-        }
-        // Space / Shift+Space: scroll down/up by screen
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space)) {
+        if self.shortcut(ctx, SA::ScrollDown) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
                     tab.modes.reading.scroll_offset_y += 600.0;
                 } else {
                     let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
-                    if tab.modes.page < max {
-                        tab.modes.page += 1;
-                    }
+                    if tab.modes.page < max { tab.modes.page += 1; }
                 }
             }
         }
-        if ctx.input_mut(|i| i.consume_key(shift, egui::Key::Space)) {
+        if self.shortcut(ctx, SA::ScrollUp) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
                     tab.modes.reading.scroll_offset_y = (tab.modes.reading.scroll_offset_y - 600.0).max(0.0);
-                } else if tab.modes.page > 0 {
-                    tab.modes.page -= 1;
-                }
+                } else if tab.modes.page > 0 { tab.modes.page -= 1; }
             }
         }
-        // 'a': Highlight selected text
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::A)) {
+        if self.shortcut(ctx, SA::HighlightSel) {
             if let Some(tab) = self.state.current_tab_mut() {
                 let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
                     && tab.modes.reading.selection.page == tab.modes.page;
@@ -377,8 +342,7 @@ impl eframe::App for FolixApp {
                 }
             }
         }
-        // Ctrl+B: Add bookmark
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::B)) {
+        if self.shortcut(ctx, SA::AddBookmark) {
             if let Some(tab) = self.state.current_tab_mut() {
                 let label = format!("Page {}", tab.modes.page + 1);
                 tab.modes.reading.bookmarks.push(crate::app::core::mode_system::Bookmark {
@@ -387,23 +351,33 @@ impl eframe::App for FolixApp {
                 });
             }
         }
-        // F12: Toggle sidebar
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F12)) {
+        if self.shortcut(ctx, SA::ToggleSidebar) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.reading.show_sidebar = !tab.modes.reading.show_sidebar;
             }
         }
-        // Ctrl+S: trigger annotation sync (save annotations to DB)
-        if ctx.input_mut(|i| i.consume_key(ctrl, egui::Key::S)) {
-            // annotations are already synced every frame; this just triggers an explicit save
-            self.status_message = "Annotations saved to database".to_string();
+        if self.shortcut(ctx, SA::Copy) {
+            if let Some(tab) = self.state.current_tab() {
+                let sel = &tab.modes.reading.selection;
+                if !sel.selected_word_indices.is_empty() {
+                    if let Some(doc) = &tab.document {
+                        let words = doc.lock().page_text_positions(sel.page);
+                        let selected_text: String = sel.selected_word_indices
+                            .iter()
+                            .filter_map(|&i| words.get(i))
+                            .map(|w| w.text.as_str())
+                            .collect::<Vec<&str>>()
+                            .join(" ");
+                        ctx.copy_text(selected_text);
+                    }
+                }
+            }
         }
 
-        // Sync progress after page changes
-        self.sync_progress();
-
-        // Ctrl+C to copy selected text
+        // Ctrl+C is also handled by the Copy shortcut above, but we keep the egui-native copy as fallback
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::C)) {
+            // Already handled by Copy shortcut if configured; this ensures copy still works
+            // even if user removes the Copy bind
             if let Some(tab) = self.state.current_tab() {
                 let sel = &tab.modes.reading.selection;
                 if !sel.selected_word_indices.is_empty() {
@@ -624,43 +598,115 @@ impl FolixApp {
     }
 
     fn render_settings_tab(&mut self, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
-            ui.add_space(60.0);
-            ui.heading("⚙ Settings");
-            ui.add_space(20.0);
+        ui.add_space(20.0);
 
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(40, 20))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Toolbar Icon Size:");
-                        ui.add(egui::Slider::new(&mut self.state.settings.toolbar_icon_size, 12.0..=32.0));
-                    });
-                    ui.add_space(10.0);
-                    ui.checkbox(&mut self.state.settings.show_toolbar, "Show Toolbar");
-                    ui.add_space(10.0);
-                    ui.checkbox(&mut self.state.settings.dark_mode, "Dark Mode (Night)");
-                    ui.add_space(20.0);
-                    ui.label("Background Color:");
-                    let mut color = [
-                        self.state.settings.background_color[0] as f32 / 255.0,
-                        self.state.settings.background_color[1] as f32 / 255.0,
-                        self.state.settings.background_color[2] as f32 / 255.0,
-                        self.state.settings.background_color[3] as f32 / 255.0,
-                    ];
-                    ui.color_edit_button_rgba_unmultiplied(&mut color);
-                    self.state.settings.background_color = [
-                        (color[0] * 255.0) as u8,
-                        (color[1] * 255.0) as u8,
-                        (color[2] * 255.0) as u8,
-                        (color[3] * 255.0) as u8,
-                    ];
-                    ui.add_space(20.0);
-                    ui.label("Config file:");
-                    ui.label("./folix.conf");
-                });
-        self.save_config();
+        // ── Appearance ──
+        ui.heading("Appearance");
+        ui.separator();
+        egui::Grid::new("appearance_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
+            ui.label("Toolbar Icon Size:");
+            ui.add(egui::Slider::new(&mut self.state.settings.toolbar_icon_size, 12.0..=32.0));
+            ui.end_row();
+
+            ui.label("Background Color:");
+            let mut color = [
+                self.state.settings.background_color[0] as f32 / 255.0,
+                self.state.settings.background_color[1] as f32 / 255.0,
+                self.state.settings.background_color[2] as f32 / 255.0,
+                self.state.settings.background_color[3] as f32 / 255.0,
+            ];
+            ui.color_edit_button_rgba_unmultiplied(&mut color);
+            self.state.settings.background_color = [
+                (color[0] * 255.0) as u8,
+                (color[1] * 255.0) as u8,
+                (color[2] * 255.0) as u8,
+                (color[3] * 255.0) as u8,
+            ];
+            ui.end_row();
         });
+        ui.checkbox(&mut self.state.settings.show_toolbar, "Show Toolbar");
+        ui.checkbox(&mut self.state.settings.dark_mode, "Dark Mode (Night)");
+
+        ui.add_space(20.0);
+
+        // ── Keyboard Shortcuts ──
+        ui.heading("Keyboard Shortcuts");
+        ui.separator();
+        ui.label("Click a shortcut row to edit its key binding.");
+        ui.add_space(8.0);
+
+        egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+            egui::Grid::new("shortcuts_grid").num_columns(5).spacing([12.0, 4.0]).striped(true).show(ui, |ui| {
+                ui.strong("Action");
+                ui.strong("Key");
+                ui.strong("Ctrl");
+                ui.strong("Shift");
+                ui.strong("Alt");
+                ui.end_row();
+
+                let s = &mut self.state.settings;
+                for (i, action) in ALL_ACTIONS.iter().enumerate() {
+                    let combo = s.shortcuts.get_mut(action);
+
+                    ui.label(action.label());
+
+                    if s.editing_shortcut == Some(i) {
+                        if let Some(combo) = combo {
+                            let mut key_idx = AVAILABLE_KEYS.iter().position(|k| *k == combo.key).unwrap_or(0);
+                            egui::ComboBox::from_id_salt(format!("key_{}", i))
+                                .selected_text(&combo.key)
+                                .show_ui(ui, |ui| {
+                                    for (j, k) in AVAILABLE_KEYS.iter().enumerate() {
+                                        ui.selectable_value(&mut key_idx, j, *k);
+                                    }
+                                });
+                            if key_idx < AVAILABLE_KEYS.len() {
+                                combo.key = AVAILABLE_KEYS[key_idx].to_string();
+                            }
+                            ui.checkbox(&mut combo.ctrl, "");
+                            ui.checkbox(&mut combo.shift, "");
+                            ui.checkbox(&mut combo.alt, "");
+                        } else {
+                            ui.label("(unset)");
+                            ui.label(""); ui.label(""); ui.label("");
+                        }
+                        if ui.button("Done").clicked() {
+                            s.editing_shortcut = None;
+                        }
+                    } else {
+                        if let Some(combo) = combo {
+                            if ui.button(combo.display()).clicked() {
+                                s.editing_shortcut = Some(i);
+                            }
+                        } else {
+                            ui.label("(unset)");
+                        }
+                        ui.label(""); ui.label(""); ui.label("");
+                        ui.label("");
+                    }
+                    ui.end_row();
+                }
+            });
+        });
+
+        ui.add_space(16.0);
+
+        // ── Info ──
+        ui.heading("Info");
+        ui.separator();
+        ui.label("Config file: ./folix.conf");
+        ui.horizontal(|ui| {
+            if ui.button("Reset Shortcuts to Default").clicked() {
+                self.state.settings.shortcuts = crate::app::core::shortcuts::default_shortcuts();
+                self.state.settings.editing_shortcut = None;
+            }
+            if ui.button("Save Config Now").clicked() {
+                self.save_config();
+                self.status_message = "Config saved".to_string();
+            }
+        });
+
+        self.save_config();
     }
 
     fn render_document_view(&mut self, ui: &mut egui::Ui) {

@@ -1,6 +1,7 @@
 use crate::app::engines::Document;
 use super::mode_system::{TabModes, ViewMode};
 use super::feature_system::FeatureSystem;
+use super::shortcuts::{ShortcutMap, default_shortcuts};
 use std::sync::Arc;
 use parking_lot::Mutex;
 
@@ -17,6 +18,9 @@ pub struct AppSettings {
     pub show_toolbar: bool,
     pub background_color: [u8; 4],
     pub dark_mode: bool,
+    pub shortcuts: ShortcutMap,
+    #[serde(skip)]
+    pub editing_shortcut: Option<usize>,
 }
 
 impl Default for AppSettings {
@@ -26,6 +30,8 @@ impl Default for AppSettings {
             show_toolbar: true,
             background_color: [255, 255, 255, 255],
             dark_mode: false,
+            shortcuts: default_shortcuts(),
+            editing_shortcut: None,
         }
     }
 }
