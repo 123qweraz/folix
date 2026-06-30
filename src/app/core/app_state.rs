@@ -16,6 +16,7 @@ pub struct AppSettings {
     pub toolbar_icon_size: f32,
     pub show_toolbar: bool,
     pub background_color: [u8; 4],
+    pub dark_mode: bool,
 }
 
 impl Default for AppSettings {
@@ -24,6 +25,7 @@ impl Default for AppSettings {
             toolbar_icon_size: 16.0,
             show_toolbar: true,
             background_color: [255, 255, 255, 255],
+            dark_mode: false,
         }
     }
 }
@@ -33,6 +35,7 @@ pub struct OpenTab {
     pub document: Option<Arc<Mutex<Box<dyn Document>>>>,
     pub path: Option<String>,
     pub modes: TabModes,
+    pub book_id: Option<String>,
 }
 
 impl OpenTab {
@@ -97,6 +100,7 @@ impl AppState {
             document: Some(document),
             path: Some(path),
             modes,
+            book_id: None,
         });
         self.active_tab = idx;
         idx
@@ -109,6 +113,7 @@ impl AppState {
             document: None,
             path: None,
             modes: TabModes::new(),
+            book_id: None,
         });
         self.active_tab = idx;
         idx
@@ -128,6 +133,7 @@ impl AppState {
             document: None,
             path: None,
             modes: TabModes::new(),
+            book_id: None,
         });
         self.active_tab = idx;
         idx

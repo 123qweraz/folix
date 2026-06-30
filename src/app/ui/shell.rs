@@ -1,8 +1,9 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
-use crate::app::core::mode_system::{ViewMode, AutoPlayMode};
+use crate::app::core::mode_system::{ViewMode, AutoPlayMode, Annotation, AnnotationTool};
 use crate::app::engines::edit_operations;
 use crate::app::platform::font_loader::FontLoader;
+use crate::app::storage::sqlite::Database;
 use super::mode_ui;
 
 pub struct FolixApp {
@@ -11,11 +12,14 @@ pub struct FolixApp {
     pub show_about: bool,
     pub status_message: String,
     pub recent_files: Vec<String>,
+    pub db: Option<Database>,
 }
 
 impl FolixApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self::configure_fonts(&cc.egui_ctx);
+
+        let db = Database::open("./folix.db").ok();
 
         let mut app = Self {
             state: AppState::new(),
@@ -23,6 +27,7 @@ impl FolixApp {
             show_about: false,
             status_message: String::new(),
             recent_files: Vec::new(),
+            db,
         };
         app.init_features();
         app
@@ -102,6 +107,45 @@ impl FolixApp {
             } else {
                 self.state.add_tab(path_str.clone(), doc);
             }
+
+            // Sync with database: ensure book entry, set book_id, load annotations
+            if let Some(ref db) = self.db {
+                if let Some(tab) = self.state.current_tab_mut() {
+                    if let Some(ref d) = tab.document {
+                        let title = d.lock().title();
+                        let format = if path_str.to_lowercase().ends_with(".pdf") { "pdf" }
+                            else if path_str.to_lowercase().ends_with(".epub") { "epub" }
+                            else { "txt" };
+                        if let Ok(book_id) = db.ensure_book(&path_str, &title, format) {
+                            tab.book_id = Some(book_id.clone());
+                            // Load annotations from DB
+                            if let Ok(rows) = db.get_annotations(&book_id) {
+                                for (_, page, kind_str, rect_data, note) in rows {
+                                    let kind = match kind_str.as_str() {
+                                        "Pen" => crate::app::core::mode_system::AnnotationTool::Pen,
+                                        "Note" => crate::app::core::mode_system::AnnotationTool::Note,
+                                        "Eraser" => crate::app::core::mode_system::AnnotationTool::Eraser,
+                                        _ => crate::app::core::mode_system::AnnotationTool::Highlight,
+                                    };
+                                    let rect = rect_data.as_deref()
+                                        .and_then(|s| serde_json::from_str::<[f32; 4]>(s).ok())
+                                        .unwrap_or([0.0; 4]);
+                                    tab.modes.annotate.annotations.push(Annotation {
+                                        id: uuid::Uuid::new_v4().to_string(),
+                                        doc_id: book_id.clone(),
+                                        kind,
+                                        page,
+                                        rect,
+                                        note,
+                                        color: [255, 255, 0, 120],
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             self.state.feature_system.use_feature("open_file");
             self.status_message = format!("Opened: {}", path_str);
         } else {
@@ -129,6 +173,13 @@ impl FolixApp {
 
 impl eframe::App for FolixApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply dark/light theme
+        ctx.set_visuals(if self.state.settings.dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        });
+
         // Handle dropped files
         let dropped_files: Vec<String> = ctx.input(|i| {
             i.raw.dropped_files.iter()
@@ -381,6 +432,8 @@ impl FolixApp {
                     });
                     ui.add_space(10.0);
                     ui.checkbox(&mut self.state.settings.show_toolbar, "Show Toolbar");
+                    ui.add_space(10.0);
+                    ui.checkbox(&mut self.state.settings.dark_mode, "Dark Mode (Night)");
                     ui.add_space(20.0);
                     ui.label("Background Color:");
                     let mut color = [
@@ -431,6 +484,7 @@ impl FolixApp {
         let ctx = ui.ctx().clone();
         let is_light = tab.modes.active == ModeKind::LightReading;
         let is_deep = tab.modes.active == ModeKind::DeepReading;
+        let dark_mode = self.state.settings.dark_mode;
         mode_ui::render_document(
             ui, &document,
             &mut tab.modes.page,
@@ -440,7 +494,26 @@ impl FolixApp {
             if is_light { Some(&mut tab.modes.auto) } else { None },
             if is_deep { Some(&mut tab.modes.annotate) } else { None },
             Some(ctx),
+            dark_mode,
         );
+
+        // Sync annotations to database
+        if is_deep {
+            if let Some(ref db) = self.db {
+                if let Some(book_id) = &tab.book_id {
+                    let _ = db.delete_book_annotations(book_id);
+                    for ann in &tab.modes.annotate.annotations {
+                        let kind_str = format!("{:?}", ann.kind);
+                        let rect_str = serde_json::to_string(&ann.rect).ok();
+                        let _ = db.add_annotation(
+                            book_id, ann.page, &kind_str,
+                            rect_str.as_deref(),
+                            ann.note.as_deref(),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn render_toolbars(&mut self, ctx: &egui::Context) {
@@ -543,16 +616,32 @@ impl FolixApp {
                     }
                     ModeKind::DeepReading => {
                         if tab.modes.active == ModeKind::DeepReading {
-                            let tools = [
-                                ("🖊  High", crate::app::core::mode_system::AnnotationTool::Highlight),
-                                ("✏  Pen", crate::app::core::mode_system::AnnotationTool::Pen),
-                                ("📝  Note", crate::app::core::mode_system::AnnotationTool::Note),
-                                ("🧹  Eraser", crate::app::core::mode_system::AnnotationTool::Eraser),
-                            ];
-                            for (label, tool) in &tools {
-                                let is_selected = std::mem::discriminant(&tab.modes.annotate.tool) == std::mem::discriminant(tool);
-                                if ui.selectable_label(is_selected, *label).clicked() {
-                                    tab.modes.annotate.tool = tool.clone();
+                            let tool = &tab.modes.annotate.tool;
+                            let is_high = *tool == AnnotationTool::Highlight;
+                            let is_pen = *tool == AnnotationTool::Pen;
+                            let is_note = *tool == AnnotationTool::Note;
+                            let is_eraser = *tool == AnnotationTool::Eraser;
+                            if ui.selectable_label(is_high, "High").clicked() {
+                                tab.modes.annotate.tool = AnnotationTool::Highlight;
+                            }
+                            if ui.selectable_label(is_pen, "Pen").clicked() {
+                                tab.modes.annotate.tool = AnnotationTool::Pen;
+                            }
+                            if ui.selectable_label(is_note, "Note").clicked() {
+                                tab.modes.annotate.tool = AnnotationTool::Note;
+                            }
+                            if ui.selectable_label(is_eraser, "Eraser").clicked() {
+                                tab.modes.annotate.tool = AnnotationTool::Eraser;
+                            }
+                            ui.separator();
+                            // Color swatches
+                            for &c in &crate::app::core::mode_system::HIGHLIGHT_COLORS {
+                                let c32 = egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]);
+                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+                                let fill = if tab.modes.annotate.current_color == c { c32 } else { c32.gamma_multiply(0.6) };
+                                ui.painter().rect_filled(rect, 3.0, fill);
+                                if resp.clicked() {
+                                    tab.modes.annotate.current_color = c;
                                 }
                             }
                             ui.separator();
@@ -562,6 +651,8 @@ impl FolixApp {
                             if ui.button("Clr").clicked() {
                                 tab.modes.annotate.annotations.clear();
                             }
+                            ui.separator();
+                            ui.label("High / Pen / Note / Eraser");
                         }
                     }
                     ModeKind::Edit => {

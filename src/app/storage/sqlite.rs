@@ -110,4 +110,46 @@ impl Database {
     pub fn conn(&self) -> &Connection {
         &self.conn
     }
+
+    pub fn ensure_book(&self, path: &str, title: &str, format: &str) -> Result<String> {
+        let existing: Result<String> = self.conn.query_row(
+            "SELECT id FROM books WHERE path = ?1",
+            params![path],
+            |row| row.get(0),
+        );
+        if let Ok(id) = existing {
+            return Ok(id);
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO books (id, path, title, format, added_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, path, title, format, now],
+        )?;
+        Ok(id)
+    }
+
+    pub fn get_annotations(&self, book_id: &str) -> Result<Vec<(String, usize, String, Option<String>, Option<String>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, page, kind, rect_data, note FROM annotations WHERE book_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![book_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)? as usize,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+        rows.collect()
+    }
+
+    pub fn delete_book_annotations(&self, book_id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM annotations WHERE book_id = ?1",
+            params![book_id],
+        )?;
+        Ok(())
+    }
 }

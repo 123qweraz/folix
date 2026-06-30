@@ -10,12 +10,15 @@ pub enum ReadingLayout {
     Scroll,
 }
 
+use std::collections::HashMap;
+
 #[derive(Clone)]
 pub struct SearchState {
     pub query: String,
     pub show_search: bool,
     pub matches: Vec<usize>,
     pub current_match: usize,
+    pub page_highlights: HashMap<usize, Vec<usize>>,
 }
 
 impl Default for SearchState {
@@ -31,6 +34,7 @@ impl SearchState {
             show_search: false,
             matches: vec![],
             current_match: 0,
+            page_highlights: HashMap::new(),
         }
     }
 }
@@ -88,7 +92,7 @@ pub struct AutoState {
     pub progress: f32,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AnnotationTool {
     Highlight,
     Pen,
@@ -104,7 +108,19 @@ pub struct Annotation {
     pub page: usize,
     pub rect: [f32; 4],
     pub note: Option<String>,
+    pub color: [u8; 4],
 }
+
+pub const HIGHLIGHT_COLORS: [[u8; 4]; 8] = [
+    [255, 255, 0, 120],   // yellow
+    [255, 150, 50, 120],  // orange
+    [255, 100, 100, 120], // red
+    [100, 200, 255, 120], // blue
+    [100, 255, 100, 120], // green
+    [200, 100, 255, 120], // purple
+    [255, 255, 255, 120], // white
+    [80, 80, 80, 120],    // gray
+];
 
 #[derive(Clone)]
 pub struct AnnotateState {
@@ -116,6 +132,9 @@ pub struct AnnotateState {
     pub selection_focus: Option<(f32, f32)>,
     pub selection_page: usize,
     pub selected_word_indices: Vec<usize>,
+    pub editing_note_id: Option<String>,
+    pub note_text_buffer: String,
+    pub current_color: [u8; 4],
 }
 
 #[derive(Clone)]
@@ -186,6 +205,9 @@ impl TabModes {
                 selection_focus: None,
                 selection_page: 0,
                 selected_word_indices: vec![],
+                editing_note_id: None,
+                note_text_buffer: String::new(),
+                current_color: HIGHLIGHT_COLORS[0],
             },
             edit: EditState,
             active: ModeKind::LightReading,
