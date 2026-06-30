@@ -418,32 +418,47 @@ fn render_image_page(
             }
         }
 
-        // Shift+click → extend selection from anchor to click position
+        // Click (no shift) on word → select just that word; on blank → clear selection
+        if !shift_held && response.clicked() && !response.double_clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let rx = (pos.x - image_rect.left()) / scale;
+                let ry = (pos.y - image_rect.top()) / scale;
+                if let Some(words_data) = words {
+                    if let Some(idx) = find_word_at(words_data, rx, ry) {
+                        let w = &words_data[idx];
+                        selection.selected_word_indices = vec![idx];
+                        selection.anchor = Some((w.x0, w.y0));
+                        selection.focus = Some((w.x1, w.y1));
+                        selection.page = page_idx;
+                    } else {
+                        selection.selected_word_indices.clear();
+                        selection.anchor = None;
+                        selection.focus = None;
+                    }
+                    selection.selecting = false;
+                }
+            }
+        }
+
+        // Shift+click → toggle word in/out of selection (multi-select)
         if shift_held && response.clicked() && !response.double_clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let rx = (pos.x - image_rect.left()) / scale;
                 let ry = (pos.y - image_rect.top()) / scale;
                 if let Some(words_data) = words {
-                    if selection.selected_word_indices.is_empty() || selection.page != page_idx {
-                        if let Some(idx) = find_word_at(words_data, rx, ry) {
-                            let w = &words_data[idx];
+                    if let Some(idx) = find_word_at(words_data, rx, ry) {
+                        if selection.page == page_idx {
+                            if let Some(pos) = selection.selected_word_indices.iter().position(|&i| i == idx) {
+                                selection.selected_word_indices.remove(pos);
+                            } else {
+                                selection.selected_word_indices.push(idx);
+                            }
+                        } else {
                             selection.selected_word_indices = vec![idx];
-                            selection.anchor = Some((w.x0, w.y0));
-                            selection.focus = Some((w.x1, w.y1));
                             selection.page = page_idx;
-                            selection.selecting = false;
                         }
-                    } else if let Some(anchor) = selection.anchor {
-                        selection.focus = Some((rx, ry));
-                        selection.selected_word_indices = find_words_in_range(
-                            words_data,
-                            anchor.0.min(rx),
-                            anchor.1.min(ry),
-                            anchor.0.max(rx),
-                            anchor.1.max(ry),
-                        );
-                        selection.selecting = false;
                     }
+                    selection.selecting = false;
                 }
             }
         }
