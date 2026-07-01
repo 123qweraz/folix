@@ -15,7 +15,12 @@ pub enum TabContent {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct AppSettings {
     pub toolbar_icon_size: f32,
-    pub show_toolbar: bool,
+    pub show_toolbar_nav: bool,
+    pub show_toolbar_view: bool,
+    pub show_toolbar_page: bool,
+    pub show_toolbar_auto: bool,
+    pub show_toolbar_annotate: bool,
+    pub show_toolbar_edit: bool,
     pub background_color: [u8; 4],
     pub dark_mode: bool,
     pub scroll_speed: f32,
@@ -29,7 +34,12 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             toolbar_icon_size: 16.0,
-            show_toolbar: true,
+            show_toolbar_nav: true,
+            show_toolbar_view: true,
+            show_toolbar_page: true,
+            show_toolbar_auto: true,
+            show_toolbar_annotate: true,
+            show_toolbar_edit: true,
             background_color: [255, 255, 255, 255],
             dark_mode: false,
             scroll_speed: 800.0,

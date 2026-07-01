@@ -715,7 +715,22 @@ impl FolixApp {
             ];
             ui.end_row();
         });
-        ui.checkbox(&mut self.state.settings.show_toolbar, "Show Toolbar");
+        ui.add_space(8.0);
+        ui.label("Toolbars:");
+        egui::Grid::new("toolbar_grid").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+            ui.checkbox(&mut self.state.settings.show_toolbar_nav, "📖 基础浏览  ◀▶ ▲▼");
+            ui.end_row();
+            ui.checkbox(&mut self.state.settings.show_toolbar_view, "🔍 视图调节  缩放 + 布局");
+            ui.end_row();
+            ui.checkbox(&mut self.state.settings.show_toolbar_page, "📄 显示页码");
+            ui.end_row();
+            ui.checkbox(&mut self.state.settings.show_toolbar_auto, "▶ 自动阅读");
+            ui.end_row();
+            ui.checkbox(&mut self.state.settings.show_toolbar_annotate, "🖊 标注");
+            ui.end_row();
+            ui.checkbox(&mut self.state.settings.show_toolbar_edit, "✏ 页面编辑");
+            ui.end_row();
+        });
         ui.checkbox(&mut self.state.settings.dark_mode, "Dark Mode (Night)");
 
         ui.add_space(20.0);
@@ -875,13 +890,14 @@ impl FolixApp {
     }
 
     fn render_toolbars(&mut self, ctx: &egui::Context) {
-        if !self.state.settings.show_toolbar {
-            return;
-        }
-
         let speed = self.state.settings.scroll_speed;
         let mut needs_reload: Option<String> = None;
 
+        let show_nav = self.state.settings.show_toolbar_nav;
+        let show_view = self.state.settings.show_toolbar_view;
+        let show_page = self.state.settings.show_toolbar_page;
+
+        // ── Row 1: mode tabs + nav + view + page number ──
         egui::TopBottomPanel::bottom("toolbar_row1").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let tab = self.state.current_tab_mut();
@@ -908,102 +924,109 @@ impl FolixApp {
                         tab.modes.switch_to(mk);
                     }
                 }
-                ui.separator();
 
                 if doc_count > 0 {
-                    let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
-
-                    // Prev/Next or Scroll Up/Down
-                    if is_paged {
-                        if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
-                            page_jump(tab, tab.modes.page.saturating_sub(1));
-                        }
-                        if ui.add_enabled(tab.modes.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
-                            page_jump(tab, tab.modes.page + 1);
-                        }
-                    } else {
-                        // Scroll ▲▼ — tap = one line, hold = continuous
-                        let up_btn = ui.add_enabled(
-                            tab.modes.reading.scroll_offset_y > 0.0,
-                            egui::Button::new("▲"),
-                        );
-                        if up_btn.clicked() || up_btn.is_pointer_button_down_on() {
-                            tab.modes.reading.scroll_velocity = -speed;
-                        }
-                        let dn_btn = ui.button("▼");
-                        if dn_btn.clicked() || dn_btn.is_pointer_button_down_on() {
-                            tab.modes.reading.scroll_velocity = speed;
-                        }
-                    }
-
-                    // Layout toggle — only meaningful for PDF (paged vs scroll)
-                    if is_fixed_doc {
+                    // ── Navigation section ──
+                    if show_nav {
+                        ui.separator();
                         let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
-                        let layout_label = if is_paged { "Paged" } else { "Scroll" };
-                        if ui.button(layout_label).clicked() {
-                            tab.modes.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
+                        if is_paged {
+                            if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
+                                page_jump(tab, tab.modes.page.saturating_sub(1));
+                            }
+                            if ui.add_enabled(tab.modes.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
+                                page_jump(tab, tab.modes.page + 1);
+                            }
+                        } else {
+                            let up_btn = ui.add_enabled(
+                                tab.modes.reading.scroll_offset_y > 0.0,
+                                egui::Button::new("▲"),
+                            );
+                            if up_btn.clicked() || up_btn.is_pointer_button_down_on() {
+                                tab.modes.reading.scroll_velocity = -speed;
+                            }
+                            let dn_btn = ui.button("▼");
+                            if dn_btn.clicked() || dn_btn.is_pointer_button_down_on() {
+                                tab.modes.reading.scroll_velocity = speed;
+                            }
                         }
                     }
-                    ui.separator();
 
-                    // Zoom
-                    ui.label("🔍");
-                    let z = tab.modes.scale;
-                    if ui.add_enabled(z > 0.5, egui::Button::new("−")).clicked() {
-                        tab.modes.scale = (z - 0.1).max(0.5);
+                    // ── View adjustment section ──
+                    if show_view {
+                        ui.separator();
+                        let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
+                        if is_fixed_doc {
+                            let layout_label = if is_paged { "Paged" } else { "Scroll" };
+                            if ui.button(layout_label).clicked() {
+                                tab.modes.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
+                            }
+                        }
+                        ui.label("🔍");
+                        let z = tab.modes.scale;
+                        if ui.add_enabled(z > 0.5, egui::Button::new("−")).clicked() {
+                            tab.modes.scale = (z - 0.1).max(0.5);
+                        }
+                        let mut new_scale = tab.modes.scale;
+                        ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("×"));
+                        if (new_scale - tab.modes.scale).abs() > 0.001 {
+                            tab.modes.scale = new_scale;
+                        }
+                        if ui.add_enabled(z < 3.0, egui::Button::new("+")).clicked() {
+                            tab.modes.scale = (z + 0.1).min(3.0);
+                        }
                     }
-                    let mut new_scale = tab.modes.scale;
-                    ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("×"));
-                    if (new_scale - tab.modes.scale).abs() > 0.001 {
-                        tab.modes.scale = new_scale;
-                    }
-                    if ui.add_enabled(z < 3.0, egui::Button::new("+")).clicked() {
-                        tab.modes.scale = (z + 0.1).min(3.0);
-                    }
-                    ui.separator();
 
-                    // Page number on the right
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!("Page {}/{}", tab.modes.page + 1, doc_count));
-                    });
+                    // ── Page number section ──
+                    if show_page {
+                        ui.separator();
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(format!("Page {}/{}", tab.modes.page + 1, doc_count));
+                        });
+                    }
                 }
             });
         });
 
-        egui::TopBottomPanel::bottom("toolbar_row2").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let tab = self.state.current_tab_mut();
-                if tab.is_none() { return; }
-                let tab = tab.unwrap();
+        // ── Row 2: Mode-specific controls ──
+        let show_row2 = self.state.current_tab().map(|tab| {
+            let doc_count = page_count_for_tab(tab);
+            doc_count > 0 && match tab.modes.active {
+                ModeKind::LightReading => self.state.settings.show_toolbar_auto,
+                ModeKind::DeepReading => self.state.settings.show_toolbar_annotate,
+                ModeKind::PageEdit | ModeKind::ContentEdit => self.state.settings.show_toolbar_edit,
+            }
+        }).unwrap_or(false);
 
-                let doc_count = page_count_for_tab(tab);
+        if show_row2 {
+            egui::TopBottomPanel::bottom("toolbar_row2").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let tab = self.state.current_tab_mut();
+                    if tab.is_none() { return; }
+                    let tab = tab.unwrap();
 
-                if doc_count == 0 { return; }
-
-                // Row 2: Mode-specific controls
-                match tab.modes.active {
-                    ModeKind::LightReading => {
-                        let play_label = if tab.modes.auto.playing { "⏸" } else { "▶" };
-                        if ui.button(play_label).clicked() {
-                            tab.modes.auto.playing = !tab.modes.auto.playing;
-                            if tab.modes.auto.playing {
-                                tab.modes.auto.progress = 0.0;
+                    match tab.modes.active {
+                        ModeKind::LightReading => {
+                            let play_label = if tab.modes.auto.playing { "⏸" } else { "▶" };
+                            if ui.button(play_label).clicked() {
+                                tab.modes.auto.playing = !tab.modes.auto.playing;
+                                if tab.modes.auto.playing {
+                                    tab.modes.auto.progress = 0.0;
+                                }
                             }
+                            ui.label("Speed:");
+                            ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
+                            ui.separator();
+                            ui.label("Mode:");
+                            egui::ComboBox::from_id_salt("auto_mode")
+                                .selected_text(format!("{:?}", tab.modes.auto.auto_mode))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::PageFlow, "Page Flow");
+                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::GlyphReveal, "Glyph Reveal");
+                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::SentenceStream, "Sentence Stream");
+                                });
                         }
-                        ui.label("Speed:");
-                        ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
-                        ui.separator();
-                        ui.label("Mode:");
-                        egui::ComboBox::from_id_salt("auto_mode")
-                            .selected_text(format!("{:?}", tab.modes.auto.auto_mode))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::PageFlow, "Page Flow");
-                                ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::GlyphReveal, "Glyph Reveal");
-                                ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::SentenceStream, "Sentence Stream");
-                            });
-                    }
-                    ModeKind::DeepReading => {
-                        if tab.modes.active == ModeKind::DeepReading {
+                        ModeKind::DeepReading => {
                             let tool = &tab.modes.annotate.tool;
                             let is_sel = *tool == AnnotationTool::Highlight;
                             let is_pen = *tool == AnnotationTool::Pen;
@@ -1082,62 +1105,62 @@ impl FolixApp {
                                 tab.modes.annotate.annotations.clear();
                             }
                         }
-                    }
-                    ModeKind::PageEdit => {
-                        let path = tab.path.clone();
-                        if let Some(ref p) = path {
-                            if ui.button("↻ CW").clicked() {
-                                let page = tab.modes.page;
-                                if edit_operations::rotate_page(p, page, 90).is_ok() {
-                                    needs_reload = Some(p.clone());
+                        ModeKind::PageEdit => {
+                            let path = tab.path.clone();
+                            if let Some(ref p) = path {
+                                if ui.button("↻ CW").clicked() {
+                                    let page = tab.modes.page;
+                                    if edit_operations::rotate_page(p, page, 90).is_ok() {
+                                        needs_reload = Some(p.clone());
+                                    }
                                 }
-                            }
-                            if ui.button("↻ CCW").clicked() {
-                                let page = tab.modes.page;
-                                if edit_operations::rotate_page(p, page, 270).is_ok() {
-                                    needs_reload = Some(p.clone());
+                                if ui.button("↻ CCW").clicked() {
+                                    let page = tab.modes.page;
+                                    if edit_operations::rotate_page(p, page, 270).is_ok() {
+                                        needs_reload = Some(p.clone());
+                                    }
                                 }
-                            }
-                            if ui.button("Del").clicked() {
-                                let page = tab.modes.page;
-                                if doc_count > 1 {
-                                    if edit_operations::delete_page(p, page).is_ok() {
+                                if ui.button("Del").clicked() {
+                                    let page = tab.modes.page;
+                                    if page_count_for_tab(tab) > 1 {
+                                        if edit_operations::delete_page(p, page).is_ok() {
+                                            needs_reload = Some(p.clone());
+                                        }
+                                    }
+                                }
+                                if ui.button("+ Page").clicked() {
+                                    let page = tab.modes.page;
+                                    if edit_operations::insert_blank_page(p, page).is_ok() {
                                         needs_reload = Some(p.clone());
                                     }
                                 }
                             }
-                            if ui.button("+ Page").clicked() {
-                                let page = tab.modes.page;
-                                if edit_operations::insert_blank_page(p, page).is_ok() {
-                                    needs_reload = Some(p.clone());
-                                }
+                        }
+                        ModeKind::ContentEdit => {
+                            if !matches!(tab.modes.edit, EditState::Content(_)) {
+                                tab.modes.edit = EditState::Content(ContentEditState {
+                                    font_size_scale: 1.0, bold: false, italic: false,
+                                });
+                            }
+                            let state = tab.modes.edit.as_content().unwrap();
+                            if ui.button("A-").clicked() {
+                                state.font_size_scale = (state.font_size_scale - 0.1).max(0.5);
+                            }
+                            if ui.button("A+").clicked() {
+                                state.font_size_scale = (state.font_size_scale + 0.1).min(2.0);
+                            }
+                            ui.label(format!("{:.0}%", state.font_size_scale * 100.0));
+                            if ui.selectable_label(state.bold, "B").clicked() {
+                                state.bold = !state.bold;
+                            }
+                            if ui.selectable_label(state.italic, "I").clicked() {
+                                state.italic = !state.italic;
                             }
                         }
                     }
-                    ModeKind::ContentEdit => {
-                        if !matches!(tab.modes.edit, EditState::Content(_)) {
-                            tab.modes.edit = EditState::Content(ContentEditState {
-                                font_size_scale: 1.0, bold: false, italic: false,
-                            });
-                        }
-                        let state = tab.modes.edit.as_content().unwrap();
-                        if ui.button("A-").clicked() {
-                            state.font_size_scale = (state.font_size_scale - 0.1).max(0.5);
-                        }
-                        if ui.button("A+").clicked() {
-                            state.font_size_scale = (state.font_size_scale + 0.1).min(2.0);
-                        }
-                        ui.label(format!("{:.0}%", state.font_size_scale * 100.0));
-                        if ui.selectable_label(state.bold, "B").clicked() {
-                            state.bold = !state.bold;
-                        }
-                        if ui.selectable_label(state.italic, "I").clicked() {
-                            state.italic = !state.italic;
-                        }
-                    }
-                }
+                });
             });
-        });
+        }
 
         if let Some(path) = needs_reload {
             self.reload_document(&path);
