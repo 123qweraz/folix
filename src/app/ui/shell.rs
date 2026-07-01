@@ -175,10 +175,16 @@ impl FolixApp {
                             }
                             // Load progress
                             if let Ok(Some((saved_page, _))) = db.load_progress(&book_id) {
-                                let max = d.lock().as_fixed().map(|f| f.page_count().saturating_sub(1))
-                                    .or_else(|| tab.modes.paginator.as_ref().map(|p| p.page_count().saturating_sub(1)))
-                                    .unwrap_or(0);
-                                tab.modes.page = saved_page.min(max);
+                                let is_fixed = d.lock().as_fixed().is_some();
+                                if is_fixed {
+                                    let max = d.lock().as_fixed()
+                                        .map(|f| f.page_count().saturating_sub(1))
+                                        .unwrap_or(0);
+                                    tab.modes.page = saved_page.min(max);
+                                } else {
+                                    // Reflow: save for later (paginator not yet created)
+                                    tab.modes.reading.stream_jump_to = Some(saved_page);
+                                }
                             }
                         }
                     }
@@ -188,6 +194,12 @@ impl FolixApp {
             // Ensure paginator for reflowable documents
             if let Some(tab) = self.state.current_tab_mut() {
                 Self::ensure_paginator(tab);
+                // If there's a pending jump (set before paginator existed), ensure
+                // enough pages are loaded so the stream jump works first frame.
+                if let Some(target) = tab.modes.reading.stream_jump_to {
+                    let max = page_count_for_tab(tab).saturating_sub(1);
+                    tab.modes.reading.stream_page_end = target.min(max);
+                }
             }
 
             self.state.feature_system.use_feature("open_file");
@@ -336,25 +348,27 @@ impl eframe::App for FolixApp {
 
         if self.shortcut(ctx, SA::PrevPage) {
             if let Some(tab) = self.state.current_tab_mut() {
-                if tab.modes.page > 0 { tab.modes.page -= 1; }
+                let cur = tab.modes.page;
+                if cur > 0 { page_jump(tab, cur - 1); }
             }
         }
 
         if self.shortcut(ctx, SA::NextPage) {
             if let Some(tab) = self.state.current_tab_mut() {
+                let cur = tab.modes.page;
                 let max = page_count_for_tab(tab).saturating_sub(1);
-                if tab.modes.page < max { tab.modes.page += 1; }
+                if cur < max { page_jump(tab, cur + 1); }
             }
         }
 
         if self.shortcut(ctx, SA::FirstPage) {
-            if let Some(tab) = self.state.current_tab_mut() { tab.modes.page = 0; }
+            if let Some(tab) = self.state.current_tab_mut() { page_jump(tab, 0); }
         }
 
         if self.shortcut(ctx, SA::LastPage) {
             if let Some(tab) = self.state.current_tab_mut() {
                 let max = page_count_for_tab(tab).saturating_sub(1);
-                tab.modes.page = max;
+                page_jump(tab, max);
             }
         }
 
@@ -364,7 +378,8 @@ impl eframe::App for FolixApp {
                     tab.modes.reading.scroll_offset_y += 600.0;
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
-                    if tab.modes.page < max { tab.modes.page += 1; }
+                    let cur = tab.modes.page;
+                    if cur < max { page_jump(tab, cur + 1); }
                 }
             }
         }
@@ -373,7 +388,7 @@ impl eframe::App for FolixApp {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
                     tab.modes.reading.scroll_offset_y = (tab.modes.reading.scroll_offset_y - 600.0).max(0.0);
-                } else if tab.modes.page > 0 { tab.modes.page -= 1; }
+                } else if tab.modes.page > 0 { page_jump(tab, tab.modes.page - 1); }
             }
         }
 
@@ -849,10 +864,10 @@ impl FolixApp {
                     let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
                     if is_paged || tab.modes.active == ModeKind::DeepReading {
                         if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
-                            tab.modes.page = tab.modes.page.saturating_sub(1);
+                            page_jump(tab, tab.modes.page.saturating_sub(1));
                         }
                         if ui.add_enabled(tab.modes.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
-                            tab.modes.page += 1;
+                            page_jump(tab, tab.modes.page + 1);
                         }
                         ui.separator();
                     }
@@ -1095,4 +1110,16 @@ fn page_count_for_tab(tab: &crate::app::core::app_state::OpenTab) -> usize {
     } else {
         0
     }
+}
+
+/// Navigate to a page, handling both fixed (PDF) and reflow (stream) documents.
+fn page_jump(tab: &mut crate::app::core::app_state::OpenTab, target: usize) {
+    let max = page_count_for_tab(tab).saturating_sub(1);
+    let target = target.min(max);
+    if tab.modes.paginator.is_some() {
+        // For reflow: set stream jump target + ensure enough pages loaded
+        tab.modes.reading.stream_jump_to = Some(target);
+        tab.modes.reading.stream_page_end = tab.modes.reading.stream_page_end.max(target);
+    }
+    tab.modes.page = target;
 }

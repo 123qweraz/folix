@@ -85,110 +85,172 @@ pub fn render_document(
     } else {
         drop(doc);
         if let Some(pag) = paginator {
-            let entries = pag.page_entries(*page).to_vec();
             let total_pages = pag.page_count();
+            if total_pages == 0 {
+                return;
+            }
 
-            // Unique id per page so scroll resets when we auto-advance
-            let scroll_id = format!("reflow_scroll_{}", page);
-            let sa = egui::ScrollArea::vertical()
-                .id_salt(scroll_id)
-                .auto_shrink([false; 2]);
+            // Handle pending page jump: ensure enough pages are loaded
+            // before computing the loaded range.
+            if let Some(target) = reading.stream_jump_to {
+                if target > reading.stream_page_end {
+                    reading.stream_page_end = target;
+                }
+                // Keep stream_jump_to; will be consumed after we have cached y-offsets.
+            }
+
+            let loaded = reading.stream_page_end.min(total_pages.saturating_sub(1));
+
+            // Pre-load chapter data for all pages in the stream (avoid holding
+            // the document lock during UI rendering).
+            let chapters: Vec<(usize, crate::app::engines::Chapter)> = {
+                let doc_handle = document.lock();
+                let reflow = doc_handle.as_reflow().unwrap();
+                (0..=loaded)
+                    .map(|p| {
+                        let ci = pag.chapter_idx_for_page(p).unwrap_or(0);
+                        (ci, reflow.load_chapter(ci))
+                    })
+                    .collect()
+            };
 
             ui.style_mut().interaction.multi_widget_text_select = true;
 
-            let doc_handle = document.lock();
-            let reflow = doc_handle.as_reflow().unwrap();
-            let chapter_idx = pag.chapter_idx_for_page(*page).unwrap_or(0);
-            let chapter = reflow.load_chapter(chapter_idx);
-            drop(doc_handle);
+            let mut sa = egui::ScrollArea::vertical()
+                .id_salt("reflow_stream")
+                .auto_shrink([false; 2]);
 
-            let mut at_bottom = false;
+            // Consume the jump request: use exact Y offset if cached, or estimate.
+            if let Some(target) = reading.stream_jump_to {
+                if target < reading.stream_page_y_starts.len() {
+                    sa = sa.vertical_scroll_offset(reading.stream_page_y_starts[target]);
+                    reading.stream_jump_to = None;
+                } else {
+                    // Estimate scroll position from average page height.
+                    let est_page_h = if reading.stream_page_y_starts.len() > 1 {
+                        (reading.stream_page_y_starts.last().unwrap()
+                            - reading.stream_page_y_starts[0])
+                            / (reading.stream_page_y_starts.len() as f32 - 1.0)
+                    } else {
+                        ui.available_size().y.max(100.0)
+                    };
+                    sa = sa.vertical_scroll_offset(est_page_h * target as f32);
+                    reading.stream_jump_to = None;
+                }
+            }
 
-            sa.show(ui, |ui| {
-                egui::Frame::NONE
-                    .inner_margin(egui::Margin::symmetric(20, 10))
-                    .show(ui, |ui| {
-                        for entry in &entries {
-                            if entry.block_idx >= chapter.blocks.len() {
-                                continue;
-                            }
-                            match &chapter.blocks[entry.block_idx] {
-                                ContentBlock::Text(text) => {
-                                    let char_start = entry.char_range.start;
-                                    let max_char = text.chars().count();
-                                    let char_end = entry.char_range.end.min(max_char);
-                                    let slice = if char_start < char_end {
-                                        let chars: Vec<(usize, usize)> = text.char_indices()
-                                            .map(|(i, c)| (i, c.len_utf8()))
-                                            .collect();
-                                        let start_byte = chars[char_start].0;
-                                        let end_byte = if char_end < chars.len() {
-                                            chars[char_end].0
-                                        } else {
-                                            text.len()
-                                        };
-                                        &text[start_byte..end_byte]
+            let output = sa.show_viewport(ui, |ui, _viewport| {
+                let mut y_starts: Vec<f32> = Vec::new();
+
+                for p in 0..=loaded {
+                    y_starts.push(ui.min_rect().bottom());
+
+                    let (chapter_idx, chapter) = &chapters[p as usize];
+                    let entries = pag.page_entries(p);
+
+                    if p > 0 {
+                        // Subtle separator between pages
+                        ui.separator();
+                    }
+
+                    for entry in entries {
+                        if entry.block_idx >= chapter.blocks.len() {
+                            continue;
+                        }
+                        match &chapter.blocks[entry.block_idx] {
+                            ContentBlock::Text(text) => {
+                                let char_start = entry.char_range.start;
+                                let max_char = text.chars().count();
+                                let char_end = entry.char_range.end.min(max_char);
+                                let slice = if char_start < char_end {
+                                    let chars: Vec<(usize, usize)> = text
+                                        .char_indices()
+                                        .map(|(i, c)| (i, c.len_utf8()))
+                                        .collect();
+                                    let start_byte = chars[char_start].0;
+                                    let end_byte = if char_end < chars.len() {
+                                        chars[char_end].0
                                     } else {
-                                        ""
+                                        text.len()
                                     };
-                                    if !slice.is_empty() {
-                                        ui.add(
-                                            egui::Label::new(slice)
-                                                .wrap()
-                                                .selectable(true),
-                                        );
-                                    }
+                                    &text[start_byte..end_byte]
+                                } else {
+                                    ""
+                                };
+                                if !slice.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(slice)
+                                            .wrap()
+                                            .selectable(true),
+                                    );
                                 }
-                                ContentBlock::Image(img) => {
-                                    let key = format!("epub_img_{}_{}", chapter_idx, entry.block_idx);
-                                    let texture = image_cache.entry(key.clone()).or_insert_with(|| {
-                                        let decoded = match image::load_from_memory(&img.raw_bytes) {
+                            }
+                            ContentBlock::Image(img) => {
+                                let key =
+                                    format!("epub_img_{}_{}", chapter_idx, entry.block_idx);
+                                let texture =
+                                    image_cache.entry(key.clone()).or_insert_with(|| {
+                                        let decoded = match image::load_from_memory(
+                                            &img.raw_bytes,
+                                        ) {
                                             Ok(d) => d.into_rgba8(),
                                             Err(_) => {
                                                 return ui.ctx().load_texture(
                                                     &key,
-                                                    egui::ColorImage::new([1, 1], egui::Color32::RED),
+                                                    egui::ColorImage::new(
+                                                        [1, 1],
+                                                        egui::Color32::RED,
+                                                    ),
                                                     egui::TextureOptions::default(),
                                                 );
                                             }
                                         };
                                         let (w, h) = decoded.dimensions();
-                                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                            [w as usize, h as usize],
-                                            decoded.as_raw(),
-                                        );
+                                        let color_image =
+                                            egui::ColorImage::from_rgba_unmultiplied(
+                                                [w as usize, h as usize],
+                                                decoded.as_raw(),
+                                            );
                                         ui.ctx().load_texture(
                                             &key,
                                             color_image,
                                             egui::TextureOptions::default(),
                                         )
                                     });
-                                    let aspect = img.width as f32 / img.height as f32;
-                                    let max_w = ui.available_width().min(600.0);
-                                    let h = max_w / aspect;
-                                    ui.add_sized(
-                                        egui::vec2(max_w, h + 8.0),
-                                        egui::Image::new((texture.id(), egui::vec2(max_w, h))),
-                                    );
-                                }
+                                let aspect = img.width as f32 / img.height as f32;
+                                let max_w = ui.available_width().min(600.0);
+                                let h = max_w / aspect;
+                                ui.add_sized(
+                                    egui::vec2(max_w, h + 8.0),
+                                    egui::Image::new((
+                                        texture.id(),
+                                        egui::vec2(max_w, h),
+                                    )),
+                                );
                             }
                         }
+                    }
+                }
 
-                        // Auto-advance when scrolled to the bottom (seamless page turn)
-                        if *reading_layout == ReadingLayout::Scroll {
-                            let content = ui.min_rect();
-                            let viewport = ui.clip_rect();
-                            if content.height() > viewport.height() + 10.0
-                                && (content.bottom() - viewport.bottom()).abs() < 5.0
-                            {
-                                at_bottom = true;
-                            }
-                        }
-                    });
+                y_starts
             });
 
-            if at_bottom && *page + 1 < total_pages {
-                *page += 1;
+            // Cache Y offsets for page navigation
+            reading.stream_page_y_starts = output.inner;
+
+            // Derive current page from scroll position
+            let scroll_y = output.state.offset.y;
+            *page = reading
+                .stream_page_y_starts
+                .iter()
+                .rposition(|&y| scroll_y >= y)
+                .unwrap_or(0);
+
+            // Auto-append next page when scrolled to near bottom
+            let at_bottom = output.state.offset.y + output.inner_rect.height()
+                >= output.content_size.y - 15.0;
+            if at_bottom && loaded + 1 < total_pages {
+                reading.stream_page_end = loaded + 1;
             }
         }
     }
@@ -865,6 +927,10 @@ pub fn render_sidebar(
                             };
                             let selected = *page == target_page;
                             if ui.selectable_label(selected, &entry.label).clicked() {
+                                if paginator.is_some() {
+                                    rs.stream_jump_to = Some(target_page);
+                                    rs.stream_page_end = rs.stream_page_end.max(target_page);
+                                }
                                 *page = target_page.min(paginator.as_ref().map(|p| p.page_count().saturating_sub(1)).unwrap_or(entry.page_index));
                                 rs.scroll_offset_y = 0.0;
                             }
@@ -930,6 +996,10 @@ pub fn render_sidebar(
                             m
                         };
                         if target != *page {
+                            if paginator.is_some() {
+                                rs.stream_jump_to = Some(target);
+                                rs.stream_page_end = rs.stream_page_end.max(target);
+                            }
                             *page = target;
                             rs.scroll_offset_y = 0.0;
                         }
@@ -944,6 +1014,10 @@ pub fn render_sidebar(
                             m
                         };
                         if target != *page {
+                            if paginator.is_some() {
+                                rs.stream_jump_to = Some(target);
+                                rs.stream_page_end = rs.stream_page_end.max(target);
+                            }
                             *page = target;
                             rs.scroll_offset_y = 0.0;
                         }

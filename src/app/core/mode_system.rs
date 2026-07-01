@@ -83,6 +83,12 @@ pub struct ReadingState {
     pub scroll_offset_y: f32,
     pub total_height: f32,
     pub selection: SelectionState,
+    /// Reflow continuous stream: number of pages loaded into the scroll stream.
+    pub stream_page_end: usize,
+    /// Reflow stream: Y offset of each page's first rendered element.
+    pub stream_page_y_starts: Vec<f32>,
+    /// Pending jump-to-page request (consumed by renderer).
+    pub stream_jump_to: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -222,6 +228,9 @@ impl TabModes {
                 scroll_offset_y: 0.0,
                 total_height: 0.0,
                 selection: SelectionState::default(),
+                stream_page_end: 0,
+                stream_page_y_starts: vec![],
+                stream_jump_to: None,
             },
             auto: AutoState {
                 playing: false,
