@@ -93,18 +93,10 @@ pub struct ReadingState {
     pub scroll_velocity: f32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum AutoPlayMode {
-    PageFlow,
-    GlyphReveal,
-    SentenceStream,
-}
-
 #[derive(Clone)]
 pub struct AutoState {
     pub playing: bool,
     pub speed: f32,
-    pub auto_mode: AutoPlayMode,
     pub progress: f32,
 }
 
@@ -238,7 +230,6 @@ impl TabModes {
             auto: AutoState {
                 playing: false,
                 speed: 1.0,
-                auto_mode: AutoPlayMode::PageFlow,
                 progress: 0.0,
             },
             annotate: AnnotateState {

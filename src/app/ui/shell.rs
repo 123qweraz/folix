@@ -1,6 +1,6 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
-use crate::app::core::mode_system::{ViewMode, AutoPlayMode, Annotation, AnnotationTool, EditState, ContentEditState};
+use crate::app::core::mode_system::{ViewMode, Annotation, AnnotationTool, EditState, ContentEditState};
 use crate::app::core::shortcuts::{key_from_str, ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::edit_operations;
 use crate::app::paginator::Paginator;
@@ -1016,15 +1016,7 @@ impl FolixApp {
                             }
                             ui.label("Speed:");
                             ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
-                            ui.separator();
-                            ui.label("Mode:");
-                            egui::ComboBox::from_id_salt("auto_mode")
-                                .selected_text(format!("{:?}", tab.modes.auto.auto_mode))
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::PageFlow, "Page Flow");
-                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::GlyphReveal, "Glyph Reveal");
-                                    ui.selectable_value(&mut tab.modes.auto.auto_mode, AutoPlayMode::SentenceStream, "Sentence Stream");
-                                });
+
                         }
                         ModeKind::DeepReading => {
                             let tool = &tab.modes.annotate.tool;
