@@ -1,6 +1,6 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
-use crate::app::core::mode_system::{ViewMode, AutoPlayMode, Annotation, AnnotationTool};
+use crate::app::core::mode_system::{ViewMode, AutoPlayMode, Annotation, AnnotationTool, EditState, ContentEditState};
 use crate::app::core::shortcuts::{ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::edit_operations;
 use crate::app::paginator::Paginator;
@@ -485,17 +485,26 @@ impl FolixApp {
                 });
 
                 ui.menu_button("Mode", |ui| {
-                    let modes = ["LightReading", "DeepReading", "Edit"];
+                    let is_fixed = self.state.current_tab()
+                        .and_then(|t| t.document.as_ref())
+                        .map(|d| d.lock().is_fixed())
+                        .unwrap_or(true);
+                    let mode_names: &[&str] = if is_fixed {
+                        &["LightReading", "DeepReading", "PageEdit"]
+                    } else {
+                        &["LightReading", "DeepReading", "ContentEdit"]
+                    };
                     let current_name = self.state.current_tab()
                         .map(|t| t.modes.active.name().to_string())
                         .unwrap_or_else(|| "Light".to_string());
-                    for mode_name in &modes {
+                    for mode_name in mode_names {
                         let selected = current_name == *mode_name;
                         if ui.selectable_label(selected, *mode_name).clicked() {
                             if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
                                 tab.modes.switch_to(match *mode_name {
                                     "DeepReading" => ModeKind::DeepReading,
-                                    "Edit" => ModeKind::Edit,
+                                    "PageEdit" => ModeKind::PageEdit,
+                                    "ContentEdit" => ModeKind::ContentEdit,
                                     _ => ModeKind::LightReading,
                                 });
                             }
@@ -815,9 +824,19 @@ impl FolixApp {
 
                 let doc_count = page_count_for_tab(tab);
 
-                // Row 1: Mode tabs + Basic Reading Toolbar + Page number
-                let mode_names = [ModeKind::LightReading, ModeKind::DeepReading, ModeKind::Edit];
-                for &mk in &mode_names {
+                // Ensure active mode is compatible with document type
+                let is_fixed_doc = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
+                let valid_for_fixed = matches!(tab.modes.active, ModeKind::LightReading | ModeKind::DeepReading | ModeKind::PageEdit);
+                let valid_for_reflow = matches!(tab.modes.active, ModeKind::LightReading | ModeKind::DeepReading | ModeKind::ContentEdit);
+                if (is_fixed_doc && !valid_for_fixed) || (!is_fixed_doc && !valid_for_reflow) {
+                    tab.modes.active = ModeKind::LightReading;
+                }
+                let mode_names: &[ModeKind] = if is_fixed_doc {
+                    &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::PageEdit]
+                } else {
+                    &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::ContentEdit]
+                };
+                for &mk in mode_names {
                     let selected = tab.modes.active == mk;
                     if ui.selectable_label(selected, mk.name()).clicked() {
                         tab.modes.switch_to(mk);
@@ -975,40 +994,56 @@ impl FolixApp {
                             }
                         }
                     }
-                    ModeKind::Edit => {
-                        let supports_image = tab.document.as_ref()
-                            .map(|d| d.lock().is_fixed())
-                            .unwrap_or(false);
-                        if supports_image {
-                            let path = tab.path.clone();
-                            if let Some(ref p) = path {
-                                if ui.button("↻ CW").clicked() {
-                                    let page = tab.modes.page;
-                                    if edit_operations::rotate_page(p, page, 90).is_ok() {
-                                        needs_reload = Some(p.clone());
-                                    }
+                    ModeKind::PageEdit => {
+                        let path = tab.path.clone();
+                        if let Some(ref p) = path {
+                            if ui.button("↻ CW").clicked() {
+                                let page = tab.modes.page;
+                                if edit_operations::rotate_page(p, page, 90).is_ok() {
+                                    needs_reload = Some(p.clone());
                                 }
-                                if ui.button("↻ CCW").clicked() {
-                                    let page = tab.modes.page;
-                                    if edit_operations::rotate_page(p, page, 270).is_ok() {
-                                        needs_reload = Some(p.clone());
-                                    }
+                            }
+                            if ui.button("↻ CCW").clicked() {
+                                let page = tab.modes.page;
+                                if edit_operations::rotate_page(p, page, 270).is_ok() {
+                                    needs_reload = Some(p.clone());
                                 }
-                                if ui.button("Del").clicked() {
-                                    let page = tab.modes.page;
-                                    if doc_count > 1 {
-                                        if edit_operations::delete_page(p, page).is_ok() {
-                                            needs_reload = Some(p.clone());
-                                        }
-                                    }
-                                }
-                                if ui.button("+ Page").clicked() {
-                                    let page = tab.modes.page;
-                                    if edit_operations::insert_blank_page(p, page).is_ok() {
+                            }
+                            if ui.button("Del").clicked() {
+                                let page = tab.modes.page;
+                                if doc_count > 1 {
+                                    if edit_operations::delete_page(p, page).is_ok() {
                                         needs_reload = Some(p.clone());
                                     }
                                 }
                             }
+                            if ui.button("+ Page").clicked() {
+                                let page = tab.modes.page;
+                                if edit_operations::insert_blank_page(p, page).is_ok() {
+                                    needs_reload = Some(p.clone());
+                                }
+                            }
+                        }
+                    }
+                    ModeKind::ContentEdit => {
+                        if !matches!(tab.modes.edit, EditState::Content(_)) {
+                            tab.modes.edit = EditState::Content(ContentEditState {
+                                font_size_scale: 1.0, bold: false, italic: false,
+                            });
+                        }
+                        let state = tab.modes.edit.as_content().unwrap();
+                        if ui.button("A-").clicked() {
+                            state.font_size_scale = (state.font_size_scale - 0.1).max(0.5);
+                        }
+                        if ui.button("A+").clicked() {
+                            state.font_size_scale = (state.font_size_scale + 0.1).min(2.0);
+                        }
+                        ui.label(format!("{:.0}%", state.font_size_scale * 100.0));
+                        if ui.selectable_label(state.bold, "B").clicked() {
+                            state.bold = !state.bold;
+                        }
+                        if ui.selectable_label(state.italic, "I").clicked() {
+                            state.italic = !state.italic;
                         }
                     }
                 }

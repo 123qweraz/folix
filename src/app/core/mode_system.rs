@@ -145,13 +145,36 @@ pub struct AnnotateState {
 }
 
 #[derive(Clone)]
-pub struct EditState;
+pub struct PageEditState;
+
+#[derive(Clone)]
+pub struct ContentEditState {
+    pub font_size_scale: f32,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+#[derive(Clone)]
+pub enum EditState {
+    Page(PageEditState),
+    Content(ContentEditState),
+}
+
+impl EditState {
+    pub fn as_content(&mut self) -> Option<&mut ContentEditState> {
+        match self {
+            EditState::Content(s) => Some(s),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ModeKind {
     LightReading,
     DeepReading,
-    Edit,
+    PageEdit,
+    ContentEdit,
 }
 
 impl ModeKind {
@@ -159,7 +182,8 @@ impl ModeKind {
         match self {
             ModeKind::LightReading => "Light",
             ModeKind::DeepReading => "Deep",
-            ModeKind::Edit => "Edit",
+            ModeKind::PageEdit => "Page",
+            ModeKind::ContentEdit => "Content",
         }
     }
 }
@@ -217,7 +241,7 @@ impl TabModes {
                 note_text_buffer: String::new(),
                 current_color: HIGHLIGHT_COLORS[0],
             },
-            edit: EditState,
+            edit: EditState::Page(PageEditState),
             active: ModeKind::LightReading,
         }
     }
