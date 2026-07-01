@@ -153,6 +153,19 @@ impl Paginator {
                 continue;
             }
 
+            // Force a page break at each new chapter (except the first).
+            // This ensures each chapter starts on its own page.
+            if ci > 0 && !current_page_entries.is_empty() {
+                self.pages.push(PageLayout {
+                    chapter_idx: current_chapter_idx,
+                    char_start: global_char_offset,
+                    char_end: global_char_offset + current_page_chars,
+                    entries: std::mem::take(&mut current_page_entries),
+                });
+                global_char_offset += current_page_chars;
+                current_page_chars = 0;
+            }
+
             // Walk through each block in the chapter
             for (bi, block) in chapter.blocks.iter().enumerate() {
                 let (block_text, block_len) = match block {

@@ -46,6 +46,10 @@ TabModes {
 }
 ```
 
+### Paginator chapter-aligned pages
+Paginator forces each chapter to start on a new page. Pages are subdivisions of chapters (not the reverse).
+`ensure_paginator()` hardcodes 800×1000 viewport; `set_viewport()` exists but is unused.
+
 ### Unified rendering
 `mode_ui.rs:render_document()` dispatches by doc type:
 - **Fixed** → `render_paged()` or `render_scroll()` → `render_image_page()` (texture-cached MuPDF raster)
@@ -80,7 +84,7 @@ Input → Mode System → Mode Handler → per-mode UI + scoped features
 - Document is wrapped in `Arc<Mutex<Box<dyn Document>>>` — cheaply cloneable for UI.
 - **Unified rendering**: ALL modes use the same `render_document()` function. Mode-specific features (auto-play, annotations) pass as optional params.
 - **PDF texture cache**: MuPDF pages rendered to RGBA, cached as egui textures (LRU, 2 entries). Invalidated on scale change.
-- **Reflow pagination**: `Paginator` splits chapter text by estimated character count per page. Repaginates on viewport/font resize.
+- **Reflow pagination**: `Paginator` splits chapter text page-by-page (chapter-aligned). Each chapter starts on a new page. Repaginates on viewport/font resize (not yet called from UI).
 
 ## What's implemented (working)
 - egui window with menu bar (File → Open/Close/Quit, Mode switch, Help → About)
