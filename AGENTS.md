@@ -4,13 +4,12 @@
 
 ## Stack
 - **Language**: Rust (edition 2021)
-- **GUI**: egui + eframe (0.31), wgpu (24.0) backend
+- **GUI**: egui + eframe (0.31), Glow renderer
 - **PDF**: Text + image rendering via `mupdf` (0.8, base14-fonts)
-- **EPUB**: Parsing via `epub` crate (2.1.5)
+- **EPUB**: Parsing via `rbook` (0.7)
 - **TXT**: std `read_to_string` + `encoding_rs` for GBK/Big5/Shift_JIS
-- **Text Layout**: `cosmic-text` (0.19) — HarfBuzz shaping, fontdb discovery, Swash rasterization
 - **Storage**: SQLite via `rusqlite` (0.33, bundled)
-- **Other**: `serde`, `uuid`, `chrono`, `image`, `rfd` (file dialogs)
+- **Other**: `serde`, `uuid`, `chrono`, `image`, `rfd` (file dialogs), `parking_lot`
 
 ## Quick start
 ```bash
@@ -20,7 +19,19 @@ cargo build          # compile (no warnings)
 ```
 
 ## Architecture
-Core model: **Mode state machine** — `LightReading` / `DeepReading` / `Edit`.
+
+### Document trait hierarchy
+```
+Document (title, toc, metadata)
+  ├── FixedLayout   — page-based: PDF (MuPDF)
+  └── ReflowLayout  — chapter+block-based: EPUB, TXT
+
+DocumentHandle enum { Fixed(Box<dyn FixedLayout>), Reflow(Box<dyn ReflowLayout>) }
+    → wrapped in Arc<Mutex<DocumentHandle>> for UI
+```
+
+### Mode state machine
+Core model: `LightReading` / `DeepReading` / `Edit`.
 
 ```
 TabModes {
@@ -35,64 +46,78 @@ TabModes {
 }
 ```
 
-Toolbars: two-row layout at bottom. Row 1 = mode tabs + basic reading controls (◀ ▶ Zoom Paged/Scroll). Row 2 = mode-specific (Light=Auto-play, Deep=Annotation tools, Edit=Page ops).
+### Unified rendering
+`mode_ui.rs:render_document()` dispatches by doc type:
+- **Fixed** → `render_paged()` or `render_scroll()` → `render_image_page()` (texture-cached MuPDF raster)
+- **Reflow** → `Paginator` character-based page splitting → `egui::Label::wrap()` via ScrollArea
+
+Images always centered; all interaction (selection, strokes, annotations, search highlights) is drawn as overlays in `render_image_page()`.
+
+### Toolbars
+Two-row layout at bottom. Row 1 = mode tabs + basic reading controls (◀ ▶ Zoom Paged/Scroll). Row 2 = mode-specific (Light=Auto-play, Deep=Annotation tools, Edit=Page ops).
 
 ```
 Input → Mode System → Mode Handler → per-mode UI + scoped features
 ```
 
-Directory structure follows `plan.md`:
-- `src/app/core/` — `AppState`, `Mode` enum, `DocumentManager`, `FeatureSystem`
-- `src/app/engines/` — `Document` trait + `PdfDocument` / `ReflowDocument`
-- `src/app/ui/` — egui shell (`FolixApp`), unified rendering (`mode_ui.rs`)
-- `src/app/render/` — `TextRenderer` (cosmic-text wrapper), wgpu stubs
-- `src/app/storage/` — SQLite `Database` with schema for books/progress/annotations/etc.
-- `src/app/interaction/`, `auto_reading/`, `annotation/`, `layout/`, `services/`, `platform/` — stubs
-
-## Text rendering (cosmic-text)
-Reading mode's Text view uses `TextRenderer` (`render/text_renderer.rs`):
-- Creates `FontSystem` once at app startup (fontdb scans system dirs)
-- Each frame: `render(text, max_width, font_size) → (w, h, RGBA)`
-- Result cached in `ReadingState.text_cache`, invalidated on page/scale/width change
-- Displayed as `egui::ColorImage` → `ui.image()` in a `ScrollArea`
-
-Benefits over egui's native text: HarfBuzz shaping for all scripts, per-char font fallback via fontdb, color emoji via Swash.
+## Directory structure
+- `src/app/config.rs` — ConfigData load/save (serde_json)
+- `src/app/core/` — AppState, TabModes, DocumentManager, FeatureSystem, shortcuts
+- `src/app/engines/` — Document/FixedLayout/ReflowLayout traits + PdfDocument / ReflowDocument / edit_operations
+- `src/app/ui/` — FolixApp (eframe shell), mode_ui (rendering + interaction), feature_ui
+- `src/app/paginator/` — Paginator (character-based page splitting for reflow content)
+- `src/app/storage/` — Database (SQLite CRUD for books/progress/annotations/bookmarks)
+- `src/app/platform/` — font_loader (CJK font path scan), fs wrapper
+- `src/app/interaction/` — input_router (minimal), mode_handlers (stub)
+- `src/app/render/` — wgpu_renderer / tile_cache / overlay_compositor (all stubs, unused)
+- `src/app/auto_reading/` — controller (minimal), page_flow/glyph_reveal/sentence_stream (stubs)
+- `src/app/annotation/` — engine / tool_system / overlay_renderer (all stubs — real logic lives in mode_ui.rs)
+- `src/app/layout/` — line_breaker / paginator / glyph_cache (all stubs — real paginator is in app/paginator/)
+- `src/app/services/` — search / bookmark / usage_tracker / annotation_service (all stubs)
 
 ## Key conventions
 - `page`/`scale`/`reading_layout` are shared in `TabModes` (not per-mode) — single source of truth.
 - Document is wrapped in `Arc<Mutex<Box<dyn Document>>>` — cheaply cloneable for UI.
-- **Unified rendering**: ALL modes use the same `render_document()` function. Mode-specific features (auto-play, annotations) pass as optional params. Images are always centered, scroll state uses a single `"pdf_scroll_reading"` id_salt.
-- Auto-play is integrated into `render_document` as an overlay (Paged = timer-based page advance, Scroll = auto-scroll).
+- **Unified rendering**: ALL modes use the same `render_document()` function. Mode-specific features (auto-play, annotations) pass as optional params.
+- **PDF texture cache**: MuPDF pages rendered to RGBA, cached as egui textures (LRU, 2 entries). Invalidated on scale change.
+- **Reflow pagination**: `Paginator` splits chapter text by estimated character count per page. Repaginates on viewport/font resize.
 
 ## What's implemented (working)
 - egui window with menu bar (File → Open/Close/Quit, Mode switch, Help → About)
 - 3 modes: LightReading (basic + auto-play), DeepReading (basic + annotation), Edit (basic + page ops)
 - Two-row bottom toolbar: Row 1 = shared controls, Row 2 = mode-specific
-- Settings tab (⚙) with toolbar icon size, visibility, background color
+- Settings tab (⚙) with toolbar icon size, visibility, background color, keyboard shortcut editor
 - File open dialog (rfd) for PDF, EPUB, TXT
 - All modes: page nav, zoom slider, Paged/Scroll layout toggle
 - LightReading: play/pause, speed control, auto-play mode selector
 - DeepReading: tool selector (Highlight/Pen/Note/Eraser/Select), undo/clear, text selection + copy
 - Edit mode: page rotate (CW/CCW), delete, insert blank page
-- SQLite schema creation (6 tables)
-- CJK text rendering (cosmic-text font fallback via fontdb)
+- PDF rendering via MuPDF with GPU texture caching
+- EPUB text extraction (HTML tag stripping, encoding detection, image embedding)
 - Multi-encoding TXT (UTF-8, GBK, Big5, Shift_JIS)
-- EPUB text extraction (HTML stripping, encoding detection)
+- SQLite schema + CRUD for books, progress, annotations, bookmarks, feature_usage, search_index
+- Paginator for reflowable content (character-based page splitting)
+- CJK font loading (font_loader scans system paths)
+- Dark mode toggle
+- Keyboard shortcut system (20+ actions, configurable)
+- Tab management (add, close, recent files new tab page)
+- Search (sidebar, per-page or per-chapter matching with highlight)
 
 ## What's stubbed (module structure exists, no logic)
-- `auto_reading/`, `annotation/`, `layout/`, `services/`, `platform/`
+- `auto_reading/` sub-modules (page_flow, glyph_reveal, sentence_stream)
+- `annotation/` (all real annotation logic lives inline in mode_ui.rs)
+- `layout/` (real paginator is in `app/paginator/`)
+- `render/` wgpu_renderer, overlay_compositor (tile_cache is functional but unused)
+- `services/` search, bookmark, usage_tracker, annotation_service
+- `interaction/mode_handlers.rs`
 - `storage/feature_store.rs`, `storage/library_index.rs`
-- `interaction/input_router.rs`, `interaction/mode_handlers.rs`
-- `render/wgpu_renderer.rs`, `render/tile_cache.rs`, `render/overlay_compositor.rs`
 
 ## Development notes
 - Rust 1.96.0, edition 2021
 - eframe 0.31 API: `Frame::NONE`, `Margin::symmetric(i8, i8)`, `Label::wrap()` (no arg), `ComboBox::from_id_salt`
-- `epub::doc::EpubDoc::mdata()` returns `Option<&MetadataItem>` (access `.value` field), `get_resource(&mut self, id)` returns `Option<(Vec<u8>, String)>`
 - `mupdf::Document` is !Send + !Sync; PdfDocument drops handle in `open()` and `render_page()` to stay Send+Sync
-- `cosmic_text::FontSystem::new()` scans all system fonts (slow first call, ok at startup)
-- `cosmic_text::Buffer::draw()` takes `(&mut FontSystem, &mut SwashCache, Color, FnMut)` — the `FontSystem` must NOT be borrowed by `borrow_with` at call time
-- `TextRenderer::render()` creates a new `Buffer` per call; OK for document text, not for realtime UI
+- `rbook::Epub::open()` → `epub.metadata().title()`, `epub.reader()` for spine iteration, `epub.read_resource_bytes()` for resource access
 - See `CAVEATS.md` for known pitfalls: parking_lot::Mutex deadlock rules and UTF-8 slicing safety.
+- **Architecture docs**: after any architectural change (new module, trait refactor, dependency swap), update this file to match.
 - **Git discipline**: after every successful `cargo build`, run `git add -A && git commit -m "..."` to save progress.
 - Read `plan.md` for full design doc.
