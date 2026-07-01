@@ -41,7 +41,7 @@ fn test_open_txt_gbk_small() {
 #[test]
 fn test_open_chinese_novel() {
     let path = concat!(
-        "tests/《我家老婆来自一千年前》",
+        "testsdoc/《我家老婆来自一千年前》",
         "（校对版全本）作者：花还没开.txt"
     );
     let doc = folix::app::engines::reflow_engine::ReflowDocument::open(path)
