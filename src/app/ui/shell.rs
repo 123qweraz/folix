@@ -860,17 +860,23 @@ impl FolixApp {
                 ui.separator();
 
                 if doc_count > 0 {
-                    // Prev/Next
-                    let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
-                    if is_paged || tab.modes.active == ModeKind::DeepReading {
-                        if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
-                            page_jump(tab, tab.modes.page.saturating_sub(1));
-                        }
-                        if ui.add_enabled(tab.modes.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
-                            page_jump(tab, tab.modes.page + 1);
-                        }
-                        ui.separator();
+                    // Prev/Next — always visible
+                    if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
+                        page_jump(tab, tab.modes.page.saturating_sub(1));
                     }
+                    if ui.add_enabled(tab.modes.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
+                        page_jump(tab, tab.modes.page + 1);
+                    }
+
+                    // Layout toggle — only meaningful for PDF (paged vs scroll)
+                    if is_fixed_doc {
+                        let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
+                        let layout_label = if is_paged { "Paged" } else { "Scroll" };
+                        if ui.button(layout_label).clicked() {
+                            tab.modes.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
+                        }
+                    }
+                    ui.separator();
 
                     // Zoom
                     ui.label("🔍");
@@ -885,13 +891,6 @@ impl FolixApp {
                     }
                     if ui.add_enabled(z < 3.0, egui::Button::new("+")).clicked() {
                         tab.modes.scale = (z + 0.1).min(3.0);
-                    }
-                    ui.separator();
-
-                    // Layout toggle
-                    let layout_label = if is_paged { "Paged" } else { "Scroll" };
-                    if ui.button(layout_label).clicked() {
-                        tab.modes.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
                     }
                     ui.separator();
 
