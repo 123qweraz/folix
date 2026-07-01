@@ -93,14 +93,6 @@ Benefits over egui's native text: HarfBuzz shaping for all scripts, per-char fon
 - `cosmic_text::FontSystem::new()` scans all system fonts (slow first call, ok at startup)
 - `cosmic_text::Buffer::draw()` takes `(&mut FontSystem, &mut SwashCache, Color, FnMut)` — the `FontSystem` must NOT be borrowed by `borrow_with` at call time
 - `TextRenderer::render()` creates a new `Buffer` per call; OK for document text, not for realtime UI
-- **parking_lot::Mutex deadlock rule**: NEVER hold a lock across a call that may re-lock the same mutex.
-  - `if expr.lock().foo() { expr.lock() }` → deadlock (temp guard lives through body).
-  - Fix: extract value before the conditional: `let v = expr.lock().foo(); if v { ... }`.
-  - Same applies to `if let` / `while let` patterns.
-- **UTF-8 slicing rule**: NEVER use byte positions derived from `str::len()` for indexing into `&str`.
-  - `t.len()` returns byte count; CJK characters are multi-byte → slicing at arbitrary byte boundaries panics.
-  - Use `t.chars().count()` for character-level counting.
-  - Convert char_index → byte_offset via `str::char_indices()` before slicing.
-  - Keep `char_index` and `byte_offset` as separate concepts; never mix them.
+- See `CAVEATS.md` for known pitfalls: parking_lot::Mutex deadlock rules and UTF-8 slicing safety.
 - **Git discipline**: after every successful `cargo build`, run `git add -A && git commit -m "..."` to save progress.
 - Read `plan.md` for full design doc.
