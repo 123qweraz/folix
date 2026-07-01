@@ -223,6 +223,7 @@ impl FolixApp {
                     }).collect()
                 };
                 tab.modes.paginator = Some(Paginator::new(chapters, 800.0, 1000.0, 16.0));
+                tab.modes.reading.chapter_cache.clear();
             }
         }
     }

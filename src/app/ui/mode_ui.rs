@@ -111,18 +111,16 @@ pub fn render_document(
 
             let loaded = reading.stream_page_end.min(total_pages.saturating_sub(1));
 
-            // Pre-load chapter data for all pages in the stream (avoid holding
-            // the document lock during UI rendering).
-            let chapters: Vec<(usize, crate::app::engines::Chapter)> = {
+            // Extend chapter cache incrementally (only load new pages).
+            let cache_len = reading.chapter_cache.len();
+            if cache_len <= loaded {
                 let doc_handle = document.lock();
                 let reflow = doc_handle.as_reflow().unwrap();
-                (0..=loaded)
-                    .map(|p| {
-                        let ci = pag.chapter_idx_for_page(p).unwrap_or(0);
-                        (ci, reflow.load_chapter(ci))
-                    })
-                    .collect()
-            };
+                for p in cache_len..=loaded {
+                    let ci = pag.chapter_idx_for_page(p).unwrap_or(0);
+                    reading.chapter_cache.push(Some(reflow.load_chapter(ci)));
+                }
+            }
 
             ui.style_mut().interaction.multi_widget_text_select = true;
 
@@ -163,7 +161,8 @@ pub fn render_document(
                 for p in 0..=loaded {
                     y_starts.push(ui.min_rect().bottom());
 
-                    let (chapter_idx, chapter) = &chapters[p as usize];
+                    let chapter = reading.chapter_cache[p as usize].as_ref().unwrap();
+                    let chapter_idx = pag.chapter_idx_for_page(p).unwrap_or(0);
                     let entries = pag.page_entries(p);
 
                     if p > 0 {

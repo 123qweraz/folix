@@ -91,6 +91,8 @@ pub struct ReadingState {
     pub stream_jump_to: Option<usize>,
     /// Velocity-based scroll (px/s). Positive = down, negative = up. 0 = idle.
     pub scroll_velocity: f32,
+    /// Cached chapter data for reflow stream (loaded once, not per-frame).
+    pub chapter_cache: Vec<Option<crate::app::engines::Chapter>>,
 }
 
 #[derive(Clone)]
@@ -226,6 +228,7 @@ impl TabModes {
                 stream_page_y_starts: vec![],
                 stream_jump_to: None,
                 scroll_velocity: 0.0,
+                chapter_cache: vec![],
             },
             auto: AutoState {
                 playing: false,
