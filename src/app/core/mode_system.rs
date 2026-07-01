@@ -82,7 +82,6 @@ pub struct ReadingState {
     pub scroll_offset_y: f32,
     pub total_height: f32,
     pub selection: SelectionState,
-    pub scroll_to_char_offset: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -196,7 +195,6 @@ impl TabModes {
                 scroll_offset_y: 0.0,
                 total_height: 0.0,
                 selection: SelectionState::default(),
-                scroll_to_char_offset: None,
             },
             auto: AutoState {
                 playing: false,

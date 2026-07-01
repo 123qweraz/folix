@@ -1,20 +1,19 @@
 use super::{Document, RenderedPage, TocEntry, StoredImage, ContentBlock};
 use std::collections::{HashMap, HashSet};
 
-/// Internal intermediate type: before images are loaded from the EPUB,
-/// we only know their hrefs. After the second phase, these are converted
-/// to `ContentBlock::Image` with actual byte data.
 enum RawBlock {
     Text(String),
-    ImageRef(String), // resolved href into EPUB's image map
+    ImageRef(String),
 }
 
 pub struct ReflowDocument {
     path: String,
-    full_text: String,
     doc_title: String,
     toc: Vec<TocEntry>,
-    blocks: Vec<ContentBlock>,
+    epub: Option<std::sync::Mutex<rbook::Epub>>,
+    spine_items: Vec<(String, String)>, // (id, href)
+    chapter_cache: std::sync::Mutex<HashMap<usize, Vec<ContentBlock>>>,
+    image_cache: std::sync::Mutex<HashMap<String, StoredImage>>,
 }
 
 impl ReflowDocument {
@@ -46,116 +45,44 @@ impl ReflowDocument {
             })
             .unwrap_or_else(|| "Untitled".to_string());
 
-        // Pre-build id → href map to avoid O(n²) manifest lookups per chapter
-        let id_to_href: HashMap<String, String> = epub.manifest().iter()
-            .map(|e| (e.id().to_string(), e.href().as_ref().to_string()))
-            .collect();
-
-        // ── Phase 1: Parse HTML to discover text & referenced image hrefs ──
-        let mut full_text = String::new();
-        let mut all_raw: Vec<(usize, RawBlock)> = Vec::new(); // (chapter_idx, block)
-        let mut referenced_hrefs: HashSet<String> = HashSet::new();
-        let mut chapter_char_offsets: Vec<usize> = Vec::new();
-
-        let reader = epub.reader();
-        let len = reader.len();
-
-        for i in 0..len {
-            chapter_char_offsets.push(full_text.chars().count());
-            let Ok(result) = reader.get(i) else { continue };
-            let html = result.content();
-            let chapter_id = result.spine_entry().idref();
-
-            let chapter_href = id_to_href
-                .get(chapter_id)
-                .cloned()
-                .unwrap_or_default();
-
-            let raw_blocks = Self::extract_raw_blocks(html, &chapter_href, &mut referenced_hrefs);
-
-            // Build full_text from raw blocks
-            for block in &raw_blocks {
-                match block {
-                    RawBlock::Text(t) => {
-                        if i > 0 || !all_raw.is_empty() {
-                            if !full_text.is_empty() && !full_text.ends_with('\n') {
-                                full_text.push('\n');
-                            }
-                        }
-                        full_text.push_str(t);
-                    }
-                    RawBlock::ImageRef(_) => {
-                        full_text.push_str("[IMAGE]");
-                    }
-                }
-            }
-
-            if i + 1 < len && !full_text.ends_with('\n') {
-                full_text.push('\n');
-            }
-
-            all_raw.extend(raw_blocks.into_iter().map(|b| (i, b)));
-        }
-
-        // ── Phase 2: Load image bytes ONLY for referenced images ──
-        let mut image_data: HashMap<String, StoredImage> = HashMap::new();
+        // Build id → href map for spine resolution.
+        // Keep the raw href (with leading /) because read_resource_bytes needs it.
+        let mut id_to_href: HashMap<String, String> = HashMap::new();
         for entry in epub.manifest().iter() {
-            let kind = entry.kind();
-            if kind.is_image() {
-                let href = normalize_path(entry.href().as_ref());
-                if referenced_hrefs.contains(&href) {
-                    if let Ok(bytes) = epub.read_resource_bytes(entry.href().as_ref()) {
-                        let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
-                            .with_guessed_format()
-                            .ok()
-                            .and_then(|r| r.into_dimensions().ok())
-                            .unwrap_or((0, 0));
-                        image_data.insert(href, StoredImage {
-                            raw_bytes: bytes,
-                            width: w,
-                            height: h,
-                        });
-                    }
-                }
+            id_to_href.insert(entry.id().to_string(), entry.href().as_ref().to_string());
+        }
+
+        // Build spine items: ordered list of (id, href) for chapters
+        let mut spine_items: Vec<(String, String)> = Vec::new();
+        let reader = epub.reader();
+        for i in 0..reader.len() {
+            let Ok(result) = reader.get(i) else { continue };
+            let chapter_id = result.spine_entry().idref();
+            if let Some(href) = id_to_href.get(chapter_id).cloned() {
+                spine_items.push((chapter_id.to_string(), href));
             }
         }
 
-        // ── Phase 3: Convert RawBlocks → ContentBlocks ──
-        let all_blocks: Vec<ContentBlock> = all_raw.into_iter()
-            .filter_map(|(_, rb)| match rb {
-                RawBlock::Text(t) => {
-                    let trimmed = t.trim().to_string();
-                    if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
-                }
-                RawBlock::ImageRef(href) => {
-                    image_data.get(&href).map(|img| ContentBlock::Image(img.clone()))
-                }
-            })
-            .collect();
-
-        // Build ToC
+        // Build ToC — page_index = chapter index for non-image docs
         let mut toc: Vec<TocEntry> = Vec::new();
         let toc_data = epub.toc();
         if let Some(contents) = toc_data.contents() {
-            for (i, entry) in contents.flatten().enumerate() {
-                let char_offset = chapter_char_offsets.get(i).copied().unwrap_or(0);
+            for (entry, chapter_idx) in contents.flatten().zip(0..) {
                 toc.push(TocEntry {
                     label: entry.label().to_string(),
-                    page_index: char_offset,
+                    page_index: chapter_idx,
                 });
             }
         }
 
-        if full_text.is_empty() {
-            full_text = "(empty document)".to_string();
-        }
-
         Some(Self {
             path: path.to_string(),
-            full_text,
             doc_title,
             toc,
-            blocks: all_blocks,
+            epub: Some(std::sync::Mutex::new(epub)),
+            spine_items,
+            chapter_cache: std::sync::Mutex::new(HashMap::new()),
+            image_cache: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -173,12 +100,18 @@ impl ReflowDocument {
             return None;
         }
 
+        // Pre-populate cache with the full TXT content
+        let mut cache = HashMap::new();
+        cache.insert(0usize, vec![ContentBlock::Text(content)]);
+
         Some(Self {
             path: path.to_string(),
-            full_text: content.clone(),
             doc_title,
             toc: vec![],
-            blocks: vec![ContentBlock::Text(content)],
+            epub: None,
+            spine_items: vec![],
+            chapter_cache: std::sync::Mutex::new(cache),
+            image_cache: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -203,8 +136,84 @@ impl ReflowDocument {
         String::from_utf8_lossy(data).to_string()
     }
 
-    /// Parse HTML into raw blocks (text / image references), recording which
-    /// images are actually used in `referenced_hrefs` for later byte loading.
+    /// Load and parse a single chapter. Result is cached.
+    fn load_chapter(&self, chapter_idx: usize) -> Vec<ContentBlock> {
+        {
+            let cache = self.chapter_cache.lock().unwrap();
+            if let Some(blocks) = cache.get(&chapter_idx) {
+                return blocks.clone();
+            }
+        }
+
+        let (_, href) = match self.spine_items.get(chapter_idx) {
+            Some(item) => item,
+            None => return vec![],
+        };
+
+        let epub_guard = self.epub.as_ref().map(|m| m.lock().unwrap());
+        let epub = match epub_guard {
+            Some(ref e) => e,
+            None => return vec![],
+        };
+
+        let html_bytes = match epub.read_resource_bytes(href.as_str()) {
+            Ok(b) => b,
+            Err(_) => return vec![],
+        };
+        let html = String::from_utf8_lossy(&html_bytes).into_owned();
+
+        // Parse HTML into raw blocks + collect referenced images
+        let mut referenced = HashSet::new();
+        let raw_blocks = Self::extract_raw_blocks(&html, href, &mut referenced);
+
+        // Load image bytes for images referenced in this chapter.
+        // read_resource_bytes needs paths rooted with / (EPUB-absolute).
+        // Our resolve_path produces paths without leading /, so prepend one.
+        let mut image_cache = self.image_cache.lock().unwrap();
+        for img_href in &referenced {
+            if !image_cache.contains_key(img_href) {
+                let epub_img_path = if img_href.starts_with('/') {
+                    img_href.clone()
+                } else {
+                    format!("/{}", img_href)
+                };
+                if let Ok(bytes) = epub.read_resource_bytes(epub_img_path.as_str()) {
+                    let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                        .with_guessed_format()
+                        .ok()
+                        .and_then(|r| r.into_dimensions().ok())
+                        .unwrap_or((0, 0));
+                    image_cache.insert(img_href.clone(), StoredImage {
+                        raw_bytes: bytes,
+                        width: w,
+                        height: h,
+                    });
+                }
+            }
+        }
+        drop(epub_guard); // release the mutex
+
+        // Convert RawBlocks → ContentBlocks
+        let blocks: Vec<ContentBlock> = raw_blocks.into_iter()
+            .filter_map(|rb| match rb {
+                RawBlock::Text(t) => {
+                    let trimmed = t.trim().to_string();
+                    if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
+                }
+                RawBlock::ImageRef(href) => {
+                    image_cache.get(&href).map(|img| ContentBlock::Image(img.clone()))
+                }
+            })
+            .collect();
+
+        {
+            let mut cache = self.chapter_cache.lock().unwrap();
+            cache.insert(chapter_idx, blocks.clone());
+        }
+
+        blocks
+    }
+
     fn extract_raw_blocks(
         html: &str,
         chapter_href: &str,
@@ -254,7 +263,6 @@ impl ReflowDocument {
             }
         }
 
-        // Flush remaining text
         let trimmed = current_text.trim().to_string();
         if !trimmed.is_empty() {
             blocks.push(RawBlock::Text(trimmed));
@@ -263,7 +271,6 @@ impl ReflowDocument {
         blocks
     }
 
-    /// Extract src from `<img>`/`<image>` tag, resolve path, record it, and push a `RawBlock::ImageRef`.
     fn push_image_ref(
         tag_content: &str,
         blocks: &mut Vec<RawBlock>,
@@ -286,10 +293,8 @@ impl ReflowDocument {
         }
     }
 
-    /// Extract an attribute value from a tag string like `img src="foo.png"`.
     fn extract_attr(tag: &str, attr: &str) -> Option<String> {
         let lower = tag.to_lowercase();
-        // Try double quotes
         let search = format!("{}=\"", attr.to_lowercase());
         if let Some(start) = lower.find(&search) {
             let value_start = start + search.len();
@@ -300,7 +305,6 @@ impl ReflowDocument {
                 }
             }
         }
-        // Try single quotes
         let search = format!("{}='", attr.to_lowercase());
         if let Some(start) = lower.find(&search) {
             let value_start = start + search.len();
@@ -321,11 +325,22 @@ impl ReflowDocument {
 
 impl Document for ReflowDocument {
     fn page_count(&self) -> usize {
-        1
+        if self.spine_items.is_empty() {
+            1 // TXT: single page
+        } else {
+            self.spine_items.len()
+        }
     }
 
     fn page_text(&self, page: usize) -> String {
-        if page == 0 { self.full_text.clone() } else { String::new() }
+        let blocks = self.content_blocks(page);
+        blocks.iter()
+            .map(|b| match b {
+                ContentBlock::Text(t) => t.as_str(),
+                ContentBlock::Image(_) => "[IMAGE]",
+            })
+            .collect::<Vec<&str>>()
+            .join("\n")
     }
 
     fn title(&self) -> String {
@@ -344,8 +359,12 @@ impl Document for ReflowDocument {
         self.toc.clone()
     }
 
-    fn content_blocks(&self, _page: usize) -> Vec<ContentBlock> {
-        self.blocks.clone()
+    fn content_blocks(&self, page: usize) -> Vec<ContentBlock> {
+        if self.spine_items.is_empty() {
+            let cache = self.chapter_cache.lock().unwrap();
+            return cache.get(&page).cloned().unwrap_or_default();
+        }
+        self.load_chapter(page)
     }
 }
 
@@ -364,8 +383,6 @@ fn resolve_path(chapter_path: &str, src: &str) -> String {
     clean_path(&normalized)
 }
 
-/// Resolve `..` and `.` segments in a path.
-/// e.g. "OEBPS/Text/../Images/foo.jpeg" → "OEBPS/Images/foo.jpeg"
 fn clean_path(p: &str) -> String {
     let mut segments: Vec<&str> = Vec::new();
     for seg in p.split('/') {

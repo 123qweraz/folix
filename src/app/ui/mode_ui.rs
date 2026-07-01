@@ -71,24 +71,10 @@ pub fn render_document(
             }
         }
     } else {
-        let blocks = document.lock().content_blocks(0);
+        let blocks = document.lock().content_blocks(*page);
 
-        // Handle TOC scroll target for non-image docs
-        let mut init_scroll_y: Option<f32> = None;
-        if let Some(char_off) = reading.scroll_to_char_offset.take() {
-            let font_size = 16.0;
-            let line_h = font_size * 1.5;
-            let text_width = ui.available_width().max(100.0).max(100.0) - 40.0;
-            let cpl = (text_width / (font_size * 0.55)).max(10.0);
-            let lines = char_off as f32 / cpl;
-            init_scroll_y = Some(lines * line_h);
-        }
-
-        let mut sa = egui::ScrollArea::vertical()
+        let sa = egui::ScrollArea::vertical()
             .auto_shrink([false; 2]);
-        if let Some(y) = init_scroll_y {
-            sa = sa.vertical_scroll_offset(y);
-        }
 
         // Enable multi-widget text selection so selection can span paragraphs
         ui.style_mut().interaction.multi_widget_text_select = true;
@@ -790,7 +776,6 @@ pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
         .default_open(true)
         .show(ui, |ui| {
             let toc = document.lock().toc_entries();
-            let is_image = document.lock().supports_image();
             if toc.is_empty() {
                 ui.label("No table of contents");
             } else {
@@ -798,15 +783,11 @@ pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
                     .max_height(f32::INFINITY)
                     .show(ui, |ui| {
                         for entry in &toc {
-                            let selected = if is_image { *page == entry.page_index } else { false };
+                            let selected = *page == entry.page_index;
                             if ui.selectable_label(selected, &entry.label).clicked() {
-                                if is_image {
-                                    let target = entry.page_index.min(total.saturating_sub(1));
-                                    *page = target;
-                                    rs.scroll_offset_y = 0.0;
-                                } else {
-                                    rs.scroll_to_char_offset = Some(entry.page_index);
-                                }
+                                let target = entry.page_index.min(total.saturating_sub(1));
+                                *page = target;
+                                rs.scroll_offset_y = 0.0;
                             }
                         }
                     });
@@ -829,39 +810,17 @@ pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
                 rs.search.current_match = 0;
                 if !rs.search.query.is_empty() {
                     let lower_query = rs.search.query.to_lowercase();
-                    let is_image = document.lock().supports_image();
-                    if is_image {
-                        let total = document.lock().page_count();
-                        for p in 0..total {
-                            let words = document.lock().page_text_positions(p);
-                            let page_matches: Vec<usize> = words.iter().enumerate()
-                                .filter(|(_, w)| w.text.to_lowercase().contains(&lower_query))
-                                .map(|(i, _)| i)
-                                .collect();
-                            if !page_matches.is_empty() {
-                                rs.search.matches.push(p);
-                                rs.search.page_highlights.insert(p, page_matches);
-                            }
-                        }
-                    } else {
-                        let full_text = document.lock().page_text(0);
-                        let mut search_start = 0;
-                        while let Some(pos) = full_text[search_start..].to_lowercase().find(&lower_query) {
-                            let byte_offset = search_start + pos;
-                            let char_offset = full_text[..byte_offset].chars().count();
-                            rs.search.matches.push(char_offset);
-                            if let Some(c) = full_text[byte_offset..].chars().next() {
-                                search_start = byte_offset + c.len_utf8();
-                            } else {
-                                break;
-                            }
-                            if search_start >= full_text.len() { break; }
+                    let total_pages = document.lock().page_count();
+                    for p in 0..total_pages {
+                        let text = document.lock().page_text(p);
+                        if text.to_lowercase().contains(&lower_query) {
+                            // Store page number as match for now (simplified)
+                            rs.search.matches.push(p);
                         }
                     }
                 }
             }
 
-            let is_image = document.lock().supports_image();
             let total_matches = rs.search.matches.len();
             let current = rs.search.current_match;
             ui.horizontal(|ui| {
@@ -873,28 +832,20 @@ pub fn render_sidebar(ui: &mut egui::Ui, document: &Arc<Mutex<Box<dyn Document>>
                 let enabled = total_matches > 0;
                 if ui.add_enabled(enabled, egui::Button::new("▲")).clicked() {
                     rs.search.current_match = if current == 0 { total_matches - 1 } else { current - 1 };
-                    if is_image {
-                        if let Some(&p) = rs.search.matches.get(rs.search.current_match) {
-                            if p != *page {
-                                *page = p;
-                                rs.scroll_offset_y = 0.0;
-                            }
+                    if let Some(&p) = rs.search.matches.get(rs.search.current_match) {
+                        if p != *page {
+                            *page = p;
+                            rs.scroll_offset_y = 0.0;
                         }
-                    } else if let Some(&co) = rs.search.matches.get(rs.search.current_match) {
-                        rs.scroll_to_char_offset = Some(co);
                     }
                 }
                 if ui.add_enabled(enabled, egui::Button::new("▼")).clicked() {
                     rs.search.current_match = if current + 1 >= total_matches { 0 } else { current + 1 };
-                    if is_image {
-                        if let Some(&p) = rs.search.matches.get(rs.search.current_match) {
-                            if p != *page {
-                                *page = p;
-                                rs.scroll_offset_y = 0.0;
-                            }
+                    if let Some(&p) = rs.search.matches.get(rs.search.current_match) {
+                        if p != *page {
+                            *page = p;
+                            rs.scroll_offset_y = 0.0;
                         }
-                    } else if let Some(&co) = rs.search.matches.get(rs.search.current_match) {
-                        rs.scroll_to_char_offset = Some(co);
                     }
                 }
             });
