@@ -165,28 +165,17 @@ pub fn render_document(
                         ui.separator();
                     }
 
-                    // Skip pages far outside the viewport (prev frame data)
-                    let offscreen = p < prev_starts.len() && {
+                    // Skip pages with known exact height from prev frame
+                    let offscreen = p + 1 < prev_starts.len() && {
                         let page_top = prev_starts[p];
-                        let page_bot = if p + 1 < prev_starts.len() {
-                            prev_starts[p + 1]
-                        } else {
-                            page_top + 500.0
-                        };
+                        let page_bot = prev_starts[p + 1];
                         page_bot < viewport.min.y - 200.0
                             || page_top > viewport.max.y + 200.0
                     };
 
                     if offscreen {
-                        let est_h = if p + 1 < prev_starts.len() {
-                            (prev_starts[p + 1] - prev_starts[p]).max(50.0)
-                        } else if prev_starts.len() > 1 {
-                            let avg = (prev_starts.last().unwrap() - prev_starts[0])
-                                / (prev_starts.len() - 1) as f32;
-                            avg.max(50.0)
-                        } else {
-                            500.0
-                        };
+                        let est_h =
+                            (prev_starts[p + 1] - prev_starts[p]).max(50.0);
                         ui.allocate_space(egui::vec2(ui.available_width(), est_h));
                     } else {
                         let chapter =
