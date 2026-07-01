@@ -50,6 +50,13 @@ TabModes {
 Paginator forces each chapter to start on a new page. Pages are subdivisions of chapters (not the reverse).
 `ensure_paginator()` hardcodes 800×1000 viewport; `set_viewport()` exists but is unused.
 
+### LayoutStream continuous scroll
+Reflow (EPUB/TXT) content is rendered as a continuous scroll stream. Pages 0..=stream_page_end
+are all rendered in a single egui `ScrollArea` with stable `id_salt("reflow_stream")`. When the
+user scrolls to within 15px of the bottom, the next page is appended to the stream. Page navigation
+(◀▶, TOC, shortcuts) sets `stream_jump_to` + `stream_page_end`; the renderer estimates scroll offset
+from average page height if the exact Y offset isn't yet cached.
+
 ### Unified rendering
 `mode_ui.rs:render_document()` dispatches by doc type:
 - **Fixed** → `render_paged()` or `render_scroll()` → `render_image_page()` (texture-cached MuPDF raster)
@@ -101,6 +108,7 @@ Input → Mode System → Mode Handler → per-mode UI + scoped features
 - Multi-encoding TXT (UTF-8, GBK, Big5, Shift_JIS)
 - SQLite schema + CRUD for books, progress, annotations, bookmarks, feature_usage, search_index
 - Paginator for reflowable content (character-based page splitting)
+- LayoutStream continuous scroll: pages rendered as a single continuous stream, auto-appended on scroll-to-bottom
 - CJK font loading (font_loader scans system paths)
 - Dark mode toggle
 - Keyboard shortcut system (20+ actions, configurable)
