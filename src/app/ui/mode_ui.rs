@@ -90,6 +90,9 @@ pub fn render_document(
             sa = sa.vertical_scroll_offset(y);
         }
 
+        // Enable multi-widget text selection so selection can span paragraphs
+        ui.style_mut().interaction.multi_widget_text_select = true;
+
         sa.show(ui, |ui| {
             egui::Frame::NONE
                 .inner_margin(egui::Margin::symmetric(20, 10))
@@ -97,41 +100,25 @@ pub fn render_document(
                     for (idx, block) in blocks.iter().enumerate() {
                         match block {
                             ContentBlock::Text(text) => {
-                                let mut display = text.clone();
-                                let resp = ui.add(
-                                    egui::TextEdit::multiline(&mut display)
-                                        .font(egui::TextStyle::Body)
-                                        .lock_focus(true)
-                                        .desired_width(f32::INFINITY),
+                                ui.add(
+                                    egui::Label::new(text.as_str())
+                                        .wrap()
+                                        .selectable(true),
                                 );
-                                // Capture selection state from this TextEdit block
-                                if let Some(state) = egui::widgets::text_edit::TextEditState::load(ui.ctx(), resp.id) {
-                                    if let Some(range) = state.cursor.char_range() {
-                                        let sorted = range.sorted();
-                                        let cs = sorted[0].index;
-                                        let ce = sorted[1].index;
-                                        if cs != ce {
-                                            let bs = text.char_indices()
-                                                .nth(cs.min(ce))
-                                                .map(|(i, _)| i)
-                                                .unwrap_or(text.len());
-                                            let be = text.char_indices()
-                                                .nth(cs.max(ce))
-                                                .map(|(i, _)| i)
-                                                .unwrap_or(text.len());
-                                            reading.selection.selected_text = text[bs..be].to_string();
-                                        } else {
-                                            reading.selection.selected_text.clear();
-                                        }
-                                    }
-                                }
                             }
                             ContentBlock::Image(img) => {
                                 let key = format!("epub_img_{}", idx);
                                 let texture = image_cache.entry(key.clone()).or_insert_with(|| {
-                                    let decoded = image::load_from_memory(&img.raw_bytes)
-                                        .expect("Failed to decode image")
-                                        .into_rgba8();
+                                    let decoded = match image::load_from_memory(&img.raw_bytes) {
+                                        Ok(d) => d.into_rgba8(),
+                                        Err(_) => {
+                                            return ui.ctx().load_texture(
+                                                &key,
+                                                egui::ColorImage::new([1, 1], egui::Color32::RED),
+                                                egui::TextureOptions::default(),
+                                            );
+                                        }
+                                    };
                                     let (w, h) = decoded.dimensions();
                                     let color_image = egui::ColorImage::from_rgba_unmultiplied(
                                         [w as usize, h as usize],

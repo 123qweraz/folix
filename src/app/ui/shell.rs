@@ -368,7 +368,13 @@ impl eframe::App for FolixApp {
             }
         }
 
-        if self.shortcut(ctx, SA::Copy) {
+        // Copy: only consume Ctrl+C for image-based docs (PDF).
+        // For text-based docs (EPUB), let Label::selectable(true) handle it natively.
+        let supports_image = self.state.current_tab()
+            .and_then(|t| t.document.as_ref())
+            .map(|d| d.lock().supports_image())
+            .unwrap_or(false);
+        if supports_image && self.shortcut(ctx, SA::Copy) {
             if let Some(tab) = self.state.current_tab() {
                 let sel = &tab.modes.reading.selection;
                 if !sel.selected_word_indices.is_empty() {
@@ -380,8 +386,6 @@ impl eframe::App for FolixApp {
                             .collect::<Vec<&str>>().join(" ");
                         ctx.copy_text(text);
                     }
-                } else if !sel.selected_text.is_empty() {
-                    ctx.copy_text(sel.selected_text.clone());
                 }
             }
         }

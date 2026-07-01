@@ -46,7 +46,11 @@ impl ReflowDocument {
                 let href = entry.href().as_ref().to_string();
                 if let Ok(bytes) = epub.read_resource_bytes(href.as_str()) {
                     // Probe dimensions from image headers (fast, no full decode)
-                    let (w, h) = image::image_dimensions(&bytes).unwrap_or((0, 0));
+                    let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                        .with_guessed_format()
+                        .ok()
+                        .and_then(|r| r.into_dimensions().ok())
+                        .unwrap_or((0, 0));
                     let si = StoredImage {
                         raw_bytes: bytes,
                         width: w,
@@ -61,7 +65,11 @@ impl ReflowDocument {
         let mut all_blocks: Vec<ContentBlock> = Vec::new();
         let mut chapter_char_offsets: Vec<usize> = Vec::new();
 
-        // Use a single reader for the loop
+        // Pre-build id → href map to avoid O(n²) manifest lookups per chapter
+        let id_to_href: HashMap<String, String> = epub.manifest().iter()
+            .map(|e| (e.id().to_string(), e.href().as_ref().to_string()))
+            .collect();
+
         let reader = epub.reader();
         let len = reader.len();
 
@@ -69,12 +77,11 @@ impl ReflowDocument {
             chapter_char_offsets.push(full_text.chars().count());
             let Ok(result) = reader.get(i) else { continue };
             let html = result.content();
-            let chapter_id = result.spine_entry().idref().to_string();
+            let chapter_id = result.spine_entry().idref();
 
-            // Find the manifest entry for this chapter to get its href (for resolving relative image paths)
-            let chapter_href = epub.manifest().iter()
-                .find(|e| e.id() == chapter_id)
-                .map(|e| e.href().as_ref().to_string())
+            let chapter_href = id_to_href
+                .get(chapter_id)
+                .cloned()
                 .unwrap_or_default();
 
             // Parse HTML into blocks
@@ -201,18 +208,11 @@ impl ReflowDocument {
 
                     // Check for <img> tag
                     if tag_lower.starts_with("img ") || tag_lower == "img" {
-                        if let Some(src) = Self::extract_attr(&tag_content, "src") {
-                            let resolved = resolve_path(chapter_href, &src);
-                            if let Some(img) = image_map.get(&resolved) {
-                                // Flush accumulated text
-                                let trimmed = current_text.trim().to_string();
-                                if !trimmed.is_empty() {
-                                    blocks.push(ContentBlock::Text(trimmed));
-                                    current_text.clear();
-                                }
-                                blocks.push(ContentBlock::Image(img.clone()));
-                            }
-                        }
+                        Self::flush_image_block(&tag_content, &mut blocks, &mut current_text, chapter_href, image_map);
+                    }
+                    // Check for <image> tag (used in some EPUBs with SVG)
+                    else if tag_lower.starts_with("image ") || tag_lower == "image" {
+                        Self::flush_image_block(&tag_content, &mut blocks, &mut current_text, chapter_href, image_map);
                     }
                     // Check for <br>, <hr> etc.
                     else if tag_lower.starts_with("br") || tag_lower.starts_with("hr") {
@@ -221,14 +221,14 @@ impl ReflowDocument {
                     // Check for <p>, <div>, <h1>-<h6> etc.
                     else if tag_lower.starts_with('/') {
                         let closing_tag = tag_lower.trim_start_matches('/').split_whitespace().next().unwrap_or("");
-                        matches!(
-                            closing_tag,
-                            "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "li" | "td" | "th"
-                        ).then(|| {
-                            if !current_text.ends_with('\n') {
-                                current_text.push('\n');
+                        match closing_tag {
+                            "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "li" | "td" | "th" => {
+                                if !current_text.ends_with('\n') {
+                                    current_text.push('\n');
+                                }
                             }
-                        });
+                            _ => {}
+                        }
                     }
                 }
                 _ if !in_tag => {
@@ -254,24 +254,54 @@ impl ReflowDocument {
     /// Extract an attribute value from a tag string like `img src="foo.png"`.
     fn extract_attr(tag: &str, attr: &str) -> Option<String> {
         let lower = tag.to_lowercase();
+        // Try double quotes
         let search = format!("{}=\"", attr.to_lowercase());
         if let Some(start) = lower.find(&search) {
             let value_start = start + search.len();
-            let remaining = &tag[value_start..];
-            if let Some(end) = remaining.find('"') {
-                return Some(remaining[..end].to_string());
+            if value_start < tag.len() {
+                let remaining = &tag[value_start..];
+                if let Some(end) = remaining.find('"') {
+                    return Some(remaining[..end].to_string());
+                }
             }
         }
-        // Also try single quotes
+        // Try single quotes
         let search = format!("{}='", attr.to_lowercase());
         if let Some(start) = lower.find(&search) {
             let value_start = start + search.len();
-            let remaining = &tag[value_start..];
-            if let Some(end) = remaining.find('\'') {
-                return Some(remaining[..end].to_string());
+            if value_start < tag.len() {
+                let remaining = &tag[value_start..];
+                if let Some(end) = remaining.find('\'') {
+                    return Some(remaining[..end].to_string());
+                }
             }
         }
         None
+    }
+
+    /// Handle an `<img>` or `<image>` tag: extract src, resolve path, flush text block, push image block.
+    fn flush_image_block(
+        tag_content: &str,
+        blocks: &mut Vec<ContentBlock>,
+        current_text: &mut String,
+        chapter_href: &str,
+        image_map: &HashMap<String, StoredImage>,
+    ) {
+        if let Some(src) = Self::extract_attr(tag_content, "src") {
+            // Skip data URIs and external URLs
+            if src.starts_with("data:") || src.contains("://") {
+                return;
+            }
+            let resolved = resolve_path(chapter_href, &src);
+            if let Some(img) = image_map.get(&resolved) {
+                let trimmed = current_text.trim().to_string();
+                if !trimmed.is_empty() {
+                    blocks.push(ContentBlock::Text(trimmed));
+                    current_text.clear();
+                }
+                blocks.push(ContentBlock::Image(img.clone()));
+            }
+        }
     }
 
     pub fn path(&self) -> &str {
