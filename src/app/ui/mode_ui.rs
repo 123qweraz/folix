@@ -179,9 +179,12 @@ pub fn render_document(
                                 };
                                 if !slice.is_empty() {
                                     ui.add(
-                                        egui::Label::new(slice)
-                                            .wrap()
-                                            .selectable(true),
+                                        egui::Label::new(
+                                            egui::RichText::new(slice)
+                                                .size(16.0 * *scale),
+                                        )
+                                        .wrap()
+                                        .selectable(true),
                                     );
                                 }
                             }

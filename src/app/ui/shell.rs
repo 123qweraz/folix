@@ -873,11 +873,18 @@ impl FolixApp {
                     }
 
                     // Zoom
-                    ui.label("Zoom:");
+                    ui.label("🔍");
+                    let z = tab.modes.scale;
+                    if ui.add_enabled(z > 0.5, egui::Button::new("−")).clicked() {
+                        tab.modes.scale = (z - 0.1).max(0.5);
+                    }
                     let mut new_scale = tab.modes.scale;
-                    ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("x"));
+                    ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("×"));
                     if (new_scale - tab.modes.scale).abs() > 0.001 {
                         tab.modes.scale = new_scale;
+                    }
+                    if ui.add_enabled(z < 3.0, egui::Button::new("+")).clicked() {
+                        tab.modes.scale = (z + 0.1).min(3.0);
                     }
                     ui.separator();
 
