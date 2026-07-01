@@ -193,7 +193,7 @@ impl FixedLayout for PdfDocument {
         {
             let mut cache = self.render_cache.lock();
             cache.insert(page, (scale, rendered.clone()));
-            if cache.len() > 2 {
+            if cache.len() > 32 {
                 let oldest = *cache.keys().min().unwrap();
                 cache.remove(&oldest);
             }
@@ -251,7 +251,7 @@ impl FixedLayout for PdfDocument {
     fn set_texture_handle(&self, page: usize, scale: f32, handle: TextureHandle) {
         let mut cache = self.texture_handles.lock();
         cache.insert(page, (scale.to_bits(), handle));
-        if cache.len() > 10 {
+        if cache.len() > 32 {
             let oldest = *cache.keys().min().unwrap();
             cache.remove(&oldest);
         }
