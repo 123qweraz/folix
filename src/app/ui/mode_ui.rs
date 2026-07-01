@@ -86,8 +86,12 @@ pub fn render_document(
         drop(doc);
         if let Some(pag) = paginator {
             let entries = pag.page_entries(*page).to_vec();
+            let total_pages = pag.page_count();
 
+            // Unique id per page so scroll resets when we auto-advance
+            let scroll_id = format!("reflow_scroll_{}", page);
             let sa = egui::ScrollArea::vertical()
+                .id_salt(scroll_id)
                 .auto_shrink([false; 2]);
 
             ui.style_mut().interaction.multi_widget_text_select = true;
@@ -97,6 +101,8 @@ pub fn render_document(
             let chapter_idx = pag.chapter_idx_for_page(*page).unwrap_or(0);
             let chapter = reflow.load_chapter(chapter_idx);
             drop(doc_handle);
+
+            let mut at_bottom = false;
 
             sa.show(ui, |ui| {
                 egui::Frame::NONE
@@ -167,8 +173,23 @@ pub fn render_document(
                                 }
                             }
                         }
+
+                        // Auto-advance when scrolled to the bottom (seamless page turn)
+                        if *reading_layout == ReadingLayout::Scroll {
+                            let content = ui.min_rect();
+                            let viewport = ui.clip_rect();
+                            if content.height() > viewport.height() + 10.0
+                                && (content.bottom() - viewport.bottom()).abs() < 5.0
+                            {
+                                at_bottom = true;
+                            }
+                        }
                     });
             });
+
+            if at_bottom && *page + 1 < total_pages {
+                *page += 1;
+            }
         }
     }
 }
