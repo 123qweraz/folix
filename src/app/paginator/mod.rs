@@ -137,13 +137,6 @@ impl Paginator {
             return;
         }
 
-        let line_height = self.font_size * 1.6;
-        let page_height = self.viewport_height;
-        let chars_per_line = ((self.viewport_width - 40.0).max(100.0) / (self.font_size * 0.55)).max(10.0) as usize;
-        let max_lines = if page_height > 0.0 { (page_height / line_height).floor() as usize } else { 9999 };
-        let max_chars_per_page = max_lines * chars_per_line;
-
-        let mut global_char_offset: usize = 0;
         let mut current_page_entries: Vec<PageEntry> = Vec::new();
         let mut current_page_chars: usize = 0;
         let mut current_chapter_idx: usize = 0;
@@ -153,81 +146,52 @@ impl Paginator {
                 continue;
             }
 
-            // Force a page break at each new chapter (except the first).
-            // This ensures each chapter starts on its own page.
+            // Force page break at each new chapter (except the first).
             if ci > 0 && !current_page_entries.is_empty() {
                 self.pages.push(PageLayout {
                     chapter_idx: current_chapter_idx,
-                    char_start: global_char_offset,
-                    char_end: global_char_offset + current_page_chars,
+                    char_start: 0,
+                    char_end: current_page_chars,
                     entries: std::mem::take(&mut current_page_entries),
                 });
-                global_char_offset += current_page_chars;
                 current_page_chars = 0;
             }
 
-            // Walk through each block in the chapter
+            current_chapter_idx = ci;
+
             for (bi, block) in chapter.blocks.iter().enumerate() {
-                let (block_text, block_len) = match block {
+                match block {
                     ContentBlock::Text(t) => {
                         let len = t.chars().count();
-                        (Some(t.as_str()), len)
+                        current_page_entries.push(PageEntry {
+                            block_idx: bi,
+                            char_range: 0..len,
+                        });
+                        current_page_chars += len;
                     }
                     ContentBlock::Image(_) => {
-                        // Images take up one "page" worth of height
-                        (None, 1)
-                    }
-                };
-
-                let mut pos = 0;
-                while pos < block_len {
-                    let remaining = block_len - pos;
-                    let space_on_page = if current_page_chars < max_chars_per_page {
-                        max_chars_per_page - current_page_chars
-                    } else {
-                        0
-                    };
-
-                    if space_on_page == 0 && !current_page_entries.is_empty() {
-                        // Start a new page
-                        self.pages.push(PageLayout {
-                            chapter_idx: current_chapter_idx,
-                            char_start: global_char_offset,
-                            char_end: global_char_offset + current_page_chars,
-                            entries: std::mem::take(&mut current_page_entries),
-                        });
-                        global_char_offset += current_page_chars;
-                        current_page_chars = 0;
-                    }
-
-                    let chunk = remaining.min(space_on_page.max(1));
-                    if block_text.is_none() {
-                        if current_page_chars > 0 {
-                            // Flush current page first
+                        // Flush any preceding text before the image
+                        if !current_page_entries.is_empty() {
                             self.pages.push(PageLayout {
-                                chapter_idx: current_chapter_idx,
-                                char_start: global_char_offset,
-                                char_end: global_char_offset + current_page_chars,
+                                chapter_idx: ci,
+                                char_start: 0,
+                                char_end: current_page_chars,
                                 entries: std::mem::take(&mut current_page_entries),
                             });
-                        global_char_offset += current_page_chars;
+                        }
+                        // Image gets its own page
+                        current_page_entries.push(PageEntry {
+                            block_idx: bi,
+                            char_range: 0..1,
+                        });
+                        self.pages.push(PageLayout {
+                            chapter_idx: ci,
+                            char_start: 0,
+                            char_end: 1,
+                            entries: std::mem::take(&mut current_page_entries),
+                        });
+                        current_page_chars = 0;
                     }
-                    current_chapter_idx = ci;
-                    current_page_entries.push(PageEntry {
-                        block_idx: bi,
-                        char_range: pos..pos + 1,
-                    });
-                        current_page_chars = max_chars_per_page; // force page break after image
-                        pos += 1;
-                        continue;
-                    }
-                    current_chapter_idx = ci;
-                    current_page_entries.push(PageEntry {
-                        block_idx: bi,
-                        char_range: pos..pos + chunk,
-                    });
-                    current_page_chars += chunk;
-                    pos += chunk;
                 }
             }
         }
@@ -236,8 +200,8 @@ impl Paginator {
         if !current_page_entries.is_empty() {
             self.pages.push(PageLayout {
                 chapter_idx: current_chapter_idx,
-                char_start: global_char_offset,
-                char_end: global_char_offset + current_page_chars,
+                char_start: 0,
+                char_end: current_page_chars,
                 entries: current_page_entries,
             });
         }
