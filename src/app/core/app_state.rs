@@ -1,4 +1,4 @@
-use crate::app::engines::Document;
+use crate::app::engines::DocumentHandle;
 use super::mode_system::{TabModes, ViewMode};
 use super::feature_system::FeatureSystem;
 use super::shortcuts::{ShortcutMap, default_shortcuts};
@@ -39,7 +39,7 @@ impl Default for AppSettings {
 
 pub struct OpenTab {
     pub content: TabContent,
-    pub document: Option<Arc<Mutex<Box<dyn Document>>>>,
+    pub document: Option<Arc<Mutex<DocumentHandle>>>,
     pub path: Option<String>,
     pub modes: TabModes,
     pub book_id: Option<String>,
@@ -94,10 +94,11 @@ impl AppState {
         state
     }
 
-    pub fn add_tab(&mut self, path: String, document: Arc<Mutex<Box<dyn Document>>>) -> usize {
+    pub fn add_tab(&mut self, path: String, document: Arc<Mutex<DocumentHandle>>) -> usize {
         let idx = self.tabs.len();
         let mut modes = TabModes::new();
-        modes.reading.view_mode = if document.lock().supports_image() {
+        let is_fixed = document.lock().is_fixed();
+        modes.reading.view_mode = if is_fixed {
             ViewMode::Image
         } else {
             ViewMode::Text
@@ -127,7 +128,6 @@ impl AppState {
     }
 
     pub fn add_settings_tab(&mut self) -> usize {
-        // Reuse existing settings tab if already open
         for (i, tab) in self.tabs.iter().enumerate() {
             if tab.is_settings_tab() {
                 self.active_tab = i;

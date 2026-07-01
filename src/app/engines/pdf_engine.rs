@@ -1,4 +1,4 @@
-use super::{Document, RenderedPage, TocEntry, TextWordPosition};
+use super::{FixedLayout, Document, RenderedPage, TocEntry, TextWordPosition};
 use mupdf::{Document as MuDocument, MetadataName, TextExtractOptions, Colorspace, Matrix};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -76,11 +76,7 @@ impl PdfDocument {
     }
 }
 
-impl Document for PdfDocument {
-    fn supports_image(&self) -> bool {
-        true
-    }
-
+impl FixedLayout for PdfDocument {
     fn page_count(&self) -> usize {
         self.page_count
     }
@@ -111,18 +107,6 @@ impl Document for PdfDocument {
         }
 
         text
-    }
-
-    fn title(&self) -> String {
-        self.doc_title.clone()
-    }
-
-    fn metadata(&self, _key: &str) -> Option<String> {
-        None
-    }
-
-    fn toc_entries(&self) -> Vec<TocEntry> {
-        self.toc.clone()
     }
 
     fn page_text_positions(&self, page: usize) -> Vec<TextWordPosition> {
@@ -271,5 +255,19 @@ impl Document for PdfDocument {
             let oldest = *cache.keys().min().unwrap();
             cache.remove(&oldest);
         }
+    }
+}
+
+impl Document for PdfDocument {
+    fn title(&self) -> String {
+        self.doc_title.clone()
+    }
+
+    fn toc_entries(&self) -> Vec<TocEntry> {
+        self.toc.clone()
+    }
+
+    fn metadata(&self, _key: &str) -> Option<String> {
+        None
     }
 }

@@ -3,6 +3,7 @@ use crate::app::core::app_state::TabContent;
 use crate::app::core::mode_system::{ViewMode, AutoPlayMode, Annotation, AnnotationTool};
 use crate::app::core::shortcuts::{ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::edit_operations;
+use crate::app::paginator::Paginator;
 use crate::app::platform::font_loader::FontLoader;
 use crate::app::storage::sqlite::Database;
 use super::mode_ui;
@@ -130,7 +131,7 @@ impl FolixApp {
                 tab.document = Some(doc);
                 tab.path = Some(path_str.clone());
                 tab.modes = TabModes::new();
-                tab.modes.reading.view_mode = if tab.document.as_ref().unwrap().lock().supports_image() {
+                tab.modes.reading.view_mode = if tab.document.as_ref().unwrap().lock().is_fixed() {
                     ViewMode::Image
                 } else {
                     ViewMode::Text
@@ -174,12 +175,19 @@ impl FolixApp {
                             }
                             // Load progress
                             if let Ok(Some((saved_page, _))) = db.load_progress(&book_id) {
-                                let max = d.lock().page_count().saturating_sub(1);
+                                let max = d.lock().as_fixed().map(|f| f.page_count().saturating_sub(1))
+                                    .or_else(|| tab.modes.paginator.as_ref().map(|p| p.page_count().saturating_sub(1)))
+                                    .unwrap_or(0);
                                 tab.modes.page = saved_page.min(max);
                             }
                         }
                     }
                 }
+            }
+
+            // Ensure paginator for reflowable documents
+            if let Some(tab) = self.state.current_tab_mut() {
+                Self::ensure_paginator(tab);
             }
 
             self.state.feature_system.use_feature("open_file");
@@ -189,12 +197,33 @@ impl FolixApp {
         }
     }
 
+    fn ensure_paginator(tab: &mut crate::app::core::app_state::OpenTab) {
+        if let Some(ref doc) = tab.document {
+            if doc.lock().is_reflow() && tab.modes.paginator.is_none() {
+                let chapters: Vec<(String, Vec<crate::app::engines::ContentBlock>)> = {
+                    let handle = doc.lock();
+                    let reflow = handle.as_reflow().unwrap();
+                    let count = reflow.chapter_count();
+                    (0..count).map(|i| {
+                        let ch = reflow.load_chapter(i);
+                        (ch.title, ch.blocks)
+                    }).collect()
+                };
+                tab.modes.paginator = Some(Paginator::new(chapters, 800.0, 1000.0, 16.0));
+            }
+        }
+    }
+
     fn reload_document(&mut self, path: &str) {
         if let Some(doc) = DocumentManager::open(path) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.document = Some(doc);
+                // Recreate paginator for reflow docs
+                Self::ensure_paginator(tab);
                 if let Some(d) = &tab.document {
-                    let count = d.lock().page_count();
+                    let count = d.lock().as_fixed().map(|f| f.page_count())
+                        .or_else(|| tab.modes.paginator.as_ref().map(|p| p.page_count()))
+                        .unwrap_or(0);
                     let max = count.saturating_sub(1);
                     tab.modes.page = tab.modes.page.min(max);
                     tab.modes.auto.progress = (tab.modes.auto.progress as usize).min(max) as f32;
@@ -219,7 +248,7 @@ impl FolixApp {
         if has_sel {
             if let Some(ref doc) = tab.document {
                 let page = tab.modes.page;
-                let words = doc.lock().page_text_positions(page);
+                let words = doc.lock().as_fixed().map(|f| f.page_text_positions(page)).unwrap_or_default();
                 let indices = &tab.modes.reading.selection.selected_word_indices;
                 let mut x0 = f32::MAX; let mut y0 = f32::MAX;
                 let mut x1 = f32::MIN; let mut y1 = f32::MIN;
@@ -312,7 +341,7 @@ impl eframe::App for FolixApp {
 
         if self.shortcut(ctx, SA::NextPage) {
             if let Some(tab) = self.state.current_tab_mut() {
-                let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
+                let max = page_count_for_tab(tab).saturating_sub(1);
                 if tab.modes.page < max { tab.modes.page += 1; }
             }
         }
@@ -323,7 +352,7 @@ impl eframe::App for FolixApp {
 
         if self.shortcut(ctx, SA::LastPage) {
             if let Some(tab) = self.state.current_tab_mut() {
-                let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
+                let max = page_count_for_tab(tab).saturating_sub(1);
                 tab.modes.page = max;
             }
         }
@@ -333,7 +362,7 @@ impl eframe::App for FolixApp {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
                     tab.modes.reading.scroll_offset_y += 600.0;
                 } else {
-                    let max = tab.document.as_ref().map(|d| d.lock().page_count().saturating_sub(1)).unwrap_or(0);
+                    let max = page_count_for_tab(tab).saturating_sub(1);
                     if tab.modes.page < max { tab.modes.page += 1; }
                 }
             }
@@ -372,14 +401,14 @@ impl eframe::App for FolixApp {
         // For text-based docs (EPUB), let Label::selectable(true) handle it natively.
         let supports_image = self.state.current_tab()
             .and_then(|t| t.document.as_ref())
-            .map(|d| d.lock().supports_image())
+            .map(|d| d.lock().is_fixed())
             .unwrap_or(false);
         if supports_image && self.shortcut(ctx, SA::Copy) {
             if let Some(tab) = self.state.current_tab() {
                 let sel = &tab.modes.reading.selection;
                 if !sel.selected_word_indices.is_empty() {
                     if let Some(doc) = &tab.document {
-                        let words = doc.lock().page_text_positions(sel.page);
+                        let words = doc.lock().as_fixed().map(|f| f.page_text_positions(sel.page)).unwrap_or_default();
                         let text: String = sel.selected_word_indices.iter()
                             .filter_map(|&i| words.get(i))
                             .map(|w| w.text.as_str())
@@ -410,8 +439,7 @@ impl eframe::App for FolixApp {
                     if let Some(tab) = self.state.current_tab_mut() {
                         let active = tab.modes.active;
                         if active == ModeKind::LightReading || active == ModeKind::DeepReading {
-                            let total = doc.lock().page_count();
-                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.reading, total);
+                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.paginator, &mut tab.modes.reading);
                         }
                     }
                 });
@@ -736,11 +764,14 @@ impl FolixApp {
         let is_light = tab.modes.active == ModeKind::LightReading;
         let is_deep = tab.modes.active == ModeKind::DeepReading;
         let dark_mode = self.state.settings.dark_mode;
+        // Ensure paginator exists for reflow docs
+        Self::ensure_paginator(tab);
         mode_ui::render_document(
             ui, &document,
             &mut tab.modes.page,
             &mut tab.modes.scale,
             &mut tab.modes.reading_layout,
+            &mut tab.modes.paginator,
             &mut tab.modes.reading,
             if is_light { Some(&mut tab.modes.auto) } else { None },
             if is_deep { Some(&mut tab.modes.annotate) } else { None },
@@ -781,9 +812,7 @@ impl FolixApp {
                 if tab.is_none() { return; }
                 let tab = tab.unwrap();
 
-                let doc_count = tab.document.as_ref()
-                    .map(|d| d.lock().page_count())
-                    .unwrap_or(0);
+                let doc_count = page_count_for_tab(tab);
 
                 // Row 1: Mode tabs + Basic Reading Toolbar + Page number
                 let mode_names = [ModeKind::LightReading, ModeKind::DeepReading, ModeKind::Edit];
@@ -838,9 +867,7 @@ impl FolixApp {
                 if tab.is_none() { return; }
                 let tab = tab.unwrap();
 
-                let doc_count = tab.document.as_ref()
-                    .map(|d| d.lock().page_count())
-                    .unwrap_or(0);
+                let doc_count = page_count_for_tab(tab);
 
                 if doc_count == 0 { return; }
 
@@ -889,7 +916,7 @@ impl FolixApp {
                             if ui.add_enabled(has_sel, egui::Button::new("High")).clicked() {
                                 if let Some(ref doc) = tab.document {
                                     let page = tab.modes.page;
-                                    let words = doc.lock().page_text_positions(page);
+                                    let words = doc.lock().as_fixed().map(|f| f.page_text_positions(page)).unwrap_or_default();
                                     let indices = &tab.modes.reading.selection.selected_word_indices;
                                     let mut x0 = f32::MAX; let mut y0 = f32::MAX;
                                     let mut x1 = f32::MIN; let mut y1 = f32::MIN;
@@ -949,7 +976,7 @@ impl FolixApp {
                     }
                     ModeKind::Edit => {
                         let supports_image = tab.document.as_ref()
-                            .map(|d| d.lock().supports_image())
+                            .map(|d| d.lock().is_fixed())
                             .unwrap_or(false);
                         if supports_image {
                             let path = tab.path.clone();
@@ -1016,5 +1043,20 @@ impl FolixApp {
                     ui.label("Stack: Rust, egui, wgpu, MuPDF, SQLite FTS5");
                 });
         }
+    }
+}
+
+fn page_count_for_tab(tab: &crate::app::core::app_state::OpenTab) -> usize {
+    if let Some(ref doc) = tab.document {
+        let handle = doc.lock();
+        if let Some(fixed) = handle.as_fixed() {
+            fixed.page_count()
+        } else if let Some(ref pag) = tab.modes.paginator {
+            pag.page_count()
+        } else {
+            0
+        }
+    } else {
+        0
     }
 }

@@ -11,6 +11,7 @@ pub enum ReadingLayout {
 }
 
 use std::collections::HashMap;
+use crate::app::paginator::Paginator;
 
 #[derive(Clone)]
 pub struct SearchState {
@@ -168,6 +169,7 @@ pub struct TabModes {
     pub page: usize,
     pub scale: f32,
     pub reading_layout: ReadingLayout,
+    pub paginator: Option<Paginator>,
     pub reading: ReadingState,
     pub auto: AutoState,
     pub annotate: AnnotateState,
@@ -187,6 +189,7 @@ impl TabModes {
             page: 0,
             scale: 1.0,
             reading_layout: ReadingLayout::Scroll,
+            paginator: None,
             reading: ReadingState {
                 view_mode: ViewMode::Text,
                 show_sidebar: false,

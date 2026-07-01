@@ -28,7 +28,6 @@ pub struct TextWordPosition {
 
 #[derive(Clone)]
 pub struct StoredImage {
-    /// Raw file bytes (JPEG/PNG/etc) from the EPUB resource.
     pub raw_bytes: Vec<u8>,
     pub width: u32,
     pub height: u32,
@@ -41,43 +40,95 @@ pub enum ContentBlock {
 }
 
 pub trait Document: Send + Sync {
-    fn page_count(&self) -> usize;
-    fn page_text(&self, page: usize) -> String;
     fn title(&self) -> String;
+    fn toc_entries(&self) -> Vec<TocEntry>;
     fn metadata(&self, key: &str) -> Option<String>;
+}
 
-    /// Render a page as RGBA image. Returns None if not supported (e.g. EPUB/TXT).
+pub trait FixedLayout: Document {
+    fn page_count(&self) -> usize;
     fn render_page(&self, page: usize, scale: f32) -> Option<RenderedPage>;
-
-    /// Page dimensions at given scale. Returns None if unknown.
     fn page_size(&self, page: usize, scale: f32) -> Option<(f32, f32)> {
         self.render_page(page, scale).map(|p| (p.width as f32, p.height as f32))
     }
+    fn page_text(&self, page: usize) -> String;
+    fn page_text_positions(&self, page: usize) -> Vec<TextWordPosition>;
+    fn get_texture_handle(&self, page: usize, scale: f32) -> Option<(TextureId, [usize; 2])>;
+    fn set_texture_handle(&self, page: usize, scale: f32, handle: TextureHandle);
+}
 
-    /// Whether this document type supports image rendering (i.e. PDF).
-    fn supports_image(&self) -> bool { false }
+pub trait ReflowLayout: Document {
+    fn chapter_count(&self) -> usize;
+    fn chapter_text(&self, idx: usize) -> String;
+    fn load_chapter(&self, idx: usize) -> Chapter;
+}
 
-    /// Table of contents. Each entry maps a label to a page index.
-    fn toc_entries(&self) -> Vec<TocEntry> {
-        vec![]
+#[derive(Clone)]
+pub struct Chapter {
+    pub title: String,
+    pub blocks: Vec<ContentBlock>,
+}
+
+pub enum DocumentHandle {
+    Fixed(Box<dyn FixedLayout>),
+    Reflow(Box<dyn ReflowLayout>),
+}
+
+impl DocumentHandle {
+    pub fn title(&self) -> String {
+        match self {
+            DocumentHandle::Fixed(d) => d.title(),
+            DocumentHandle::Reflow(d) => d.title(),
+        }
     }
 
-    /// Positioned text words for a page (bounding boxes in page coordinates).
-    /// Used for hit-testing during text selection. Empty by default.
-    fn page_text_positions(&self, _page: usize) -> Vec<TextWordPosition> {
-        vec![]
+    pub fn toc_entries(&self) -> Vec<TocEntry> {
+        match self {
+            DocumentHandle::Fixed(d) => d.toc_entries(),
+            DocumentHandle::Reflow(d) => d.toc_entries(),
+        }
     }
 
-    /// Look up a cached GPU texture for a page at the given scale.
-    /// Returns the texture ID and its dimensions `[width, height]`.
-    fn get_texture_handle(&self, _page: usize, _scale: f32) -> Option<(TextureId, [usize; 2])> { None }
+    pub fn metadata(&self, key: &str) -> Option<String> {
+        match self {
+            DocumentHandle::Fixed(d) => d.metadata(key),
+            DocumentHandle::Reflow(d) => d.metadata(key),
+        }
+    }
 
-    /// Store a GPU texture handle for a page at the given scale.
-    fn set_texture_handle(&self, _page: usize, _scale: f32, _handle: TextureHandle) {}
+    pub fn is_fixed(&self) -> bool {
+        matches!(self, DocumentHandle::Fixed(_))
+    }
 
-    /// Content blocks for a page (text segments + inline images).
-    /// Used by EPUB/TXT documents. Default returns a single text block.
-    fn content_blocks(&self, page: usize) -> Vec<ContentBlock> {
-        vec![ContentBlock::Text(self.page_text(page))]
+    pub fn is_reflow(&self) -> bool {
+        matches!(self, DocumentHandle::Reflow(_))
+    }
+
+    pub fn as_fixed(&self) -> Option<&dyn FixedLayout> {
+        match self {
+            DocumentHandle::Fixed(d) => Some(&**d),
+            DocumentHandle::Reflow(_) => None,
+        }
+    }
+
+    pub fn as_reflow(&self) -> Option<&dyn ReflowLayout> {
+        match self {
+            DocumentHandle::Fixed(_) => None,
+            DocumentHandle::Reflow(d) => Some(&**d),
+        }
+    }
+
+    pub fn as_fixed_mut(&mut self) -> Option<&mut dyn FixedLayout> {
+        match self {
+            DocumentHandle::Fixed(d) => Some(&mut **d),
+            DocumentHandle::Reflow(_) => None,
+        }
+    }
+
+    pub fn as_reflow_mut(&mut self) -> Option<&mut dyn ReflowLayout> {
+        match self {
+            DocumentHandle::Fixed(_) => None,
+            DocumentHandle::Reflow(d) => Some(&mut **d),
+        }
     }
 }

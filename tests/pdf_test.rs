@@ -1,4 +1,4 @@
-use folix::app::engines::Document;
+use folix::app::engines::{Document, FixedLayout};
 
 #[test]
 fn test_open_math_pdf() {

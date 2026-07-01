@@ -1,4 +1,4 @@
-use super::{Document, RenderedPage, TocEntry, StoredImage, ContentBlock};
+use super::{Document, ReflowLayout, TocEntry, StoredImage, ContentBlock, Chapter};
 use std::collections::{HashMap, HashSet};
 
 enum RawBlock {
@@ -136,8 +136,8 @@ impl ReflowDocument {
         String::from_utf8_lossy(data).to_string()
     }
 
-    /// Load and parse a single chapter. Result is cached.
-    fn load_chapter(&self, chapter_idx: usize) -> Vec<ContentBlock> {
+    /// Load and parse a single chapter's blocks. Result is cached.
+    fn load_chapter_blocks(&self, chapter_idx: usize) -> Vec<ContentBlock> {
         {
             let cache = self.chapter_cache.lock().unwrap();
             if let Some(blocks) = cache.get(&chapter_idx) {
@@ -323,18 +323,18 @@ impl ReflowDocument {
     }
 }
 
-impl Document for ReflowDocument {
-    fn page_count(&self) -> usize {
+impl ReflowLayout for ReflowDocument {
+    fn chapter_count(&self) -> usize {
         if self.spine_items.is_empty() {
-            1 // TXT: single page
+            1 // TXT: single chapter
         } else {
             self.spine_items.len()
         }
     }
 
-    fn page_text(&self, page: usize) -> String {
-        let blocks = self.content_blocks(page);
-        blocks.iter()
+    fn chapter_text(&self, idx: usize) -> String {
+        let ch = self.load_chapter(idx);
+        ch.blocks.iter()
             .map(|b| match b {
                 ContentBlock::Text(t) => t.as_str(),
                 ContentBlock::Image(_) => "[IMAGE]",
@@ -343,6 +343,24 @@ impl Document for ReflowDocument {
             .join("\n")
     }
 
+    fn load_chapter(&self, idx: usize) -> Chapter {
+        if self.spine_items.is_empty() {
+            let cache = self.chapter_cache.lock().unwrap();
+            return cache.get(&idx).cloned().map(|blocks| Chapter {
+                title: String::new(),
+                blocks,
+            }).unwrap_or_else(|| Chapter {
+                title: String::new(),
+                blocks: vec![],
+            });
+        }
+        let blocks = self.load_chapter_blocks(idx);
+        let title = self.toc.get(idx).map(|t| t.label.clone()).unwrap_or_default();
+        Chapter { title, blocks }
+    }
+}
+
+impl Document for ReflowDocument {
     fn title(&self) -> String {
         self.doc_title.clone()
     }
@@ -351,20 +369,8 @@ impl Document for ReflowDocument {
         None
     }
 
-    fn render_page(&self, _page: usize, _scale: f32) -> Option<RenderedPage> {
-        None
-    }
-
     fn toc_entries(&self) -> Vec<TocEntry> {
         self.toc.clone()
-    }
-
-    fn content_blocks(&self, page: usize) -> Vec<ContentBlock> {
-        if self.spine_items.is_empty() {
-            let cache = self.chapter_cache.lock().unwrap();
-            return cache.get(&page).cloned().unwrap_or_default();
-        }
-        self.load_chapter(page)
     }
 }
 
