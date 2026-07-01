@@ -249,10 +249,13 @@ pub fn render_document(
             // Cache Y offsets for page navigation
             reading.stream_page_y_starts = output.inner;
 
-            // Save current scroll position (used by ▲▼ in scroll mode)
-            reading.scroll_offset_y = output.state.offset.y;
-
-            // Consume velocity each frame (input sources re-set it next frame)
+            // Save scroll position. When velocity is active, keep our own
+            // accumulated target — egui may clamp to 0 if content is too
+            // short, but we keep climbing so scroll "catches up" once
+            // auto-append grows the content.
+            if reading.scroll_velocity == 0.0 {
+                reading.scroll_offset_y = output.state.offset.y;
+            }
             reading.scroll_velocity = 0.0;
 
             // Derive current page from scroll position
