@@ -41,7 +41,7 @@ impl Paginator {
             .map(|(title, blocks)| {
                 let char_count: usize = blocks.iter()
                     .map(|b| match b {
-                        ContentBlock::Text(t) => t.len(),
+                        ContentBlock::Text(t) => t.chars().count(),
                         ContentBlock::Image(_) => 1, // counts as 1 "character height"
                     })
                     .sum();
@@ -157,7 +157,7 @@ impl Paginator {
             for (bi, block) in chapter.blocks.iter().enumerate() {
                 let (block_text, block_len) = match block {
                     ContentBlock::Text(t) => {
-                        let len = t.len();
+                        let len = t.chars().count();
                         (Some(t.as_str()), len)
                     }
                     ContentBlock::Image(_) => {

@@ -199,7 +199,8 @@ impl FolixApp {
 
     fn ensure_paginator(tab: &mut crate::app::core::app_state::OpenTab) {
         if let Some(ref doc) = tab.document {
-            if doc.lock().is_reflow() && tab.modes.paginator.is_none() {
+            let is_reflow = doc.lock().is_reflow();
+            if is_reflow && tab.modes.paginator.is_none() {
                 let chapters: Vec<(String, Vec<crate::app::engines::ContentBlock>)> = {
                     let handle = doc.lock();
                     let reflow = handle.as_reflow().unwrap();

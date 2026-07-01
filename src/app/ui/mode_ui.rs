@@ -78,11 +78,8 @@ pub fn render_document(
                 render_paged(ui, document, *page, *scale, &mut reading.selection, annotate, dark_mode, highlights);
             }
             ReadingLayout::Scroll => {
-                if let Some(fixed) = document.lock().as_fixed() {
-                    let total = fixed.page_count();
-                    // borrow ends here
-                    render_scroll(ui, document, page, *scale, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
-                }
+                let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
+                render_scroll(ui, document, page, *scale, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
             }
         }
     } else {
@@ -111,9 +108,20 @@ pub fn render_document(
                             }
                             match &chapter.blocks[entry.block_idx] {
                                 ContentBlock::Text(text) => {
-                                    let slice = if entry.char_range.start < text.len() {
-                                        let end = entry.char_range.end.min(text.len());
-                                        &text[entry.char_range.start..end]
+                                    let char_start = entry.char_range.start;
+                                    let max_char = text.chars().count();
+                                    let char_end = entry.char_range.end.min(max_char);
+                                    let slice = if char_start < char_end {
+                                        let chars: Vec<(usize, usize)> = text.char_indices()
+                                            .map(|(i, c)| (i, c.len_utf8()))
+                                            .collect();
+                                        let start_byte = chars[char_start].0;
+                                        let end_byte = if char_end < chars.len() {
+                                            chars[char_end].0
+                                        } else {
+                                            text.len()
+                                        };
+                                        &text[start_byte..end_byte]
                                     } else {
                                         ""
                                     };
@@ -872,15 +880,11 @@ pub fn render_sidebar(
                         }
                     } else {
                         drop(doc);
-                        // For fixed docs, search stays as page-based
-            if let Some(fixed) = document.lock().as_fixed() {
-                    let total = fixed.page_count();
-                    // borrow ends here
-                            for p in 0..total {
-                                let text = document.lock().as_fixed().unwrap().page_text(p);
-                                if text.to_lowercase().contains(&lower_query) {
-                                    rs.search.matches.push(p);
-                                }
+                        let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
+                        for p in 0..total {
+                            let text = document.lock().as_fixed().unwrap().page_text(p);
+                            if text.to_lowercase().contains(&lower_query) {
+                                rs.search.matches.push(p);
                             }
                         }
                     }
