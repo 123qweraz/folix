@@ -289,6 +289,67 @@ Folix 是一个 Rust + egui 的跨平台阅读器原型，目前支持 PDF/EPUB/
 
 **关键差距：** 设置系统是最基础的差距之一。没有持久化意味着每次重启丢失阅读位置、缩放、主题等所有偏好。
 
+### 3.6 RenderCache 实现细节（代码审计）
+
+SumatraPDF 的 `RenderCache`（`src/RenderCache.h/.cpp`，~1300 行）是核心渲染调度器：
+
+- **线程池**：最多 32 个渲染线程（`kMaxRenderThreads`），延迟创建
+- **请求队列**：最大 8 个待处理请求（`MAX_PAGE_REQUESTS`），用信号量调度
+- **Bitmap 缓存**：LRU，最多 128 项（`MAX_BITMAPS_CACHED`）
+- **Tile 切分**：`TilePosition { res, row, col }` — 四叉树风格分级，根据缩放级别自动选择分辨率。大页面被渐进加载
+- **预测渲染**：当前页完成后自动预渲染后续 4 页（`kMaxPredictiveRequests`），如果来源页不再可见则停止
+
+**渲染流程：**
+```
+Canvas::OnPaintDocument()
+  → DrawDocument()
+    → 对每个可见页: RenderCache::Paint() → 查缓存
+      → 命中 → PaintTile() → BitBlt/StretchBlt 合成到画布
+      → 未命中 → RequestRendering() → 加入队列 → 信号量
+        → 工作线程: GetNextRequest() → EngineBase::RenderPage() → RenderedBitmap → Add() 入缓存 → 回调
+```
+
+### 3.7 三重锁设计（EngineMupdf）
+
+SumatraPDF 的 MuPDF 引擎用三个 CRITICAL_SECTION 实现线程安全：
+
+```
+pagesLock → renderLock → docLock  (锁定顺序，防止死锁)
+```
+
+- `pagesLock`：保护每一页的 `fz_page*` 指针数组（页面粒度）
+- `renderLock`：保护 MuPDF 的 `fz_display_list` 缓存（跨页面共享）
+- `docLock`：保护 `fz_document` 的全局状态（MuPDF 的 image store 等全局资源）
+
+Folix 的 `Arc<Mutex<DocumentHandle>>` 是单个全局锁，无分层。
+
+### 3.8 HtmlFormatter 管线（重排版）
+
+Reflowable 格式（EPUB/MOBI/FB2/TXT）走 `EngineEbook`：
+
+```
+EngineEbook::RenderPage()
+  → EbookDoc::GetHtmlData()         — 提取/转换为 HTML 字符串
+  → HtmlFormatter::Next()           — 格式化为 HtmlPage（DrawInstr 指令列表）
+    → HtmlPullParser 分词 HTML
+    → CSS 解析器提取样式规则
+    → GDI+ Graphics 做字体测量
+    → 行对齐 + 断行
+    → 生成 DrawInstr { String, Image, SetFont, Line, LinkStart, LinkEnd, ... }
+  → DrawHtmlPage()                  — DrawInstr 列表 → GDI+ Bitmap → RenderedBitmap
+    → mui::ITextRender（GDI+ 或 GDI 文本渲染）
+    → 图片解码: FzImgReader 或 Windows WIC
+```
+
+### 3.9 双重控制器架构
+
+SumatraPDF 使用 `DocController` 接口处理两种文档类型：
+
+- **DisplayModel** — 固定布局文档（PDF/DjVu/图片）：管理 `PageInfo[]`、缩放、滚动、页码、`DisplayMode`（Single/Facing/Book/Continuous）
+- **ChmModel** — CHM 文档：委托给 MSHTML WebBrowser 控件
+
+两者都实现 `DocController`，UI 层通过统一接口调度。
+
 ---
 
 ## 四、优先级路线图
