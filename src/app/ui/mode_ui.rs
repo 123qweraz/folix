@@ -79,16 +79,17 @@ pub fn render_document(
             }
             ReadingLayout::Scroll => {
                 let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
-                if reading.scroll_step != 0.0 {
+                if reading.scroll_velocity != 0.0 {
+                    let dt = ui.input(|i| i.unstable_dt);
                     reading.scroll_offset_y =
-                        (reading.scroll_offset_y + reading.scroll_step).max(0.0);
+                        (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
                 }
                 let target = reading.scroll_offset_y;
                 render_scroll(ui, document, page, *scale, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
-                if reading.scroll_step != 0.0 {
+                if reading.scroll_velocity != 0.0 {
                     reading.scroll_offset_y = target;
                 }
-                reading.scroll_step = 0.0;
+                reading.scroll_velocity = 0.0;
             }
         }
     } else {
@@ -129,10 +130,11 @@ pub fn render_document(
                 .id_salt("reflow_stream")
                 .auto_shrink([false; 2]);
 
-            // Apply frame-step scroll (tap/hold button, key hold)
-            if reading.scroll_step != 0.0 {
+            // Apply velocity-based scroll (tap/hold button, key hold)
+            if reading.scroll_velocity != 0.0 {
+                let dt = ui.input(|i| i.unstable_dt);
                 reading.scroll_offset_y =
-                    (reading.scroll_offset_y + reading.scroll_step).max(0.0);
+                    (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
                 sa = sa.vertical_scroll_offset(reading.scroll_offset_y);
             }
 
@@ -257,14 +259,14 @@ pub fn render_document(
             // Cache Y offsets for page navigation
             reading.stream_page_y_starts = output.inner;
 
-            // Save scroll position. When step is active, keep our own
+            // Save scroll position. When velocity is active, keep our own
             // accumulated target — egui may clamp to 0 if content is too
             // short, but we keep climbing so scroll "catches up" once
             // auto-append grows the content.
-            if reading.scroll_step == 0.0 {
+            if reading.scroll_velocity == 0.0 {
                 reading.scroll_offset_y = output.state.offset.y;
             }
-            reading.scroll_step = 0.0;
+            reading.scroll_velocity = 0.0;
 
             // Derive current page from scroll position
             let scroll_y = output.state.offset.y;

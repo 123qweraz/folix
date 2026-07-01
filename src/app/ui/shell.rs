@@ -393,7 +393,7 @@ impl eframe::App for FolixApp {
         if arr_dn || arr_up {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_step = if arr_dn { 40.0 } else { -40.0 };
+                    tab.modes.reading.scroll_velocity = if arr_dn { 800.0 } else { -800.0 };
                 }
             }
         }
@@ -404,7 +404,7 @@ impl eframe::App for FolixApp {
         if space_dn || space_up {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_step = if space_dn { 40.0 } else { -40.0 };
+                    tab.modes.reading.scroll_velocity = if space_dn { 800.0 } else { -800.0 };
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
@@ -417,7 +417,7 @@ impl eframe::App for FolixApp {
         if self.shortcut(ctx, SA::ScrollDown) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_step = 40.0;
+                    tab.modes.reading.scroll_velocity = 800.0;
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
@@ -429,7 +429,7 @@ impl eframe::App for FolixApp {
         if self.shortcut(ctx, SA::ScrollUp) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_step = -40.0;
+                    tab.modes.reading.scroll_velocity = -800.0;
                 } else if tab.modes.page > 0 { page_jump(tab, tab.modes.page - 1); }
             }
         }
@@ -919,11 +919,11 @@ impl FolixApp {
                             egui::Button::new("▲"),
                         );
                         if up_btn.clicked() || up_btn.is_pointer_button_down_on() {
-                            tab.modes.reading.scroll_step = -40.0;
+                            tab.modes.reading.scroll_velocity = -800.0;
                         }
                         let dn_btn = ui.button("▼");
                         if dn_btn.clicked() || dn_btn.is_pointer_button_down_on() {
-                            tab.modes.reading.scroll_step = 40.0;
+                            tab.modes.reading.scroll_velocity = 800.0;
                         }
                     }
 
