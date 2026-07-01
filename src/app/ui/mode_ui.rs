@@ -154,119 +154,98 @@ pub fn render_document(
                 }
             }
 
-            let output = sa.show_viewport(ui, |ui, viewport| {
-                let prev_starts = &reading.stream_page_y_starts;
-                let mut y_starts: Vec<f32> = Vec::with_capacity((loaded + 1) as usize);
+            let output = sa.show_viewport(ui, |ui, _viewport| {
+                let mut y_starts: Vec<f32> = Vec::new();
 
                 for p in 0..=loaded {
                     y_starts.push(ui.min_rect().bottom());
 
+                    let chapter = reading.chapter_cache[p as usize].as_ref().unwrap();
+                    let chapter_idx = pag.chapter_idx_for_page(p).unwrap_or(0);
+                    let entries = pag.page_entries(p);
+
                     if p > 0 {
+                        // Subtle separator between pages
                         ui.separator();
                     }
 
-                    // Skip pages with known exact height from prev frame
-                    let offscreen = p + 1 < prev_starts.len() && {
-                        let page_top = prev_starts[p];
-                        let page_bot = prev_starts[p + 1];
-                        page_bot < viewport.min.y - 200.0
-                            || page_top > viewport.max.y + 200.0
-                    };
-
-                    if offscreen {
-                        let est_h =
-                            (prev_starts[p + 1] - prev_starts[p]).max(50.0);
-                        ui.allocate_space(egui::vec2(ui.available_width(), est_h));
-                    } else {
-                        let chapter =
-                            reading.chapter_cache[p as usize].as_ref().unwrap();
-                        let chapter_idx = pag.chapter_idx_for_page(p).unwrap_or(0);
-                        let entries = pag.page_entries(p);
-
-                        for entry in entries {
-                            if entry.block_idx >= chapter.blocks.len() {
-                                continue;
-                            }
-                            match &chapter.blocks[entry.block_idx] {
-                                ContentBlock::Text(text) => {
-                                    let char_start = entry.char_range.start;
-                                    let max_char = text.chars().count();
-                                    let char_end =
-                                        entry.char_range.end.min(max_char);
-                                    let slice = if char_start < char_end {
-                                        let chars: Vec<(usize, usize)> = text
-                                            .char_indices()
-                                            .map(|(i, c)| (i, c.len_utf8()))
-                                            .collect();
-                                        let start_byte = chars[char_start].0;
-                                        let end_byte = if char_end < chars.len() {
-                                            chars[char_end].0
-                                        } else {
-                                            text.len()
-                                        };
-                                        &text[start_byte..end_byte]
+                    for entry in entries {
+                        if entry.block_idx >= chapter.blocks.len() {
+                            continue;
+                        }
+                        match &chapter.blocks[entry.block_idx] {
+                            ContentBlock::Text(text) => {
+                                let char_start = entry.char_range.start;
+                                let max_char = text.chars().count();
+                                let char_end = entry.char_range.end.min(max_char);
+                                let slice = if char_start < char_end {
+                                    let chars: Vec<(usize, usize)> = text
+                                        .char_indices()
+                                        .map(|(i, c)| (i, c.len_utf8()))
+                                        .collect();
+                                    let start_byte = chars[char_start].0;
+                                    let end_byte = if char_end < chars.len() {
+                                        chars[char_end].0
                                     } else {
-                                        ""
+                                        text.len()
                                     };
-                                    if !slice.is_empty() {
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(slice)
-                                                    .size(16.0 * *scale),
-                                            )
-                                            .wrap()
-                                            .selectable(true),
-                                        );
-                                    }
-                                }
-                                ContentBlock::Image(img) => {
-                                    let key = format!(
-                                        "epub_img_{}_{}",
-                                        chapter_idx, entry.block_idx
+                                    &text[start_byte..end_byte]
+                                } else {
+                                    ""
+                                };
+                                if !slice.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(slice)
+                                                .size(16.0 * *scale),
+                                        )
+                                        .wrap()
+                                        .selectable(true),
                                     );
-                                    let texture = image_cache
-                                        .entry(key.clone())
-                                        .or_insert_with(|| {
-                                            let decoded = match image::load_from_memory(
-                                                &img.raw_bytes,
-                                            ) {
-                                                Ok(d) => d.into_rgba8(),
-                                                Err(_) => {
-                                                    return ui.ctx().load_texture(
-                                                        &key,
-                                                        egui::ColorImage::new(
-                                                            [1, 1],
-                                                            egui::Color32::RED,
-                                                        ),
-                                                        egui::TextureOptions::default(),
-                                                    );
-                                                }
-                                            };
-                                            let (w, h) = decoded.dimensions();
-                                            let color_image = egui::ColorImage::
-                                                from_rgba_unmultiplied(
-                                                    [w as usize, h as usize],
-                                                    decoded.as_raw(),
+                                }
+                            }
+                            ContentBlock::Image(img) => {
+                                let key =
+                                    format!("epub_img_{}_{}", chapter_idx, entry.block_idx);
+                                let texture =
+                                    image_cache.entry(key.clone()).or_insert_with(|| {
+                                        let decoded = match image::load_from_memory(
+                                            &img.raw_bytes,
+                                        ) {
+                                            Ok(d) => d.into_rgba8(),
+                                            Err(_) => {
+                                                return ui.ctx().load_texture(
+                                                    &key,
+                                                    egui::ColorImage::new(
+                                                        [1, 1],
+                                                        egui::Color32::RED,
+                                                    ),
+                                                    egui::TextureOptions::default(),
                                                 );
-                                            ui.ctx().load_texture(
-                                                &key,
-                                                color_image,
-                                                egui::TextureOptions::default(),
-                                            )
-                                        });
-                                    let aspect =
-                                        img.width as f32 / img.height as f32;
-                                    let max_w =
-                                        ui.available_width().min(600.0);
-                                    let h = max_w / aspect;
-                                    ui.add_sized(
-                                        egui::vec2(max_w, h + 8.0),
-                                        egui::Image::new((
-                                            texture.id(),
-                                            egui::vec2(max_w, h),
-                                        )),
-                                    );
-                                }
+                                            }
+                                        };
+                                        let (w, h) = decoded.dimensions();
+                                        let color_image =
+                                            egui::ColorImage::from_rgba_unmultiplied(
+                                                [w as usize, h as usize],
+                                                decoded.as_raw(),
+                                            );
+                                        ui.ctx().load_texture(
+                                            &key,
+                                            color_image,
+                                            egui::TextureOptions::default(),
+                                        )
+                                    });
+                                let aspect = img.width as f32 / img.height as f32;
+                                let max_w = ui.available_width().min(600.0);
+                                let h = max_w / aspect;
+                                ui.add_sized(
+                                    egui::vec2(max_w, h + 8.0),
+                                    egui::Image::new((
+                                        texture.id(),
+                                        egui::vec2(max_w, h),
+                                    )),
+                                );
                             }
                         }
                     }
