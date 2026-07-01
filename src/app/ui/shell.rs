@@ -387,18 +387,29 @@ impl eframe::App for FolixApp {
             }
         }
 
-        // Frame-step scroll via key hold
-        let scroll_dn_held = self.key_held(ctx, SA::ScrollDown);
-        let scroll_up_held = self.key_held(ctx, SA::ScrollUp);
-        if scroll_dn_held || scroll_up_held {
+        // Arrow keys: scroll step in scroll mode only
+        let arr_dn = ctx.input(|i| i.key_down(egui::Key::ArrowDown));
+        let arr_up = ctx.input(|i| i.key_down(egui::Key::ArrowUp));
+        if arr_dn || arr_up {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_step = if scroll_dn_held { 40.0 } else { -40.0 };
+                    tab.modes.reading.scroll_step = if arr_dn { 40.0 } else { -40.0 };
+                }
+            }
+        }
+
+        // Space / Shift+Space: scroll step or page turn
+        let space_dn = self.key_held(ctx, SA::ScrollDown);
+        let space_up = self.key_held(ctx, SA::ScrollUp);
+        if space_dn || space_up {
+            if let Some(tab) = self.state.current_tab_mut() {
+                if tab.modes.reading_layout == ReadingLayout::Scroll {
+                    tab.modes.reading.scroll_step = if space_dn { 40.0 } else { -40.0 };
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
-                    if scroll_dn_held && cur < max { page_jump(tab, cur + 1); }
-                    else if scroll_up_held && cur > 0 { page_jump(tab, cur - 1); }
+                    if space_dn && cur < max { page_jump(tab, cur + 1); }
+                    else if space_up && cur > 0 { page_jump(tab, cur - 1); }
                 }
             }
         }
