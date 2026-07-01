@@ -374,8 +374,15 @@ impl eframe::App for FolixApp {
 
         if self.shortcut(ctx, SA::ScrollDown) {
             if let Some(tab) = self.state.current_tab_mut() {
+                let is_reflow = tab.document.as_ref().map(|d| !d.lock().is_fixed()).unwrap_or(false);
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_offset_y += 600.0;
+                    if is_reflow {
+                        let target = tab.modes.reading.scroll_offset_y
+                            + tab.modes.reading.stream_page_y_starts.last().copied().unwrap_or(1000.0) * 0.1;
+                        tab.modes.reading.stream_scroll_to = Some(target);
+                    } else {
+                        tab.modes.reading.scroll_offset_y += 600.0;
+                    }
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
@@ -386,8 +393,16 @@ impl eframe::App for FolixApp {
 
         if self.shortcut(ctx, SA::ScrollUp) {
             if let Some(tab) = self.state.current_tab_mut() {
+                let is_reflow = tab.document.as_ref().map(|d| !d.lock().is_fixed()).unwrap_or(false);
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_offset_y = (tab.modes.reading.scroll_offset_y - 600.0).max(0.0);
+                    if is_reflow {
+                        let target = (tab.modes.reading.scroll_offset_y
+                            - tab.modes.reading.stream_page_y_starts.last().copied().unwrap_or(1000.0) * 0.1)
+                            .max(0.0);
+                        tab.modes.reading.stream_scroll_to = Some(target);
+                    } else {
+                        tab.modes.reading.scroll_offset_y = (tab.modes.reading.scroll_offset_y - 600.0).max(0.0);
+                    }
                 } else if tab.modes.page > 0 { page_jump(tab, tab.modes.page - 1); }
             }
         }
@@ -860,12 +875,26 @@ impl FolixApp {
                 ui.separator();
 
                 if doc_count > 0 {
-                    // Prev/Next — always visible
-                    if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
-                        page_jump(tab, tab.modes.page.saturating_sub(1));
-                    }
-                    if ui.add_enabled(tab.modes.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
-                        page_jump(tab, tab.modes.page + 1);
+                    let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
+
+                    // Prev/Next or Scroll Up/Down
+                    if is_paged {
+                        if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
+                            page_jump(tab, tab.modes.page.saturating_sub(1));
+                        }
+                        if ui.add_enabled(tab.modes.page + 1 < doc_count, egui::Button::new("▶")).clicked() {
+                            page_jump(tab, tab.modes.page + 1);
+                        }
+                    } else {
+                        let vh = ui.available_size().y.max(100.0) * 0.8;
+                        if ui.add_enabled(tab.modes.reading.scroll_offset_y > 0.0, egui::Button::new("▲")).clicked() {
+                            let target = (tab.modes.reading.scroll_offset_y - vh).max(0.0);
+                            tab.modes.reading.stream_scroll_to = Some(target);
+                        }
+                        if ui.button("▼").clicked() {
+                            let target = tab.modes.reading.scroll_offset_y + vh;
+                            tab.modes.reading.stream_scroll_to = Some(target);
+                        }
                     }
 
                     // Layout toggle — only meaningful for PDF (paged vs scroll)

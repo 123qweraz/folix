@@ -120,7 +120,12 @@ pub fn render_document(
                 .id_salt("reflow_stream")
                 .auto_shrink([false; 2]);
 
-            // Consume the jump request: use exact Y offset if cached, or estimate.
+            // Apply scroll-to-Y request (▲▼ buttons, ScrollDown/ScrollUp shortcuts)
+            if let Some(target) = reading.stream_scroll_to.take() {
+                sa = sa.vertical_scroll_offset(target);
+            }
+
+            // Apply page jump request (TOC, ◀▶ in paged mode, page shortcuts) — takes priority
             if let Some(target) = reading.stream_jump_to {
                 if target < reading.stream_page_y_starts.len() {
                     sa = sa.vertical_scroll_offset(reading.stream_page_y_starts[target]);
@@ -240,6 +245,9 @@ pub fn render_document(
 
             // Cache Y offsets for page navigation
             reading.stream_page_y_starts = output.inner;
+
+            // Save current scroll position (used by ▲▼ in scroll mode)
+            reading.scroll_offset_y = output.state.offset.y;
 
             // Derive current page from scroll position
             let scroll_y = output.state.offset.y;
