@@ -52,17 +52,9 @@ pub fn render_document(
                         }
                     }
                 }
-            } else if let Some(pag) = paginator {
-                let _total = pag.page_count();
-                aut.progress += dt * aut.speed * 0.05;
-                if aut.progress >= 1.0 {
-                    aut.progress -= 1.0;
-                }
             } else {
-                aut.progress += dt * aut.speed * 0.05;
-                if aut.progress >= 1.0 {
-                    aut.progress -= 1.0;
-                }
+                // Reflow (EPUB/TXT) auto-scroll: drive velocity like the ▼ button does.
+                reading.scroll_velocity = 200.0 * aut.speed;
             }
             if let Some(ctx) = ctx {
                 ctx.request_repaint();
@@ -91,6 +83,13 @@ pub fn render_document(
                 }
                 reading.scroll_velocity = 0.0;
             }
+        }
+
+        // Preload adjacent pages
+        if let Some(fixed) = document.lock().as_fixed() {
+            let total = fixed.page_count();
+            if *page + 1 < total { fixed.render_page(*page + 1, *scale); }
+            if *page > 0          { fixed.render_page(*page - 1, *scale); }
         }
     } else {
         drop(doc);
