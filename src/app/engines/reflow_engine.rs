@@ -1,5 +1,13 @@
 use super::{Document, RenderedPage, TocEntry, StoredImage, ContentBlock};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// Internal intermediate type: before images are loaded from the EPUB,
+/// we only know their hrefs. After the second phase, these are converted
+/// to `ContentBlock::Image` with actual byte data.
+enum RawBlock {
+    Text(String),
+    ImageRef(String), // resolved href into EPUB's image map
+}
 
 pub struct ReflowDocument {
     path: String,
@@ -38,37 +46,16 @@ impl ReflowDocument {
             })
             .unwrap_or_else(|| "Untitled".to_string());
 
-        // Build image map: normalized href → decoded StoredImage
-        let mut image_map: HashMap<String, StoredImage> = HashMap::new();
-        for entry in epub.manifest().iter() {
-            let kind = entry.kind();
-            if kind.is_image() {
-                let href = entry.href().as_ref().to_string();
-                if let Ok(bytes) = epub.read_resource_bytes(href.as_str()) {
-                    // Probe dimensions from image headers (fast, no full decode)
-                    let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
-                        .with_guessed_format()
-                        .ok()
-                        .and_then(|r| r.into_dimensions().ok())
-                        .unwrap_or((0, 0));
-                    let si = StoredImage {
-                        raw_bytes: bytes,
-                        width: w,
-                        height: h,
-                    };
-                    image_map.insert(normalize_path(&href), si);
-                }
-            }
-        }
-
-        let mut full_text = String::new();
-        let mut all_blocks: Vec<ContentBlock> = Vec::new();
-        let mut chapter_char_offsets: Vec<usize> = Vec::new();
-
         // Pre-build id → href map to avoid O(n²) manifest lookups per chapter
         let id_to_href: HashMap<String, String> = epub.manifest().iter()
             .map(|e| (e.id().to_string(), e.href().as_ref().to_string()))
             .collect();
+
+        // ── Phase 1: Parse HTML to discover text & referenced image hrefs ──
+        let mut full_text = String::new();
+        let mut all_raw: Vec<(usize, RawBlock)> = Vec::new(); // (chapter_idx, block)
+        let mut referenced_hrefs: HashSet<String> = HashSet::new();
+        let mut chapter_char_offsets: Vec<usize> = Vec::new();
 
         let reader = epub.reader();
         let len = reader.len();
@@ -84,34 +71,67 @@ impl ReflowDocument {
                 .cloned()
                 .unwrap_or_default();
 
-            // Parse HTML into blocks
-            let chapter_blocks = Self::parse_html(html, &chapter_href, &image_map);
+            let raw_blocks = Self::extract_raw_blocks(html, &chapter_href, &mut referenced_hrefs);
 
-            for block in &chapter_blocks {
+            // Build full_text from raw blocks
+            for block in &raw_blocks {
                 match block {
-                    ContentBlock::Text(t) => {
-                        if i > 0 || !all_blocks.is_empty() {
-                            // Only prepend newline if there's previous content
+                    RawBlock::Text(t) => {
+                        if i > 0 || !all_raw.is_empty() {
                             if !full_text.is_empty() && !full_text.ends_with('\n') {
                                 full_text.push('\n');
                             }
                         }
                         full_text.push_str(t);
                     }
-                    ContentBlock::Image(_img) => {
-                        // Add a placeholder marker for text-based operations
+                    RawBlock::ImageRef(_) => {
                         full_text.push_str("[IMAGE]");
                     }
                 }
             }
 
-            // Append a chapter separator
             if i + 1 < len && !full_text.ends_with('\n') {
                 full_text.push('\n');
             }
 
-            all_blocks.extend(chapter_blocks);
+            all_raw.extend(raw_blocks.into_iter().map(|b| (i, b)));
         }
+
+        // ── Phase 2: Load image bytes ONLY for referenced images ──
+        let mut image_data: HashMap<String, StoredImage> = HashMap::new();
+        for entry in epub.manifest().iter() {
+            let kind = entry.kind();
+            if kind.is_image() {
+                let href = normalize_path(entry.href().as_ref());
+                if referenced_hrefs.contains(&href) {
+                    if let Ok(bytes) = epub.read_resource_bytes(entry.href().as_ref()) {
+                        let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                            .with_guessed_format()
+                            .ok()
+                            .and_then(|r| r.into_dimensions().ok())
+                            .unwrap_or((0, 0));
+                        image_data.insert(href, StoredImage {
+                            raw_bytes: bytes,
+                            width: w,
+                            height: h,
+                        });
+                    }
+                }
+            }
+        }
+
+        // ── Phase 3: Convert RawBlocks → ContentBlocks ──
+        let all_blocks: Vec<ContentBlock> = all_raw.into_iter()
+            .filter_map(|(_, rb)| match rb {
+                RawBlock::Text(t) => {
+                    let trimmed = t.trim().to_string();
+                    if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
+                }
+                RawBlock::ImageRef(href) => {
+                    image_data.get(&href).map(|img| ContentBlock::Image(img.clone()))
+                }
+            })
+            .collect();
 
         // Build ToC
         let mut toc: Vec<TocEntry> = Vec::new();
@@ -183,14 +203,13 @@ impl ReflowDocument {
         String::from_utf8_lossy(data).to_string()
     }
 
-    /// Parse HTML into text + image blocks.
-    /// `chapter_href` is the path of the chapter within the EPUB (for resolving relative image src).
-    /// `image_map` maps normalized hrefs to decoded images.
-    fn parse_html(
+    /// Parse HTML into raw blocks (text / image references), recording which
+    /// images are actually used in `referenced_hrefs` for later byte loading.
+    fn extract_raw_blocks(
         html: &str,
         chapter_href: &str,
-        image_map: &HashMap<String, StoredImage>,
-    ) -> Vec<ContentBlock> {
+        referenced_hrefs: &mut HashSet<String>,
+    ) -> Vec<RawBlock> {
         let mut blocks = Vec::new();
         let mut current_text = String::new();
         let mut in_tag = false;
@@ -206,20 +225,13 @@ impl ReflowDocument {
                     in_tag = false;
                     let tag_lower = tag_content.to_lowercase();
 
-                    // Check for <img> tag
                     if tag_lower.starts_with("img ") || tag_lower == "img" {
-                        Self::flush_image_block(&tag_content, &mut blocks, &mut current_text, chapter_href, image_map);
-                    }
-                    // Check for <image> tag (used in some EPUBs with SVG)
-                    else if tag_lower.starts_with("image ") || tag_lower == "image" {
-                        Self::flush_image_block(&tag_content, &mut blocks, &mut current_text, chapter_href, image_map);
-                    }
-                    // Check for <br>, <hr> etc.
-                    else if tag_lower.starts_with("br") || tag_lower.starts_with("hr") {
+                        Self::push_image_ref(&tag_content, &mut blocks, &mut current_text, chapter_href, referenced_hrefs);
+                    } else if tag_lower.starts_with("image ") || tag_lower == "image" {
+                        Self::push_image_ref(&tag_content, &mut blocks, &mut current_text, chapter_href, referenced_hrefs);
+                    } else if tag_lower.starts_with("br") || tag_lower.starts_with("hr") {
                         current_text.push('\n');
-                    }
-                    // Check for <p>, <div>, <h1>-<h6> etc.
-                    else if tag_lower.starts_with('/') {
+                    } else if tag_lower.starts_with('/') {
                         let closing_tag = tag_lower.trim_start_matches('/').split_whitespace().next().unwrap_or("");
                         match closing_tag {
                             "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "li" | "td" | "th" => {
@@ -245,10 +257,33 @@ impl ReflowDocument {
         // Flush remaining text
         let trimmed = current_text.trim().to_string();
         if !trimmed.is_empty() {
-            blocks.push(ContentBlock::Text(trimmed));
+            blocks.push(RawBlock::Text(trimmed));
         }
 
         blocks
+    }
+
+    /// Extract src from `<img>`/`<image>` tag, resolve path, record it, and push a `RawBlock::ImageRef`.
+    fn push_image_ref(
+        tag_content: &str,
+        blocks: &mut Vec<RawBlock>,
+        current_text: &mut String,
+        chapter_href: &str,
+        referenced_hrefs: &mut HashSet<String>,
+    ) {
+        if let Some(src) = Self::extract_attr(tag_content, "src") {
+            if src.starts_with("data:") || src.contains("://") {
+                return;
+            }
+            let resolved = resolve_path(chapter_href, &src);
+            let trimmed = current_text.trim().to_string();
+            if !trimmed.is_empty() {
+                blocks.push(RawBlock::Text(trimmed));
+                current_text.clear();
+            }
+            referenced_hrefs.insert(resolved.clone());
+            blocks.push(RawBlock::ImageRef(resolved));
+        }
     }
 
     /// Extract an attribute value from a tag string like `img src="foo.png"`.
@@ -277,31 +312,6 @@ impl ReflowDocument {
             }
         }
         None
-    }
-
-    /// Handle an `<img>` or `<image>` tag: extract src, resolve path, flush text block, push image block.
-    fn flush_image_block(
-        tag_content: &str,
-        blocks: &mut Vec<ContentBlock>,
-        current_text: &mut String,
-        chapter_href: &str,
-        image_map: &HashMap<String, StoredImage>,
-    ) {
-        if let Some(src) = Self::extract_attr(tag_content, "src") {
-            // Skip data URIs and external URLs
-            if src.starts_with("data:") || src.contains("://") {
-                return;
-            }
-            let resolved = resolve_path(chapter_href, &src);
-            if let Some(img) = image_map.get(&resolved) {
-                let trimmed = current_text.trim().to_string();
-                if !trimmed.is_empty() {
-                    blocks.push(ContentBlock::Text(trimmed));
-                    current_text.clear();
-                }
-                blocks.push(ContentBlock::Image(img.clone()));
-            }
-        }
     }
 
     pub fn path(&self) -> &str {
