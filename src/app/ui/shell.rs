@@ -387,25 +387,26 @@ impl eframe::App for FolixApp {
             }
         }
 
-        // Continuous scroll via key hold (reflow scroll mode only)
+        // Frame-step scroll via key hold
         let scroll_dn_held = self.key_held(ctx, SA::ScrollDown);
         let scroll_up_held = self.key_held(ctx, SA::ScrollUp);
         if scroll_dn_held || scroll_up_held {
             if let Some(tab) = self.state.current_tab_mut() {
-                let is_reflow = tab.document.as_ref().map(|d| !d.lock().is_fixed()).unwrap_or(false);
-                if is_reflow && tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = if scroll_dn_held { 600.0 } else { -600.0 };
+                if tab.modes.reading_layout == ReadingLayout::Scroll {
+                    tab.modes.reading.scroll_step = if scroll_dn_held { 40.0 } else { -40.0 };
+                } else {
+                    let max = page_count_for_tab(tab).saturating_sub(1);
+                    let cur = tab.modes.page;
+                    if scroll_dn_held && cur < max { page_jump(tab, cur + 1); }
+                    else if scroll_up_held && cur > 0 { page_jump(tab, cur - 1); }
                 }
             }
         }
 
         if self.shortcut(ctx, SA::ScrollDown) {
             if let Some(tab) = self.state.current_tab_mut() {
-                let is_reflow = tab.document.as_ref().map(|d| !d.lock().is_fixed()).unwrap_or(false);
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    if !is_reflow {
-                        tab.modes.reading.scroll_offset_y += 600.0;
-                    }
+                    tab.modes.reading.scroll_step = 40.0;
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
@@ -416,11 +417,8 @@ impl eframe::App for FolixApp {
 
         if self.shortcut(ctx, SA::ScrollUp) {
             if let Some(tab) = self.state.current_tab_mut() {
-                let is_reflow = tab.document.as_ref().map(|d| !d.lock().is_fixed()).unwrap_or(false);
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    if !is_reflow {
-                        tab.modes.reading.scroll_offset_y = (tab.modes.reading.scroll_offset_y - 600.0).max(0.0);
-                    }
+                    tab.modes.reading.scroll_step = -40.0;
                 } else if tab.modes.page > 0 { page_jump(tab, tab.modes.page - 1); }
             }
         }
@@ -904,16 +902,17 @@ impl FolixApp {
                             page_jump(tab, tab.modes.page + 1);
                         }
                     } else {
-                        // Scroll ▲▼ — hold for continuous scroll, tap for small scroll
+                        // Scroll ▲▼ — tap = one line, hold = continuous
                         let up_btn = ui.add_enabled(
                             tab.modes.reading.scroll_offset_y > 0.0,
                             egui::Button::new("▲"),
                         );
-                        if up_btn.is_pointer_button_down_on() {
-                            tab.modes.reading.scroll_velocity = -800.0;
+                        if up_btn.clicked() || up_btn.is_pointer_button_down_on() {
+                            tab.modes.reading.scroll_step = -40.0;
                         }
-                        if ui.button("▼").is_pointer_button_down_on() {
-                            tab.modes.reading.scroll_velocity = 800.0;
+                        let dn_btn = ui.button("▼");
+                        if dn_btn.clicked() || dn_btn.is_pointer_button_down_on() {
+                            tab.modes.reading.scroll_step = 40.0;
                         }
                     }
 

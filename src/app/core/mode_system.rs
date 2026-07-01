@@ -89,8 +89,8 @@ pub struct ReadingState {
     pub stream_page_y_starts: Vec<f32>,
     /// Pending jump-to-page request (consumed by renderer).
     pub stream_jump_to: Option<usize>,
-    /// Velocity for continuous scroll (px/s). Positive = down, negative = up.
-    pub scroll_velocity: f32,
+    /// Frame-step scroll (px per frame). Positive = down, negative = up. 0 = idle.
+    pub scroll_step: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -233,7 +233,7 @@ impl TabModes {
                 stream_page_end: 0,
                 stream_page_y_starts: vec![],
                 stream_jump_to: None,
-                scroll_velocity: 0.0,
+                scroll_step: 0.0,
             },
             auto: AutoState {
                 playing: false,

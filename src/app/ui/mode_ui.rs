@@ -79,7 +79,16 @@ pub fn render_document(
             }
             ReadingLayout::Scroll => {
                 let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
+                if reading.scroll_step != 0.0 {
+                    reading.scroll_offset_y =
+                        (reading.scroll_offset_y + reading.scroll_step).max(0.0);
+                }
+                let target = reading.scroll_offset_y;
                 render_scroll(ui, document, page, *scale, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
+                if reading.scroll_step != 0.0 {
+                    reading.scroll_offset_y = target;
+                }
+                reading.scroll_step = 0.0;
             }
         }
     } else {
@@ -120,11 +129,10 @@ pub fn render_document(
                 .id_salt("reflow_stream")
                 .auto_shrink([false; 2]);
 
-            // Apply velocity-based continuous scroll (▲▼ hold, key hold)
-            if reading.scroll_velocity != 0.0 {
-                let dt = ui.input(|i| i.unstable_dt);
+            // Apply frame-step scroll (tap/hold button, key hold)
+            if reading.scroll_step != 0.0 {
                 reading.scroll_offset_y =
-                    (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
+                    (reading.scroll_offset_y + reading.scroll_step).max(0.0);
                 sa = sa.vertical_scroll_offset(reading.scroll_offset_y);
             }
 
@@ -249,14 +257,14 @@ pub fn render_document(
             // Cache Y offsets for page navigation
             reading.stream_page_y_starts = output.inner;
 
-            // Save scroll position. When velocity is active, keep our own
+            // Save scroll position. When step is active, keep our own
             // accumulated target — egui may clamp to 0 if content is too
             // short, but we keep climbing so scroll "catches up" once
             // auto-append grows the content.
-            if reading.scroll_velocity == 0.0 {
+            if reading.scroll_step == 0.0 {
                 reading.scroll_offset_y = output.state.offset.y;
             }
-            reading.scroll_velocity = 0.0;
+            reading.scroll_step = 0.0;
 
             // Derive current page from scroll position
             let scroll_y = output.state.offset.y;
@@ -334,23 +342,22 @@ fn render_scroll(
         }
     }
 
-    let initial_scroll = if *out_scroll_y == 0.0 && *page > 0 {
-        let target = (*page).min(total - 1);
-        layout_peek(&layouts, target)
+    let prev_scroll_y = *out_scroll_y;
+    let approx_vph = ui.available_size().y;
+
+    // Page jump: first render with page > 0
+    let jump_y = if prev_scroll_y == 0.0 && *page > 0 {
+        layout_peek(&layouts, (*page).min(total - 1))
     } else {
         None
     };
-    let mut prev_scroll_y = *out_scroll_y;
-    if let Some(off) = initial_scroll {
-        prev_scroll_y = off;
-    }
-    let approx_vph = ui.available_size().y;
+    let scroll_target = jump_y.unwrap_or(prev_scroll_y);
 
     let all_words: HashMap<usize, Vec<TextWordPosition>> = {
         let d = doc.lock();
         if let Some(fixed) = d.as_fixed() {
             layouts.iter().enumerate()
-                .filter(|(_, &(_, ph, py))| py + ph >= prev_scroll_y && py <= prev_scroll_y + approx_vph)
+                .filter(|(_, &(_, ph, py))| py + ph >= scroll_target && py <= scroll_target + approx_vph)
                 .map(|(i, _)| (i, fixed.page_text_positions(i)))
                 .collect()
         } else {
@@ -361,15 +368,13 @@ fn render_scroll(
     let mut sa = egui::ScrollArea::vertical()
         .id_salt(id)
         .auto_shrink([false; 2]);
-    if let Some(off) = initial_scroll {
-        sa = sa.vertical_scroll_offset(off);
-    }
+    sa = sa.vertical_scroll_offset(scroll_target);
 
     let output = sa.show(ui, |ui| {
-        let approx_bottom = prev_scroll_y + approx_vph;
+        let approx_bottom = scroll_target + approx_vph;
 
         for (i, &(_pw, ph, py)) in layouts.iter().enumerate() {
-            if py + ph >= prev_scroll_y && py <= approx_bottom {
+            if py + ph >= scroll_target && py <= approx_bottom {
                 let an = annotate.as_mut().map(|r| &mut **r);
                 render_image_page(ui, doc, i, scale, &all_words, selection, an, dark_mode, highlights);
             } else {
