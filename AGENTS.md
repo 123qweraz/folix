@@ -91,7 +91,7 @@ Input → Mode System → Mode Handler → per-mode UI + scoped features
 - Document is wrapped in `Arc<Mutex<Box<dyn Document>>>` — cheaply cloneable for UI.
 - **Unified rendering**: ALL modes use the same `render_document()` function. Mode-specific features (auto-play, annotations) pass as optional params.
 - **PDF texture cache**: MuPDF pages rendered to RGBA, cached as egui textures (LRU, 2 entries). Invalidated on scale change.
-- **Reflow pagination**: `Paginator` splits chapter text page-by-page (chapter-aligned). Each chapter starts on a new page. Repaginates on viewport/font resize (not yet called from UI).
+- **Reflow pagination**: `Paginator` puts each chapter on its own page (no character-based splitting). Images get their own page within a chapter. Page count = chapter count (plus image-only pages).
 
 ## What's implemented (working)
 - egui window with menu bar (File → Open/Close/Quit, Mode switch, Help → About)
