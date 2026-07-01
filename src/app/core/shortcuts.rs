@@ -166,7 +166,7 @@ pub const AVAILABLE_KEYS: &[&str] = &[
     "Minus","Equals",
 ];
 
-fn key_from_str(name: &str) -> Option<egui::Key> {
+pub fn key_from_str(name: &str) -> Option<egui::Key> {
     match name {
         "A" => Some(egui::Key::A),
         "B" => Some(egui::Key::B),

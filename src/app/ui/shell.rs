@@ -1,7 +1,7 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
 use crate::app::core::mode_system::{ViewMode, AutoPlayMode, Annotation, AnnotationTool, EditState, ContentEditState};
-use crate::app::core::shortcuts::{ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
+use crate::app::core::shortcuts::{key_from_str, ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::edit_operations;
 use crate::app::paginator::Paginator;
 use crate::app::platform::font_loader::FontLoader;
@@ -255,6 +255,21 @@ impl FolixApp {
             .unwrap_or(false)
     }
 
+    /// Check if a shortcut key is currently held down (for continuous scroll).
+    fn key_held(&self, ctx: &egui::Context, action: SA) -> bool {
+        let combo = self.state.settings.shortcuts.get(&action)
+            .or_else(|| crate::app::core::shortcuts::DEFAULT_SHORTCUTS.get(&action));
+        if let Some(combo) = combo {
+            if let Some(ekey) = key_from_str(&combo.key) {
+                ctx.input(|i| i.key_down(ekey))
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
     fn apply_highlight_selection(tab: &mut crate::app::core::app_state::OpenTab) {
         let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
             && tab.modes.reading.selection.page == tab.modes.page;
@@ -372,15 +387,23 @@ impl eframe::App for FolixApp {
             }
         }
 
+        // Continuous scroll via key hold (reflow scroll mode only)
+        let scroll_dn_held = self.key_held(ctx, SA::ScrollDown);
+        let scroll_up_held = self.key_held(ctx, SA::ScrollUp);
+        if scroll_dn_held || scroll_up_held {
+            if let Some(tab) = self.state.current_tab_mut() {
+                let is_reflow = tab.document.as_ref().map(|d| !d.lock().is_fixed()).unwrap_or(false);
+                if is_reflow && tab.modes.reading_layout == ReadingLayout::Scroll {
+                    tab.modes.reading.scroll_velocity = if scroll_dn_held { 600.0 } else { -600.0 };
+                }
+            }
+        }
+
         if self.shortcut(ctx, SA::ScrollDown) {
             if let Some(tab) = self.state.current_tab_mut() {
                 let is_reflow = tab.document.as_ref().map(|d| !d.lock().is_fixed()).unwrap_or(false);
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    if is_reflow {
-                        let target = tab.modes.reading.scroll_offset_y
-                            + tab.modes.reading.stream_page_y_starts.last().copied().unwrap_or(1000.0) * 0.1;
-                        tab.modes.reading.stream_scroll_to = Some(target);
-                    } else {
+                    if !is_reflow {
                         tab.modes.reading.scroll_offset_y += 600.0;
                     }
                 } else {
@@ -395,12 +418,7 @@ impl eframe::App for FolixApp {
             if let Some(tab) = self.state.current_tab_mut() {
                 let is_reflow = tab.document.as_ref().map(|d| !d.lock().is_fixed()).unwrap_or(false);
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    if is_reflow {
-                        let target = (tab.modes.reading.scroll_offset_y
-                            - tab.modes.reading.stream_page_y_starts.last().copied().unwrap_or(1000.0) * 0.1)
-                            .max(0.0);
-                        tab.modes.reading.stream_scroll_to = Some(target);
-                    } else {
+                    if !is_reflow {
                         tab.modes.reading.scroll_offset_y = (tab.modes.reading.scroll_offset_y - 600.0).max(0.0);
                     }
                 } else if tab.modes.page > 0 { page_jump(tab, tab.modes.page - 1); }
@@ -886,14 +904,16 @@ impl FolixApp {
                             page_jump(tab, tab.modes.page + 1);
                         }
                     } else {
-                        let vh = ui.available_size().y.max(100.0) * 0.8;
-                        if ui.add_enabled(tab.modes.reading.scroll_offset_y > 0.0, egui::Button::new("▲")).clicked() {
-                            let target = (tab.modes.reading.scroll_offset_y - vh).max(0.0);
-                            tab.modes.reading.stream_scroll_to = Some(target);
+                        // Scroll ▲▼ — hold for continuous scroll, tap for small scroll
+                        let up_btn = ui.add_enabled(
+                            tab.modes.reading.scroll_offset_y > 0.0,
+                            egui::Button::new("▲"),
+                        );
+                        if up_btn.is_pointer_button_down_on() {
+                            tab.modes.reading.scroll_velocity = -800.0;
                         }
-                        if ui.button("▼").clicked() {
-                            let target = tab.modes.reading.scroll_offset_y + vh;
-                            tab.modes.reading.stream_scroll_to = Some(target);
+                        if ui.button("▼").is_pointer_button_down_on() {
+                            tab.modes.reading.scroll_velocity = 800.0;
                         }
                     }
 

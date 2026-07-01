@@ -120,9 +120,12 @@ pub fn render_document(
                 .id_salt("reflow_stream")
                 .auto_shrink([false; 2]);
 
-            // Apply scroll-to-Y request (▲▼ buttons, ScrollDown/ScrollUp shortcuts)
-            if let Some(target) = reading.stream_scroll_to.take() {
-                sa = sa.vertical_scroll_offset(target);
+            // Apply velocity-based continuous scroll (▲▼ hold, key hold)
+            if reading.scroll_velocity != 0.0 {
+                let dt = ui.input(|i| i.unstable_dt);
+                reading.scroll_offset_y =
+                    (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
+                sa = sa.vertical_scroll_offset(reading.scroll_offset_y);
             }
 
             // Apply page jump request (TOC, ◀▶ in paged mode, page shortcuts) — takes priority
@@ -248,6 +251,9 @@ pub fn render_document(
 
             // Save current scroll position (used by ▲▼ in scroll mode)
             reading.scroll_offset_y = output.state.offset.y;
+
+            // Consume velocity each frame (input sources re-set it next frame)
+            reading.scroll_velocity = 0.0;
 
             // Derive current page from scroll position
             let scroll_y = output.state.offset.y;
