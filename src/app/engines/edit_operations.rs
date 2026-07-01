@@ -5,8 +5,9 @@ pub fn rotate_page(path: &str, page: usize, degrees: i32) -> Result<(), String> 
     let mut page_obj = doc
         .load_pdf_page(page as i32)
         .map_err(|e| format!("load page {page}: {e}"))?;
+    let current = page_obj.rotation().map_err(|e| format!("read rotation: {e}"))?;
     page_obj
-        .set_rotation(degrees)
+        .set_rotation((current + degrees) % 360)
         .map_err(|e| format!("rotate: {e}"))?;
     doc.save(path).map_err(|e| format!("save: {e}"))?;
     Ok(())

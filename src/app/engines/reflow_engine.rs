@@ -100,19 +100,136 @@ impl ReflowDocument {
             return None;
         }
 
-        // Pre-populate cache with the full TXT content
+        // Split TXT into chapters by heading patterns or blank lines
+        let (chapters, toc) = Self::split_txt_chapters(&content);
+
+        // Pre-populate cache with chapter blocks
         let mut cache = HashMap::new();
-        cache.insert(0usize, vec![ContentBlock::Text(content)]);
+        for (i, (_, text)) in chapters.iter().enumerate() {
+            cache.insert(i, vec![ContentBlock::Text(text.clone())]);
+        }
 
         Some(Self {
             path: path.to_string(),
             doc_title,
-            toc: vec![],
+            toc,
             epub: None,
             spine_items: vec![],
             chapter_cache: std::sync::Mutex::new(cache),
             image_cache: std::sync::Mutex::new(HashMap::new()),
         })
+    }
+
+    fn split_txt_chapters(text: &str) -> (Vec<(String, String)>, Vec<TocEntry>) {
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Phase 1: detect chapter heading line indices + labels
+        let headings: Vec<(usize, String)> = lines.iter().enumerate()
+            .filter_map(|(i, line)| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                // Markdown heading
+                if trimmed.starts_with('#') && trimmed.trim_start_matches('#').trim().len() > 0 {
+                    return Some((i, trimmed.trim_start_matches('#').trim().to_string()));
+                }
+                // Chinese chapter: 第...章, 第...回, 第...节
+                if trimmed.len() > 2 && trimmed.chars().next() == Some('第') && (trimmed.contains('章') || trimmed.contains('回') || trimmed.contains('节')) {
+                    return Some((i, trimmed.to_string()));
+                }
+                // English chapter: "Chapter " or "CHAPTER "
+                let lower = trimmed.to_lowercase();
+                if lower.starts_with("chapter ") || lower.starts_with("chapter:") {
+                    return Some((i, trimmed.to_string()));
+                }
+                None
+            })
+            .collect();
+
+        // Phase 2: fallback — split on 2+ consecutive blank lines
+        if headings.is_empty() {
+            let breaks: Vec<usize> = lines.windows(3).enumerate()
+                .filter(|(_, w)| w[0].trim().is_empty() && w[1].trim().is_empty())
+                .map(|(i, _)| i)
+                .collect();
+
+            if breaks.is_empty() {
+                return (vec![(String::new(), text.to_string())], vec![]);
+            }
+
+            let mut chapters: Vec<(String, String)> = Vec::new();
+            let mut prev = 0;
+            for &b in &breaks {
+                let chunk: String = lines[prev..b].iter().map(|l| *l).collect::<Vec<&str>>().join("\n").trim().to_string();
+                if !chunk.is_empty() {
+                    chapters.push((format!("Part {}", chapters.len() + 1), chunk));
+                }
+                prev = b;
+            }
+            // remaining text after last break
+            // advance past blank lines
+            while prev < lines.len() && lines[prev].trim().is_empty() { prev += 1; }
+            if prev < lines.len() {
+                let chunk: String = lines[prev..].iter().map(|l| *l).collect::<Vec<&str>>().join("\n").trim().to_string();
+                if !chunk.is_empty() {
+                    chapters.push((format!("Part {}", chapters.len() + 1), chunk));
+                }
+            }
+
+            let toc: Vec<TocEntry> = chapters.iter().enumerate()
+                .map(|(i, (label, _))| TocEntry { label: label.clone(), page_index: i })
+                .collect();
+            return (chapters, toc);
+        }
+
+        // Phase 3: split at headings (heading line becomes chapter label, excluded from body)
+        let mut chapters: Vec<(String, String)> = Vec::new();
+        let mut prev = 0; // line index after the previous heading
+        for &(hi, ref label) in &headings {
+            if hi > prev {
+                let body: String = lines[prev..hi].iter().map(|l| *l).collect::<Vec<&str>>().join("\n").trim().to_string();
+                if !body.is_empty() {
+                    chapters.push((String::new(), body));
+                }
+            }
+            chapters.push((label.clone(), String::new()));
+            prev = hi + 1;
+        }
+        if prev < lines.len() {
+            let body: String = lines[prev..].iter().map(|l| *l).collect::<Vec<&str>>().join("\n").trim().to_string();
+            if !body.is_empty() {
+                chapters.push((String::new(), body));
+            }
+        }
+
+        // Merge consecutive heading-only chapters with their body
+        let mut merged: Vec<(String, String)> = Vec::new();
+        for (label, body) in chapters {
+            if !label.is_empty() {
+                if body.is_empty() {
+                    // Title-only chapter; next body-less entry will merge
+                    merged.push((label, String::new()));
+                } else {
+                    merged.push((label, body));
+                }
+            } else {
+                if let Some(last) = merged.last_mut() {
+                    if last.1.is_empty() {
+                        last.1 = body;
+                        continue;
+                    }
+                }
+                merged.push((String::new(), body));
+            }
+        }
+        // Drop any trailing entry with empty body
+        merged.retain(|(_, b)| !b.is_empty());
+
+        let toc: Vec<TocEntry> = merged.iter().enumerate()
+            .map(|(i, (label, _))| TocEntry { label: label.clone(), page_index: i })
+            .collect();
+        (merged, toc)
     }
 
     fn decode_text(data: &[u8]) -> String {
@@ -326,7 +443,9 @@ impl ReflowDocument {
 impl ReflowLayout for ReflowDocument {
     fn chapter_count(&self) -> usize {
         if self.spine_items.is_empty() {
-            1 // TXT: single chapter
+            let cache = self.chapter_cache.lock().unwrap();
+            let n = cache.len();
+            if n > 0 { n } else { 1 }
         } else {
             self.spine_items.len()
         }

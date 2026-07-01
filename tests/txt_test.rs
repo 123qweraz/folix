@@ -46,18 +46,23 @@ fn test_open_chinese_novel() {
     );
     let doc = folix::app::engines::reflow_engine::ReflowDocument::open(path)
         .expect("Failed to open Chinese novel TXT");
-    assert_eq!(doc.chapter_count(), 1, "Continuous document");
-    let ch = doc.load_chapter(0);
-    let text: String = ch.blocks.iter()
-        .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
-        .collect::<Vec<&str>>()
-        .join("");
-    assert!(!text.is_empty(), "Should have text content");
-    assert!(text.chars().count() > 100000, "Full text should be long");
+    assert!(doc.chapter_count() >= 3, "Should be split into chapters, got {}", doc.chapter_count());
+    // Concatenate all chapters' text
+    let mut full_text = String::new();
+    for i in 0..doc.chapter_count() {
+        let ch = doc.load_chapter(i);
+        for b in ch.blocks {
+            if let ContentBlock::Text(t) = b {
+                full_text.push_str(&t);
+            }
+        }
+    }
+    assert!(!full_text.is_empty(), "Should have text content");
+    assert!(full_text.chars().count() > 100000, "Full text should be long");
     assert!(
-        text.contains("更多") || text.contains("精校") || text.contains("下载"),
+        full_text.contains("更多") || full_text.contains("精校") || full_text.contains("下载"),
         "Text should contain expected Chinese: got prefix {:?}",
-        &text[..text.len().min(100)]
+        &full_text[..full_text.len().min(100)]
     );
-    println!("Chinese TXT: {} chars", text.chars().count());
+    println!("Chinese TXT: {} chars, {} chapters", full_text.chars().count(), doc.chapter_count());
 }
