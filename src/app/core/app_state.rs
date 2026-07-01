@@ -18,6 +18,7 @@ pub struct AppSettings {
     pub show_toolbar: bool,
     pub background_color: [u8; 4],
     pub dark_mode: bool,
+    pub scroll_speed: f32,
     #[serde(default = "super::shortcuts::default_shortcuts")]
     pub shortcuts: ShortcutMap,
     #[serde(skip)]
@@ -31,6 +32,7 @@ impl Default for AppSettings {
             show_toolbar: true,
             background_color: [255, 255, 255, 255],
             dark_mode: false,
+            scroll_speed: 800.0,
             shortcuts: default_shortcuts(),
             editing_shortcut: None,
         }

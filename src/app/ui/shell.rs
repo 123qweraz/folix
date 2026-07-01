@@ -388,12 +388,13 @@ impl eframe::App for FolixApp {
         }
 
         // Arrow keys: scroll step in scroll mode only
+        let speed = self.state.settings.scroll_speed;
         let arr_dn = ctx.input(|i| i.key_down(egui::Key::ArrowDown));
         let arr_up = ctx.input(|i| i.key_down(egui::Key::ArrowUp));
         if arr_dn || arr_up {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = if arr_dn { 800.0 } else { -800.0 };
+                    tab.modes.reading.scroll_velocity = if arr_dn { speed } else { -speed };
                 }
             }
         }
@@ -404,7 +405,7 @@ impl eframe::App for FolixApp {
         if space_dn || space_up {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = if space_dn { 800.0 } else { -800.0 };
+                    tab.modes.reading.scroll_velocity = if space_dn { speed } else { -speed };
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
@@ -417,7 +418,7 @@ impl eframe::App for FolixApp {
         if self.shortcut(ctx, SA::ScrollDown) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = 800.0;
+                    tab.modes.reading.scroll_velocity = speed;
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
@@ -429,7 +430,7 @@ impl eframe::App for FolixApp {
         if self.shortcut(ctx, SA::ScrollUp) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = -800.0;
+                    tab.modes.reading.scroll_velocity = -speed;
                 } else if tab.modes.page > 0 { page_jump(tab, tab.modes.page - 1); }
             }
         }
@@ -719,6 +720,13 @@ impl FolixApp {
 
         ui.add_space(20.0);
 
+        // ── Scrolling ──
+        ui.heading("Scrolling");
+        ui.separator();
+        ui.label("Scroll Speed (px/s):");
+        ui.add(egui::Slider::new(&mut self.state.settings.scroll_speed, 200.0..=4000.0).suffix(" px/s"));
+        ui.add_space(20.0);
+
         // ── Keyboard Shortcuts ──
         ui.heading("Keyboard Shortcuts");
         ui.separator();
@@ -871,6 +879,7 @@ impl FolixApp {
             return;
         }
 
+        let speed = self.state.settings.scroll_speed;
         let mut needs_reload: Option<String> = None;
 
         egui::TopBottomPanel::bottom("toolbar_row1").show(ctx, |ui| {
@@ -919,11 +928,11 @@ impl FolixApp {
                             egui::Button::new("▲"),
                         );
                         if up_btn.clicked() || up_btn.is_pointer_button_down_on() {
-                            tab.modes.reading.scroll_velocity = -800.0;
+                            tab.modes.reading.scroll_velocity = -speed;
                         }
                         let dn_btn = ui.button("▼");
                         if dn_btn.clicked() || dn_btn.is_pointer_button_down_on() {
-                            tab.modes.reading.scroll_velocity = 800.0;
+                            tab.modes.reading.scroll_velocity = speed;
                         }
                     }
 
