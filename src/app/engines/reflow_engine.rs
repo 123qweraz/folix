@@ -203,12 +203,12 @@ impl ReflowDocument {
             }
         }
 
-        // Merge consecutive heading-only chapters with their body
+        // Merge consecutive heading-only chapters with their body.
+        // Include the heading label at the start of the body so it appears in rendered text.
         let mut merged: Vec<(String, String)> = Vec::new();
         for (label, body) in chapters {
             if !label.is_empty() {
                 if body.is_empty() {
-                    // Title-only chapter; next body-less entry will merge
                     merged.push((label, String::new()));
                 } else {
                     merged.push((label, body));
@@ -216,14 +216,14 @@ impl ReflowDocument {
             } else {
                 if let Some(last) = merged.last_mut() {
                     if last.1.is_empty() {
-                        last.1 = body;
+                        // Prepend heading label so it appears in the rendered content.
+                        last.1 = format!("{}\n{}", last.0, body);
                         continue;
                     }
                 }
                 merged.push((String::new(), body));
             }
         }
-        // Drop any trailing entry with empty body
         merged.retain(|(_, b)| !b.is_empty());
 
         let toc: Vec<TocEntry> = merged.iter().enumerate()
@@ -466,10 +466,10 @@ impl ReflowLayout for ReflowDocument {
         if self.spine_items.is_empty() {
             let cache = self.chapter_cache.lock().unwrap();
             return cache.get(&idx).cloned().map(|blocks| Chapter {
-                title: String::new(),
+                title: self.toc.get(idx).map(|t| t.label.clone()).unwrap_or_default(),
                 blocks,
             }).unwrap_or_else(|| Chapter {
-                title: String::new(),
+                title: self.toc.get(idx).map(|t| t.label.clone()).unwrap_or_default(),
                 blocks: vec![],
             });
         }
