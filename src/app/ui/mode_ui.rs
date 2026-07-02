@@ -85,11 +85,26 @@ pub fn render_document(
             }
         }
 
-        // Preload adjacent pages
+        // Preload adjacent pages — also upload GPU texture for next page
         if let Some(fixed) = document.lock().as_fixed() {
             let total = fixed.page_count();
-            if *page + 1 < total { fixed.render_page(*page + 1, *scale); }
-            if *page > 0          { fixed.render_page(*page - 1, *scale); }
+            if *page + 1 < total {
+                if fixed.get_texture_handle(*page + 1, *scale).is_none() {
+                    if let Some(p) = fixed.render_page(*page + 1, *scale) {
+                        let ci = egui::ColorImage::from_rgba_unmultiplied(
+                            [p.width as usize, p.height as usize],
+                            &p.rgba,
+                        );
+                        let tex = ui.ctx().load_texture(
+                            format!("doc_page_{}", *page + 1),
+                            ci,
+                            egui::TextureOptions::default(),
+                        );
+                        fixed.set_texture_handle(*page + 1, *scale, tex);
+                    }
+                }
+            }
+            if *page > 0 { fixed.render_page(*page - 1, *scale); }
         }
     } else {
         drop(doc);
@@ -279,15 +294,42 @@ pub fn render_document(
                 >= output.content_size.y - 15.0;
             if at_bottom && loaded + 1 < total_pages {
                 reading.stream_page_end = loaded + 1;
-                // Preload next chapter to avoid stutter at page boundary
-                // during auto-scroll (load now for cache hit on next frame).
+                // Preload next chapter + decode images to avoid stutter
+                // at page boundary during auto-scroll.
                 let new_page = loaded + 1;
                 let cache_len = reading.chapter_cache.len();
                 if cache_len <= new_page {
                     let ci = pag.chapter_idx_for_page(new_page).unwrap_or(0);
                     let doc_handle = document.lock();
                     if let Some(reflow) = doc_handle.as_reflow() {
-                        reading.chapter_cache.push(Some(reflow.load_chapter(ci)));
+                        let chapter = reflow.load_chapter(ci);
+                        // Pre-decode images on this page
+                        let entries = pag.page_entries(new_page);
+                        for entry in entries {
+                            if entry.block_idx >= chapter.blocks.len() { continue; }
+                            if let ContentBlock::Image(img) = &chapter.blocks[entry.block_idx] {
+                                let key = format!("epub_img_{}_{}", ci, entry.block_idx);
+                                image_cache.entry(key.clone()).or_insert_with(|| {
+                                    let decoded = image::load_from_memory(&img.raw_bytes)
+                                        .map(|d| d.into_rgba8())
+                                        .unwrap_or_else(|_| {
+                                            let mut rgba = vec![255u8; 4];
+                                            rgba[0] = 255; rgba[3] = 255;
+                                            image::RgbaImage::from_raw(1, 1, rgba).unwrap()
+                                        });
+                                    let (w, h) = decoded.dimensions();
+                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                        [w as usize, h as usize],
+                                        decoded.as_raw(),
+                                    );
+                                    ui.ctx().load_texture(
+                                        &key, color_image,
+                                        egui::TextureOptions::default(),
+                                    )
+                                });
+                            }
+                        }
+                        reading.chapter_cache.push(Some(chapter));
                     }
                 }
             }
