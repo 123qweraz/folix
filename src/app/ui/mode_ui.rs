@@ -1,5 +1,5 @@
 use crate::app::engines::{DocumentHandle, ContentBlock, TextWordPosition};
-use crate::app::core::mode_system::{ReadingState, ReadingLayout, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool, Vocabulary, SidebarSection};
+use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool, Vocabulary, SidebarSection};
 use crate::app::paginator::Paginator;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -11,6 +11,8 @@ pub fn render_document(
     page: &mut usize,
     scale: &mut f32,
     reading_layout: &mut ReadingLayout,
+    fit_mode: &mut FitMode,
+    view_rotation: &mut ViewRotation,
     paginator: &mut Option<Paginator>,
     reading: &mut ReadingState,
     auto: Option<&mut AutoState>,
@@ -19,6 +21,33 @@ pub fn render_document(
     dark_mode: bool,
     image_cache: &mut HashMap<String, egui::TextureHandle>,
 ) {
+    let is_fixed = document.lock().is_fixed();
+
+    // Calculate fit scale for fixed layouts
+    if *fit_mode != FitMode::Free && is_fixed {
+        if let Some(fixed) = document.lock().as_fixed() {
+            if let Some((w, h)) = fixed.page_size(*page, 1.0) {
+                let (disp_w, disp_h) = match *view_rotation {
+                    ViewRotation::Deg0 | ViewRotation::Deg180 => (w, h),
+                    ViewRotation::Deg90 | ViewRotation::Deg270 => (h, w),
+                };
+                let (avail_w, avail_h) = (ui.available_width(), ui.available_height());
+                if disp_w > 0.0 && disp_h > 0.0 {
+                    let new_scale = match *fit_mode {
+                        FitMode::FitWidth => (avail_w - 20.0) / disp_w,
+                        FitMode::FitPage => {
+                            let sw = (avail_w - 20.0) / disp_w;
+                            let sh = (avail_h - 20.0) / disp_h;
+                            sw.min(sh)
+                        }
+                        FitMode::Free => *scale,
+                    };
+                    *scale = (new_scale.max(0.1).min(10.0) * 100.0).round() / 100.0;
+                }
+            }
+        }
+    }
+
     let doc = document.lock();
     let is_fixed = doc.is_fixed();
 
@@ -92,7 +121,7 @@ pub fn render_document(
 
         match *reading_layout {
             ReadingLayout::Paged => {
-                render_paged(ui, document, *page, *scale, &mut reading.selection, annotate, dark_mode, highlights);
+                render_paged(ui, document, *page, *scale, *view_rotation, &mut reading.selection, annotate, dark_mode, highlights);
             }
             ReadingLayout::Scroll => {
                 let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
@@ -102,7 +131,7 @@ pub fn render_document(
                         (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
                 }
                 let target = reading.scroll_offset_y;
-                render_scroll(ui, document, page, *scale, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
+                render_scroll(ui, document, page, *scale, *view_rotation, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
                 if reading.scroll_velocity != 0.0 {
                     reading.scroll_offset_y = target;
                 }
@@ -345,6 +374,7 @@ fn render_paged(
     doc: &Arc<Mutex<DocumentHandle>>,
     page: usize,
     scale: f32,
+    view_rotation: ViewRotation,
     selection: &mut SelectionState,
     annotate: Option<&mut AnnotateState>,
     dark_mode: bool,
@@ -367,7 +397,7 @@ fn render_paged(
             } else {
                 HashMap::new()
             };
-            render_image_page(ui, doc, page, scale, &all_words, selection, annotate, dark_mode, highlights);
+            render_image_page(ui, doc, page, scale, view_rotation, &all_words, selection, annotate, dark_mode, highlights);
         });
 }
 
@@ -376,6 +406,7 @@ fn render_scroll(
     doc: &Arc<Mutex<DocumentHandle>>,
     page: &mut usize,
     scale: f32,
+    view_rotation: ViewRotation,
     total: usize,
     out_scroll_y: &mut f32,
     selection: &mut SelectionState,
@@ -396,8 +427,12 @@ fn render_scroll(
             let mut y = 0.0;
             for i in 0..total {
                 let (w, h) = fixed.page_size(i, scale).unwrap_or((800.0, 1000.0));
-                layouts.push((w, h, y));
-                y += h + spacing;
+                let (disp_w, disp_h) = match view_rotation {
+                    ViewRotation::Deg0 | ViewRotation::Deg180 => (w, h),
+                    ViewRotation::Deg90 | ViewRotation::Deg270 => (h, w),
+                };
+                layouts.push((disp_w, disp_h, y));
+                y += disp_h + spacing;
             }
         }
     }
@@ -443,7 +478,7 @@ fn render_scroll(
         for (i, &(_pw, ph, py)) in layouts.iter().enumerate() {
             if py + ph >= scroll_target && py <= approx_bottom {
                 let an = annotate.as_mut().map(|r| &mut **r);
-                render_image_page(ui, doc, i, scale, &all_words, selection, an, dark_mode, highlights);
+                render_image_page(ui, doc, i, scale, view_rotation, &all_words, selection, an, dark_mode, highlights);
             } else {
                 ui.allocate_exact_size(egui::vec2(ui.available_width(), ph), egui::Sense::hover());
             }
@@ -483,6 +518,7 @@ fn render_image_page(
     doc: &Arc<Mutex<DocumentHandle>>,
     page_idx: usize,
     scale: f32,
+    view_rotation: ViewRotation,
     all_words: &HashMap<usize, Vec<TextWordPosition>>,
     selection: &mut SelectionState,
     mut annotate: Option<&mut AnnotateState>,
@@ -490,7 +526,7 @@ fn render_image_page(
     highlights: &std::collections::HashMap<usize, Vec<usize>>,
 ) {
     // Acquire texture (from GPU cache or render + upload)
-    let (tex_id, image_size) = {
+    let (tex_id, tex_size) = {
         let d = doc.lock();
         let fixed = d.as_fixed().unwrap();
         let cached_tex = fixed.get_texture_handle(page_idx, scale);
@@ -522,24 +558,73 @@ fn render_image_page(
         }
     };
 
+    let page_nat_w = tex_size.x;
+    let page_nat_h = tex_size.y;
+
+    // Display size accounts for rotation
+    let (disp_w, disp_h) = match view_rotation {
+        ViewRotation::Deg0 | ViewRotation::Deg180 => (page_nat_w, page_nat_h),
+        ViewRotation::Deg90 | ViewRotation::Deg270 => (page_nat_h, page_nat_w),
+    };
+    let display_size = egui::Vec2::new(disp_w, disp_h);
+
     // Layout
     let avail_w = ui.available_width();
-    let x_off = ((avail_w - image_size.x) * 0.5).max(0.0);
+    let x_off = ((avail_w - display_size.x) * 0.5).max(0.0);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(avail_w, image_size.y),
+        egui::vec2(avail_w, display_size.y),
         egui::Sense::click_and_drag(),
     );
     let image_rect = egui::Rect::from_min_size(
         rect.min + egui::vec2(x_off, 0.0),
-        image_size,
+        display_size,
     );
 
-    ui.painter().image(
-        tex_id,
-        image_rect,
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE,
-    );
+    // Draw rotated image using a mesh with rotated UVs
+    if view_rotation == ViewRotation::Deg0 {
+        ui.painter().image(
+            tex_id,
+            image_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    } else {
+        let (tl_uv, tr_uv, br_uv, bl_uv) = rotated_uvs(view_rotation);
+        let mut mesh = egui::epaint::Mesh::with_texture(tex_id);
+        let c = egui::Color32::WHITE;
+        mesh.vertices.push(egui::epaint::Vertex { pos: image_rect.left_top(), uv: tl_uv, color: c });
+        mesh.vertices.push(egui::epaint::Vertex { pos: image_rect.right_top(), uv: tr_uv, color: c });
+        mesh.vertices.push(egui::epaint::Vertex { pos: image_rect.right_bottom(), uv: br_uv, color: c });
+        mesh.vertices.push(egui::epaint::Vertex { pos: image_rect.left_bottom(), uv: bl_uv, color: c });
+        mesh.indices.extend_from_slice(&[0, 1, 2, 2, 3, 0]);
+        ui.painter().add(egui::Shape::mesh(mesh));
+    }
+
+    // Helper: screen position → document coordinates (page space)
+    let screen_to_doc = |mx: f32, my: f32| -> (f32, f32) {
+        let nx = (mx - image_rect.left()) / display_size.x;
+        let ny = (my - image_rect.top()) / display_size.y;
+        let (doc_nx, doc_ny) = match view_rotation {
+            ViewRotation::Deg0 => (nx, ny),
+            ViewRotation::Deg90 => (1.0 - ny, nx),
+            ViewRotation::Deg180 => (1.0 - nx, 1.0 - ny),
+            ViewRotation::Deg270 => (ny, 1.0 - nx),
+        };
+        (doc_nx * page_nat_w, doc_ny * page_nat_h)
+    };
+
+    // Helper: document coordinates → screen position
+    let doc_to_screen = |dx: f32, dy: f32| -> (f32, f32) {
+        let nx = dx / page_nat_w;
+        let ny = dy / page_nat_h;
+        let (sx, sy) = match view_rotation {
+            ViewRotation::Deg0 => (nx, ny),
+            ViewRotation::Deg90 => (ny, 1.0 - nx),
+            ViewRotation::Deg180 => (1.0 - nx, 1.0 - ny),
+            ViewRotation::Deg270 => (1.0 - ny, nx),
+        };
+        (image_rect.left() + sx * display_size.x, image_rect.top() + sy * display_size.y)
+    };
 
     let words = all_words.get(&page_idx);
 
@@ -551,9 +636,10 @@ fn render_image_page(
         if !selection.selected_word_indices.is_empty() && selection.page == page_idx {
             for &idx in &selection.selected_word_indices {
                 if let Some(w) = words_data.get(idx) {
+                    let (sx0, sy0) = doc_to_screen(w.x0, w.y0);
+                    let (sx1, sy1) = doc_to_screen(w.x1, w.y1);
                     let r = egui::Rect::from_min_max(
-                        egui::pos2(image_rect.left() + w.x0 * scale, image_rect.top() + w.y0 * scale),
-                        egui::pos2(image_rect.left() + w.x1 * scale, image_rect.top() + w.y1 * scale),
+                        egui::pos2(sx0, sy0), egui::pos2(sx1, sy1),
                     );
                     ui.painter().rect_filled(
                         r, 0.0,
@@ -568,8 +654,7 @@ fn render_image_page(
     if tool == Some(AnnotationTool::Pen) {
         if response.drag_started() {
             if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let rx = (mouse_pos.x - image_rect.left()) / scale;
-                let ry = (mouse_pos.y - image_rect.top()) / scale;
+                let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
                 if let Some(ann) = annotate.as_mut() {
                     ann.stroke_points.clear();
                     ann.stroke_points.push([rx, ry]);
@@ -580,8 +665,7 @@ fn render_image_page(
         if let Some(ann) = annotate.as_mut() {
             if response.dragged() {
                 if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let rx = (mouse_pos.x - image_rect.left()) / scale;
-                    let ry = (mouse_pos.y - image_rect.top()) / scale;
+                    let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
                     ann.stroke_points.push([rx, ry]);
                 }
             }
@@ -606,7 +690,8 @@ fn render_image_page(
 
             if !ann.stroke_points.is_empty() {
                 let points: Vec<egui::Pos2> = ann.stroke_points.iter().map(|&[x, y]| {
-                    egui::pos2(image_rect.left() + x * scale, image_rect.top() + y * scale)
+                    let (sx, sy) = doc_to_screen(x, y);
+                    egui::pos2(sx, sy)
                 }).collect();
                 if points.len() > 1 {
                     for w in points.windows(2) {
@@ -622,8 +707,7 @@ fn render_image_page(
         let mut erase_pos: Option<(f32, f32)> = None;
         if response.drag_started() {
             if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let rx = (mouse_pos.x - image_rect.left()) / scale;
-                let ry = (mouse_pos.y - image_rect.top()) / scale;
+                let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
                 if let Some(ann) = annotate.as_mut() {
                     ann.selection_anchor = Some((rx, ry));
                 }
@@ -632,11 +716,10 @@ fn render_image_page(
         if response.drag_stopped() {
             if let Some(ann) = annotate.as_mut() {
                 if let (Some(mouse_pos), Some(anchor)) = (response.interact_pointer_pos(), ann.selection_anchor) {
-                    let rx = (mouse_pos.x - image_rect.left()) / scale;
-                    let ry = (mouse_pos.y - image_rect.top()) / scale;
+                    let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
                     let dx = rx - anchor.0;
                     let dy = ry - anchor.1;
-                    if (dx * dx + dy * dy).sqrt() * scale < 8.0 {
+                    if (dx * dx + dy * dy).sqrt() < 8.0 {
                         erase_pos = Some((rx, ry));
                     }
                 }
@@ -654,7 +737,7 @@ fn render_image_page(
                         AnnotationTool::Pen => {
                             if let Some(data) = &a.note {
                                 if let Ok(pts) = serde_json::from_str::<Vec<[f32; 2]>>(data) {
-                                    let th = 15.0 / scale;
+                                    let th = 15.0;
                                     pts.iter().any(|&[x, y]| {
                                         let ddx = x - rx;
                                         let ddy = y - ry;
@@ -666,7 +749,7 @@ fn render_image_page(
                         AnnotationTool::Note => {
                             let ddx = a.rect[0] - rx;
                             let ddy = a.rect[1] - ry;
-                            (ddx * ddx + ddy * ddy).sqrt() < 25.0 / scale
+                            (ddx * ddx + ddy * ddy).sqrt() < 25.0
                         }
                         AnnotationTool::Eraser => false,
                     }
@@ -683,8 +766,7 @@ fn render_image_page(
 
         if response.double_clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let rx = (pos.x - image_rect.left()) / scale;
-                let ry = (pos.y - image_rect.top()) / scale;
+                let (rx, ry) = screen_to_doc(pos.x, pos.y);
                 if let Some(words_data) = words {
                     if let Some(idx) = find_word_at(words_data, rx, ry) {
                         let w = &words_data[idx];
@@ -700,8 +782,7 @@ fn render_image_page(
 
         if !shift_held && response.clicked() && !response.double_clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let rx = (pos.x - image_rect.left()) / scale;
-                let ry = (pos.y - image_rect.top()) / scale;
+                let (rx, ry) = screen_to_doc(pos.x, pos.y);
                 if let Some(words_data) = words {
                     if let Some(idx) = find_word_at(words_data, rx, ry) {
                         let w = &words_data[idx];
@@ -721,8 +802,7 @@ fn render_image_page(
 
         if shift_held && response.clicked() && !response.double_clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let rx = (pos.x - image_rect.left()) / scale;
-                let ry = (pos.y - image_rect.top()) / scale;
+                let (rx, ry) = screen_to_doc(pos.x, pos.y);
                 if let Some(words_data) = words {
                     if let Some(idx) = find_word_at(words_data, rx, ry) {
                         if selection.page == page_idx {
@@ -744,8 +824,7 @@ fn render_image_page(
         if !shift_held && !response.double_clicked() && response.drag_started() {
             let ctrl_held = ui.input(|i| i.modifiers.ctrl);
             if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let rx = (mouse_pos.x - image_rect.left()) / scale;
-                let ry = (mouse_pos.y - image_rect.top()) / scale;
+                let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
                 selection.selecting = true;
                 selection.anchor = Some((rx, ry));
                 selection.focus = Some((rx, ry));
@@ -761,8 +840,7 @@ fn render_image_page(
         if selection.selecting && selection.page == page_idx && response.dragged() {
             let ctrl_held = ui.input(|i| i.modifiers.ctrl);
             if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let rx = (mouse_pos.x - image_rect.left()) / scale;
-                let ry = (mouse_pos.y - image_rect.top()) / scale;
+                let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
                 selection.focus = Some((rx, ry));
                 if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
                     if let Some(words_data) = words {
@@ -793,16 +871,10 @@ fn render_image_page(
 
         if selection.selecting && selection.page == page_idx {
             if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
-                let from = egui::pos2(
-                    image_rect.left() + anchor.0 * scale,
-                    image_rect.top() + anchor.1 * scale,
-                );
-                let to = egui::pos2(
-                    image_rect.left() + focus.0 * scale,
-                    image_rect.top() + focus.1 * scale,
-                );
+                let (from_x, from_y) = doc_to_screen(anchor.0, anchor.1);
+                let (to_x, to_y) = doc_to_screen(focus.0, focus.1);
                 ui.painter().line_segment(
-                    [from, to],
+                    [egui::pos2(from_x, from_y), egui::pos2(to_x, to_y)],
                     egui::Stroke::new(2.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 200)),
                 );
             }
@@ -810,8 +882,7 @@ fn render_image_page(
 
         if tool == Some(AnnotationTool::Note) && !shift_held && response.clicked() && !response.double_clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let rx = (pos.x - image_rect.left()) / scale;
-                let ry = (pos.y - image_rect.top()) / scale;
+                let (rx, ry) = screen_to_doc(pos.x, pos.y);
                 if let Some(ann) = annotate.as_mut() {
                     let hit = ann.annotations.iter().position(|a| {
                         a.page == page_idx && a.kind == AnnotationTool::Highlight &&
@@ -866,9 +937,10 @@ fn render_image_page(
                 AnnotationTool::Highlight => {
                     let [x0, y0, x1, y1] = ann_item.rect;
                     let c = ann_item.color;
+                    let (sx0, sy0) = doc_to_screen(x0, y0);
+                    let (sx1, sy1) = doc_to_screen(x1, y1);
                     let r = egui::Rect::from_min_max(
-                        egui::pos2(image_rect.left() + x0 * scale, image_rect.top() + y0 * scale),
-                        egui::pos2(image_rect.left() + x1 * scale, image_rect.top() + y1 * scale),
+                        egui::pos2(sx0, sy0), egui::pos2(sx1, sy1),
                     );
                     ui.painter().rect_filled(r, 0.0, egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]));
                 }
@@ -876,7 +948,8 @@ fn render_image_page(
                     if let Some(data) = &ann_item.note {
                         if let Ok(pts) = serde_json::from_str::<Vec<[f32; 2]>>(data) {
                             let points: Vec<egui::Pos2> = pts.iter().map(|&[x, y]| {
-                                egui::pos2(image_rect.left() + x * scale, image_rect.top() + y * scale)
+                                let (sx, sy) = doc_to_screen(x, y);
+                                egui::pos2(sx, sy)
                             }).collect();
                             for w in points.windows(2) {
                                 ui.painter().line_segment(
@@ -888,8 +961,7 @@ fn render_image_page(
                     }
                 }
                 AnnotationTool::Note => {
-                    let cx = image_rect.left() + ann_item.rect[0] * scale;
-                    let cy = image_rect.top() + ann_item.rect[1] * scale;
+                    let (cx, cy) = doc_to_screen(ann_item.rect[0], ann_item.rect[1]);
                     let size = 12.0;
                     ui.painter().circle_filled(
                         egui::pos2(cx, cy), size,
@@ -938,9 +1010,10 @@ fn render_image_page(
         if let Some(page_highlights) = highlights.get(&page_idx) {
             for &idx in page_highlights {
                 if let Some(w) = words.get(idx) {
+                    let (sx0, sy0) = doc_to_screen(w.x0, w.y0);
+                    let (sx1, sy1) = doc_to_screen(w.x1, w.y1);
                     let r = egui::Rect::from_min_max(
-                        egui::pos2(image_rect.left() + w.x0 * scale, image_rect.top() + w.y0 * scale),
-                        egui::pos2(image_rect.left() + w.x1 * scale, image_rect.top() + w.y1 * scale),
+                        egui::pos2(sx0, sy0), egui::pos2(sx1, sy1),
                     );
                     ui.painter().rect_filled(
                         r, 0.0,
@@ -975,6 +1048,35 @@ fn render_image_page(
             }
         }
     });
+}
+
+fn rotated_uvs(rotation: ViewRotation) -> (egui::Pos2, egui::Pos2, egui::Pos2, egui::Pos2) {
+    match rotation {
+        ViewRotation::Deg0 => (
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1.0, 0.0),
+            egui::pos2(1.0, 1.0),
+            egui::pos2(0.0, 1.0),
+        ),
+        ViewRotation::Deg90 => (
+            egui::pos2(1.0, 0.0),
+            egui::pos2(1.0, 1.0),
+            egui::pos2(0.0, 1.0),
+            egui::pos2(0.0, 0.0),
+        ),
+        ViewRotation::Deg180 => (
+            egui::pos2(1.0, 1.0),
+            egui::pos2(0.0, 1.0),
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1.0, 0.0),
+        ),
+        ViewRotation::Deg270 => (
+            egui::pos2(0.0, 1.0),
+            egui::pos2(0.0, 0.0),
+            egui::pos2(1.0, 0.0),
+            egui::pos2(1.0, 1.0),
+        ),
+    }
 }
 
 fn find_word_at(words: &[TextWordPosition], x: f32, y: f32) -> Option<usize> {

@@ -10,6 +10,21 @@ pub enum ReadingLayout {
     Scroll,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum FitMode {
+    Free,
+    FitWidth,
+    FitPage,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ViewRotation {
+    Deg0,
+    Deg90,
+    Deg180,
+    Deg270,
+}
+
 use std::collections::HashMap;
 use crate::app::paginator::Paginator;
 
@@ -240,6 +255,8 @@ pub struct TabModes {
     pub page: usize,
     pub scale: f32,
     pub reading_layout: ReadingLayout,
+    pub fit_mode: FitMode,
+    pub view_rotation: ViewRotation,
     pub paginator: Option<Paginator>,
     pub reading: ReadingState,
     pub auto: AutoState,
@@ -260,6 +277,8 @@ impl TabModes {
             page: 0,
             scale: 1.0,
             reading_layout: ReadingLayout::Scroll,
+            fit_mode: FitMode::Free,
+            view_rotation: ViewRotation::Deg0,
             paginator: None,
             reading: ReadingState {
                 view_mode: ViewMode::Text,

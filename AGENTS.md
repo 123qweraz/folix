@@ -119,6 +119,9 @@ Input → Mode System → Mode Handler → per-mode UI + scoped features
 - Keyboard shortcut system (20+ actions, configurable)
 - Tab management (add, close, recent files new tab page)
 - Search (sidebar, per-page or per-chapter matching with highlight)
+- Fit Width / Fit Page auto-zoom for fixed layout docs (PDF, images)
+- View rotation (90°/180°/270°) — temporary visual rotation, doesn't modify file
+- Rotation-aware coordinate mapping for annotations, selection, and pen strokes
 
 ## What's stubbed (module structure exists, no logic)
 - `auto_reading/` sub-modules (page_flow, glyph_reveal, sentence_stream)

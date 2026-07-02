@@ -187,6 +187,14 @@ static ZH_CN: &[(&str, &str)] = &[
     ("Word / Phrase:", "单词/短语："),
     ("+ Add", "+ 添加"),
 
+    // View
+    ("Fit Page", "适应页面"),
+    ("Fit Width", "适应宽度"),
+    ("Actual Size", "实际大小"),
+    ("↻ Rotate View", "↻ 旋转视图"),
+    ("↻ 90°", "↻ 90°"),
+    ("↺ 90°", "↺ 90°"),
+
     // Menu
     ("Navigate", "导航"),
     ("Go to Page...", "跳转到页..."),

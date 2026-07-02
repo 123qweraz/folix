@@ -1,6 +1,6 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
-use crate::app::core::mode_system::{ViewMode, Annotation, AnnotationTool, EditState, ContentEditState, Bookmark, Vocabulary, Sentence_};
+use crate::app::core::mode_system::{ViewMode, FitMode, ViewRotation, Annotation, AnnotationTool, EditState, ContentEditState, Bookmark, Vocabulary, Sentence_};
 use crate::app::config::RecentFile;
 use crate::app::core::shortcuts::{key_from_str, ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::edit_operations;
@@ -1160,6 +1160,8 @@ impl FolixApp {
             &mut tab.modes.page,
             &mut tab.modes.scale,
             &mut tab.modes.reading_layout,
+            &mut tab.modes.fit_mode,
+            &mut tab.modes.view_rotation,
             &mut tab.modes.paginator,
             &mut tab.modes.reading,
             if is_light { Some(&mut tab.modes.auto) } else { None },
@@ -1331,18 +1333,65 @@ impl FolixApp {
                                 tab.modes.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
                             }
                         }
+
+                        // Fit mode buttons
+                        if is_fixed_doc {
+                            let fit_w = tab.modes.fit_mode == FitMode::FitWidth;
+                            if ui.selectable_label(fit_w, crate::app::i18n::tr(lng, "Fit Width")).clicked() {
+                                tab.modes.fit_mode = if fit_w { FitMode::Free } else { FitMode::FitWidth };
+                                tab.modes.scale = 1.0;
+                            }
+                            let fit_p = tab.modes.fit_mode == FitMode::FitPage;
+                            if ui.selectable_label(fit_p, crate::app::i18n::tr(lng, "Fit Page")).clicked() {
+                                tab.modes.fit_mode = if fit_p { FitMode::Free } else { FitMode::FitPage };
+                                tab.modes.scale = 1.0;
+                            }
+                            if tab.modes.fit_mode != FitMode::Free {
+                                if ui.button(crate::app::i18n::tr(lng, "Actual Size")).clicked() {
+                                    tab.modes.fit_mode = FitMode::Free;
+                                    tab.modes.scale = 1.0;
+                                }
+                            }
+                        }
+
+                        // Rotation buttons
+                        if is_fixed_doc {
+                            if ui.button(crate::app::i18n::tr(lng, "↻ 90°")).clicked() {
+                                let next = match tab.modes.view_rotation {
+                                    ViewRotation::Deg0 => ViewRotation::Deg90,
+                                    ViewRotation::Deg90 => ViewRotation::Deg180,
+                                    ViewRotation::Deg180 => ViewRotation::Deg270,
+                                    ViewRotation::Deg270 => ViewRotation::Deg0,
+                                };
+                                tab.modes.view_rotation = next;
+                            }
+                            if ui.button(crate::app::i18n::tr(lng, "↺ 90°")).clicked() {
+                                let next = match tab.modes.view_rotation {
+                                    ViewRotation::Deg0 => ViewRotation::Deg270,
+                                    ViewRotation::Deg90 => ViewRotation::Deg0,
+                                    ViewRotation::Deg180 => ViewRotation::Deg90,
+                                    ViewRotation::Deg270 => ViewRotation::Deg180,
+                                };
+                                tab.modes.view_rotation = next;
+                            }
+                        }
+
                         ui.label("🔍");
                         let z = tab.modes.scale;
-                        if ui.add_enabled(z > 0.5, egui::Button::new("−")).clicked() {
-                            tab.modes.scale = (z - 0.1).max(0.5);
+                        if ui.add_enabled(z > 0.1, egui::Button::new("−")).clicked() {
+                            tab.modes.scale = (z - 0.1).max(0.1);
+                            tab.modes.fit_mode = FitMode::Free;
                         }
                         let mut new_scale = tab.modes.scale;
-                        ui.add(egui::Slider::new(&mut new_scale, 0.5..=3.0).text("×"));
+                        let slider_range = 0.1..=10.0;
+                        ui.add(egui::Slider::new(&mut new_scale, slider_range).text("×"));
                         if (new_scale - tab.modes.scale).abs() > 0.001 {
                             tab.modes.scale = new_scale;
+                            tab.modes.fit_mode = FitMode::Free;
                         }
-                        if ui.add_enabled(z < 3.0, egui::Button::new("+")).clicked() {
-                            tab.modes.scale = (z + 0.1).min(3.0);
+                        if ui.add_enabled(z < 10.0, egui::Button::new("+")).clicked() {
+                            tab.modes.scale = (z + 0.1).min(10.0);
+                            tab.modes.fit_mode = FitMode::Free;
                         }
                     }
 
