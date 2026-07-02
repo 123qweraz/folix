@@ -279,6 +279,17 @@ pub fn render_document(
                 >= output.content_size.y - 15.0;
             if at_bottom && loaded + 1 < total_pages {
                 reading.stream_page_end = loaded + 1;
+                // Preload next chapter to avoid stutter at page boundary
+                // during auto-scroll (load now for cache hit on next frame).
+                let new_page = loaded + 1;
+                let cache_len = reading.chapter_cache.len();
+                if cache_len <= new_page {
+                    let ci = pag.chapter_idx_for_page(new_page).unwrap_or(0);
+                    let doc_handle = document.lock();
+                    if let Some(reflow) = doc_handle.as_reflow() {
+                        reading.chapter_cache.push(Some(reflow.load_chapter(ci)));
+                    }
+                }
             }
         }
     }
