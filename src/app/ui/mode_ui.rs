@@ -65,27 +65,10 @@ pub fn render_document(
     if is_fixed {
         drop(doc);
         let highlights = &reading.search.page_highlights;
-        match *reading_layout {
-            ReadingLayout::Paged => {
-                render_paged(ui, document, *page, *scale, &mut reading.selection, annotate, dark_mode, highlights);
-            }
-            ReadingLayout::Scroll => {
-                let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
-                if reading.scroll_velocity != 0.0 {
-                    let dt = ui.input(|i| i.unstable_dt);
-                    reading.scroll_offset_y =
-                        (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
-                }
-                let target = reading.scroll_offset_y;
-                render_scroll(ui, document, page, *scale, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
-                if reading.scroll_velocity != 0.0 {
-                    reading.scroll_offset_y = target;
-                }
-                reading.scroll_velocity = 0.0;
-            }
-        }
 
-        // Preload adjacent pages — also upload GPU texture for next page
+        // Preload next page's GPU texture before rendering,
+        // so render_image_page hits the texture cache when a new
+        // page scrolls into view.
         if let Some(fixed) = document.lock().as_fixed() {
             let total = fixed.page_count();
             if *page + 1 < total {
@@ -105,6 +88,26 @@ pub fn render_document(
                 }
             }
             if *page > 0 { fixed.render_page(*page - 1, *scale); }
+        }
+
+        match *reading_layout {
+            ReadingLayout::Paged => {
+                render_paged(ui, document, *page, *scale, &mut reading.selection, annotate, dark_mode, highlights);
+            }
+            ReadingLayout::Scroll => {
+                let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
+                if reading.scroll_velocity != 0.0 {
+                    let dt = ui.input(|i| i.unstable_dt);
+                    reading.scroll_offset_y =
+                        (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
+                }
+                let target = reading.scroll_offset_y;
+                render_scroll(ui, document, page, *scale, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
+                if reading.scroll_velocity != 0.0 {
+                    reading.scroll_offset_y = target;
+                }
+                reading.scroll_velocity = 0.0;
+            }
         }
     } else {
         drop(doc);
@@ -350,7 +353,9 @@ fn render_paged(
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
-            let all_words = {
+            let need_words = annotate.is_some()
+                || !selection.selected_word_indices.is_empty();
+            let all_words = if need_words {
                 let d = doc.lock();
                 if let Some(fixed) = d.as_fixed() {
                     let mut m = HashMap::new();
@@ -359,6 +364,8 @@ fn render_paged(
                 } else {
                     HashMap::new()
                 }
+            } else {
+                HashMap::new()
             };
             render_image_page(ui, doc, page, scale, &all_words, selection, annotate, dark_mode, highlights);
         });
@@ -406,7 +413,12 @@ fn render_scroll(
     };
     let scroll_target = jump_y.unwrap_or(prev_scroll_y);
 
-    let all_words: HashMap<usize, Vec<TextWordPosition>> = {
+    // Only extract text positions when selection or annotation is active.
+    // During auto-play (Light mode) there's no selection, so skip to avoid
+    // the expensive MuPDF text extraction on each page's first appearance.
+    let need_words = annotate.is_some()
+        || !selection.selected_word_indices.is_empty();
+    let all_words: HashMap<usize, Vec<TextWordPosition>> = if need_words {
         let d = doc.lock();
         if let Some(fixed) = d.as_fixed() {
             layouts.iter().enumerate()
@@ -416,6 +428,8 @@ fn render_scroll(
         } else {
             HashMap::new()
         }
+    } else {
+        HashMap::new()
     };
 
     let mut sa = egui::ScrollArea::vertical()
