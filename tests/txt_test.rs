@@ -1,5 +1,6 @@
 use folix::app::engines::{ReflowLayout, ContentBlock};
 use std::io::Write;
+use folix::app::ui::mode_ui::extract_sentences;
 
 #[test]
 fn test_open_txt_utf8() {
@@ -136,6 +137,27 @@ More text.
     assert!(!text.contains("https://"), "URL should be stripped: {:?}", text);
     assert!(!text.contains("[a link]"), "Link brackets should be stripped: {:?}", text);
     assert!(!text.contains("![alt]"), "Image syntax should be stripped: {:?}", text);
+}
+
+#[test]
+fn test_extract_sentences() {
+    let text = "Hello world. How are you? I'm fine! 你好。测试一下? 哇！\nNew paragraph.";
+    let sentences = extract_sentences(text);
+    assert_eq!(sentences.len(), 7, "Should split into 7 sentences: {:?}", sentences);
+    assert_eq!(sentences[0], "Hello world.");
+    assert_eq!(sentences[1], "How are you?");
+    assert_eq!(sentences[2], "I'm fine!");
+    assert_eq!(sentences[3], "你好。");
+    assert_eq!(sentences[4], "测试一下?");
+    assert_eq!(sentences[5], "哇！");
+    assert_eq!(sentences[6], "New paragraph.");
+
+    let empty = extract_sentences("");
+    assert!(empty.is_empty(), "Empty text should return empty vec");
+
+    let no_delim = extract_sentences("just one long bit of text");
+    assert_eq!(no_delim.len(), 1);
+    assert_eq!(no_delim[0], "just one long bit of text");
 }
 
 #[test]

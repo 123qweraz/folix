@@ -1050,6 +1050,148 @@ fn render_image_page(
     });
 }
 
+/// Extract sentences from text, splitting on 。！？.!? and newlines.
+pub fn extract_sentences(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return vec![];
+    }
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    for c in text.chars() {
+        current.push(c);
+        if matches!(c, '。' | '！' | '？' | '.' | '!' | '?' | '\n') {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed);
+            }
+            current.clear();
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        sentences.push(trimmed);
+    }
+    sentences
+}
+
+/// Render the 摸鱼模式 floating overlay — a lyrics-style window
+/// that shows one sentence at a time.
+pub fn render_mo_yu_overlay(
+    ctx: &egui::Context,
+    document: &Arc<Mutex<DocumentHandle>>,
+    page: usize,
+    auto: &mut AutoState,
+) {
+    if !auto.mo_yu || !auto.playing {
+        return;
+    }
+
+    // Re-extract sentences if page changed since last extraction
+    if page != auto.mo_yu_page {
+        auto.mo_yu_sentences.clear();
+        auto.mo_yu_page = page;
+    }
+
+    // Extract sentences from the current page if needed
+    if auto.mo_yu_sentences.is_empty() {
+        auto.mo_yu_sentence_idx = 0;
+        auto.mo_yu_timer = 0.0;
+        let text = document.lock().as_fixed()
+            .map(|f| f.page_text(page))
+            .unwrap_or_default();
+        let sentences = extract_sentences(&text);
+        if sentences.is_empty() {
+            return;
+        }
+        auto.mo_yu_sentences = sentences;
+    }
+
+    if auto.mo_yu_sentences.is_empty() {
+        return;
+    }
+
+    // Advance timer
+    let dt = ctx.input(|i| i.unstable_dt);
+    auto.mo_yu_timer += dt;
+
+    let sentence = &auto.mo_yu_sentences[auto.mo_yu_sentence_idx];
+    let duration = ((sentence.len() as f32 / 8.0).max(1.5) / auto.speed).min(10.0);
+
+    let progress_ratio = (auto.mo_yu_timer / duration).min(1.0);
+
+    if auto.mo_yu_timer >= duration {
+        auto.mo_yu_timer = 0.0;
+        auto.mo_yu_sentence_idx += 1;
+        if auto.mo_yu_sentence_idx >= auto.mo_yu_sentences.len() {
+            // Reached end of page; stop or wrap
+            auto.playing = false;
+            auto.mo_yu_sentence_idx = auto.mo_yu_sentences.len().saturating_sub(1);
+        }
+        ctx.request_repaint();
+        return;
+    }
+
+    ctx.request_repaint();
+
+    // Build the overlay window
+    let window_w = 360.0;
+
+    egui::Window::new("🎵 摸鱼")
+        .id(egui::Id::new("mo_yu_window"))
+        .anchor(egui::Align2::RIGHT_BOTTOM, [-10.0, -50.0])
+        .fixed_size(egui::vec2(window_w, 180.0))
+        .collapsible(false)
+        .resizable(false)
+        .title_bar(true)
+        .show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                // Progress bar
+                let pb = egui::ProgressBar::new(progress_ratio)
+                    .show_percentage()
+                    .desired_width(window_w - 20.0);
+                ui.add(pb);
+                ui.add_space(8.0);
+
+                // Current sentence — wrapped for fixed width
+                let label = egui::Label::new(
+                    egui::RichText::new(sentence)
+                        .size(18.0)
+                        .color(egui::Color32::from_rgb(50, 50, 50)),
+                )
+                .wrap()
+                .selectable(true);
+                ui.add_sized(egui::vec2(window_w - 20.0, 80.0), label);
+
+                ui.add_space(4.0);
+
+                // Controls row
+                ui.horizontal(|ui| {
+                    if ui.button("⏮").clicked() {
+                        if auto.mo_yu_sentence_idx > 0 {
+                            auto.mo_yu_sentence_idx -= 1;
+                            auto.mo_yu_timer = 0.0;
+                        }
+                    }
+                    if ui.button("⏸").clicked() {
+                        auto.playing = false;
+                    }
+                    if ui.button("⏭").clicked() {
+                        auto.mo_yu_sentence_idx =
+                            (auto.mo_yu_sentence_idx + 1).min(auto.mo_yu_sentences.len() - 1);
+                        auto.mo_yu_timer = 0.0;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!(
+                            "{}/{}",
+                            auto.mo_yu_sentence_idx + 1,
+                            auto.mo_yu_sentences.len()
+                        ));
+                    });
+                });
+            });
+        });
+}
+
 fn rotated_uvs(rotation: ViewRotation) -> (egui::Pos2, egui::Pos2, egui::Pos2, egui::Pos2) {
     match rotation {
         ViewRotation::Deg0 => (

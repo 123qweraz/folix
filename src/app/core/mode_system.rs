@@ -158,6 +158,12 @@ pub struct AutoState {
     pub playing: bool,
     pub speed: f32,
     pub progress: f32,
+    /// 摸鱼模式 — sentence-by-sentence floating overlay
+    pub mo_yu: bool,
+    pub mo_yu_sentences: Vec<String>,
+    pub mo_yu_sentence_idx: usize,
+    pub mo_yu_timer: f32,
+    pub mo_yu_page: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -308,6 +314,11 @@ impl TabModes {
                 playing: false,
                 speed: 1.0,
                 progress: 0.0,
+                mo_yu: false,
+                mo_yu_sentences: vec![],
+                mo_yu_sentence_idx: 0,
+                mo_yu_timer: 0.0,
+                mo_yu_page: 0,
             },
             annotate: AnnotateState {
                 tool: AnnotationTool::Highlight,

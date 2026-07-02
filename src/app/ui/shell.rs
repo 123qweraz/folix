@@ -489,6 +489,17 @@ impl eframe::App for FolixApp {
             }
         }
 
+        if self.shortcut(ctx, SA::ToggleAutoPlay) {
+            if let Some(tab) = self.state.current_tab_mut() {
+                if tab.modes.active == ModeKind::LightReading {
+                    tab.modes.auto.playing = !tab.modes.auto.playing;
+                    if tab.modes.auto.playing {
+                        tab.modes.auto.progress = 0.0;
+                    }
+                }
+            }
+        }
+
         if self.shortcut(ctx, SA::HighlightSel) {
             if let Some(tab) = self.state.current_tab_mut() {
                 Self::apply_highlight_selection(tab);
@@ -1166,7 +1177,7 @@ impl FolixApp {
             &mut tab.modes.reading,
             if is_light { Some(&mut tab.modes.auto) } else { None },
             if is_deep { Some(&mut tab.modes.annotate) } else { None },
-            Some(ctx),
+            Some(ctx.clone()),
             dark_mode,
             &mut self.image_texture_cache,
         );
@@ -1253,6 +1264,18 @@ impl FolixApp {
                         let _ = db.add_bookmark(book_id, bm.page, Some(&bm.label));
                     }
                     tab.modes.reading.bookmarks_dirty = false;
+                }
+            }
+        }
+
+        // Render 摸鱼模式 overlay if active
+        if let Some(tab) = self.state.current_tab() {
+            if let Some(ref doc) = tab.document {
+                if tab.modes.auto.mo_yu && tab.modes.auto.playing {
+                    let doc = doc.clone();
+                    let page = tab.modes.page;
+                    let auto = &mut self.state.tabs[self.state.active_tab].modes.auto;
+                    mode_ui::render_mo_yu_overlay(&ctx, &doc, page, auto);
                 }
             }
         }
@@ -1435,6 +1458,16 @@ impl FolixApp {
                             ui.label(crate::app::i18n::tr(lng, "Speed:"));
                             ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
 
+                            // 摸鱼模式 toggle
+                            let mo_yu_label = if tab.modes.auto.mo_yu { "🎵 摸鱼" } else { "摸鱼" };
+                            if ui.selectable_label(tab.modes.auto.mo_yu, mo_yu_label).clicked() {
+                                tab.modes.auto.mo_yu = !tab.modes.auto.mo_yu;
+                                if tab.modes.auto.mo_yu {
+                                    tab.modes.auto.mo_yu_sentences.clear();
+                                    tab.modes.auto.playing = true;
+                                    tab.modes.auto.progress = 0.0;
+                                }
+                            }
                         }
                         ModeKind::DeepReading => {
                             let tool = &tab.modes.annotate.tool;

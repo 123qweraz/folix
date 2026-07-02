@@ -25,6 +25,7 @@ pub enum ShortcutAction {
     ToggleSidebar,
     ToggleUI,
     Copy,
+    ToggleAutoPlay,
 }
 
 impl ShortcutAction {
@@ -50,6 +51,7 @@ impl ShortcutAction {
             ShortcutAction::ToggleSidebar => "Toggle Sidebar",
             ShortcutAction::ToggleUI => "Toggle UI",
             ShortcutAction::Copy => "Copy",
+            ShortcutAction::ToggleAutoPlay => "Toggle Auto Play",
         }
     }
 }
@@ -123,8 +125,9 @@ pub fn default_shortcuts() -> ShortcutMap {
     m.insert(ShortcutAction::PrevPage, KeyCombo { key: "ArrowLeft".into(), ctrl: false, shift: false, alt: false });
     m.insert(ShortcutAction::FirstPage, KeyCombo { key: "Home".into(), ctrl: false, shift: false, alt: false });
     m.insert(ShortcutAction::LastPage, KeyCombo { key: "End".into(), ctrl: false, shift: false, alt: false });
-    m.insert(ShortcutAction::ScrollDown, KeyCombo { key: "Space".into(), ctrl: false, shift: false, alt: false });
-    m.insert(ShortcutAction::ScrollUp, KeyCombo { key: "Space".into(), ctrl: false, shift: true, alt: false });
+    m.insert(ShortcutAction::ScrollDown, KeyCombo { key: "ArrowDown".into(), ctrl: false, shift: false, alt: false });
+    m.insert(ShortcutAction::ScrollUp, KeyCombo { key: "ArrowUp".into(), ctrl: false, shift: false, alt: false });
+    m.insert(ShortcutAction::ToggleAutoPlay, KeyCombo { key: "Space".into(), ctrl: false, shift: false, alt: false });
     m.insert(ShortcutAction::HighlightSel, KeyCombo { key: "A".into(), ctrl: false, shift: false, alt: false });
     m.insert(ShortcutAction::AddBookmark, KeyCombo { key: "B".into(), ctrl: true, shift: false, alt: false });
     m.insert(ShortcutAction::ToggleSidebar, KeyCombo { key: "F12".into(), ctrl: false, shift: false, alt: false });
@@ -154,6 +157,7 @@ pub const ALL_ACTIONS: &[ShortcutAction] = &[
     ShortcutAction::ToggleSidebar,
     ShortcutAction::ToggleUI,
     ShortcutAction::Copy,
+    ShortcutAction::ToggleAutoPlay,
 ];
 
 pub const AVAILABLE_KEYS: &[&str] = &[
