@@ -1,5 +1,5 @@
 use crate::app::engines::{DocumentHandle, ContentBlock, TextWordPosition};
-use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool, Vocabulary, SidebarSection};
+use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool, Vocabulary, SidebarSection, MoYuState};
 use crate::app::paginator::Paginator;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -1074,122 +1074,124 @@ pub fn extract_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
-/// Render the 摸鱼模式 floating overlay — a lyrics-style window
-/// that shows one sentence at a time.
-pub fn render_mo_yu_overlay(
-    ctx: &egui::Context,
-    document: &Arc<Mutex<DocumentHandle>>,
-    page: usize,
-    auto: &mut AutoState,
+/// Render the 摸鱼模式 UI — one sentence at a time with controls.
+/// Called from the mo-yu viewport (or embedded window fallback).
+pub fn render_mo_yu_ui(
+    ui: &mut egui::Ui,
+    mo_yu: &mut MoYuState,
+    document: &Option<Arc<Mutex<DocumentHandle>>>,
 ) {
-    if !auto.mo_yu || !auto.playing {
-        return;
-    }
+    let dt = ui.input(|i| i.unstable_dt);
 
     // Re-extract sentences if page changed since last extraction
-    if page != auto.mo_yu_page {
-        auto.mo_yu_sentences.clear();
-        auto.mo_yu_page = page;
-    }
-
-    // Extract sentences from the current page if needed
-    if auto.mo_yu_sentences.is_empty() {
-        auto.mo_yu_sentence_idx = 0;
-        auto.mo_yu_timer = 0.0;
-        let text = document.lock().as_fixed()
-            .map(|f| f.page_text(page))
-            .unwrap_or_default();
-        let sentences = extract_sentences(&text);
-        if sentences.is_empty() {
-            return;
+    if mo_yu.sentences.is_empty() {
+        if let Some(ref doc) = document {
+            let text = doc.lock().as_fixed()
+                .map(|f| f.page_text(mo_yu.page))
+                .unwrap_or_default();
+            let sentences = extract_sentences(&text);
+            if !sentences.is_empty() {
+                mo_yu.sentences = sentences;
+                mo_yu.sentence_idx = 0;
+                mo_yu.timer = 0.0;
+            }
         }
-        auto.mo_yu_sentences = sentences;
     }
 
-    if auto.mo_yu_sentences.is_empty() {
+    let window_w = ui.available_width().max(200.0);
+
+    if mo_yu.sentences.is_empty() {
+        ui.vertical_centered(|ui| {
+            ui.add_space(40.0);
+            ui.label("No content loaded");
+        });
         return;
     }
 
-    // Advance timer
-    let dt = ctx.input(|i| i.unstable_dt);
-    auto.mo_yu_timer += dt;
+    // Advance timer when playing
+    if mo_yu.playing {
+        mo_yu.timer += dt;
+        let sentence = &mo_yu.sentences[mo_yu.sentence_idx];
+        let duration = ((sentence.len() as f32 / 8.0).max(1.5) / mo_yu.speed).min(10.0);
 
-    let sentence = &auto.mo_yu_sentences[auto.mo_yu_sentence_idx];
-    let duration = ((sentence.len() as f32 / 8.0).max(1.5) / auto.speed).min(10.0);
-
-    let progress_ratio = (auto.mo_yu_timer / duration).min(1.0);
-
-    if auto.mo_yu_timer >= duration {
-        auto.mo_yu_timer = 0.0;
-        auto.mo_yu_sentence_idx += 1;
-        if auto.mo_yu_sentence_idx >= auto.mo_yu_sentences.len() {
-            // Reached end of page; stop or wrap
-            auto.playing = false;
-            auto.mo_yu_sentence_idx = auto.mo_yu_sentences.len().saturating_sub(1);
+        if mo_yu.timer >= duration {
+            mo_yu.timer = 0.0;
+            mo_yu.sentence_idx += 1;
+            if mo_yu.sentence_idx >= mo_yu.sentences.len() {
+                // Silently advance to next page
+                mo_yu.page += 1;
+                mo_yu.sentences.clear();
+                mo_yu.sentence_idx = 0;
+            }
         }
-        ctx.request_repaint();
-        return;
     }
 
-    ctx.request_repaint();
+    let sentence = mo_yu.sentences.get(mo_yu.sentence_idx)
+        .map(|s| s.as_str())
+        .unwrap_or("");
 
-    // Build the overlay window
-    let window_w = 360.0;
+    let progress_ratio = if mo_yu.playing && !mo_yu.sentences.is_empty() {
+        let s = &mo_yu.sentences[mo_yu.sentence_idx];
+        let dur = ((s.len() as f32 / 8.0).max(1.5) / mo_yu.speed).min(10.0);
+        (mo_yu.timer / dur).min(1.0)
+    } else {
+        0.0
+    };
 
-    egui::Window::new("🎵 摸鱼")
-        .id(egui::Id::new("mo_yu_window"))
-        .anchor(egui::Align2::RIGHT_BOTTOM, [-10.0, -50.0])
-        .fixed_size(egui::vec2(window_w, 180.0))
-        .collapsible(false)
-        .resizable(false)
-        .title_bar(true)
-        .show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                // Progress bar
-                let pb = egui::ProgressBar::new(progress_ratio)
-                    .show_percentage()
-                    .desired_width(window_w - 20.0);
-                ui.add(pb);
-                ui.add_space(8.0);
+    ui.vertical_centered(|ui| {
+        // Progress bar
+        let pb = egui::ProgressBar::new(progress_ratio)
+            .show_percentage()
+            .desired_width(window_w - 20.0);
+        ui.add(pb);
+        ui.add_space(8.0);
 
-                // Current sentence — wrapped for fixed width
-                let label = egui::Label::new(
-                    egui::RichText::new(sentence)
-                        .size(18.0)
-                        .color(egui::Color32::from_rgb(50, 50, 50)),
-                )
-                .wrap()
-                .selectable(true);
-                ui.add_sized(egui::vec2(window_w - 20.0, 80.0), label);
+        // Current sentence — wrapped for fixed width
+        let label = egui::Label::new(
+            egui::RichText::new(sentence)
+                .size(18.0)
+                .color(egui::Color32::from_rgb(50, 50, 50)),
+        )
+        .wrap()
+        .selectable(true);
+        ui.add_sized(egui::vec2(window_w - 20.0, 80.0), label);
 
-                ui.add_space(4.0);
+        ui.add_space(4.0);
 
-                // Controls row
-                ui.horizontal(|ui| {
-                    if ui.button("⏮").clicked() {
-                        if auto.mo_yu_sentence_idx > 0 {
-                            auto.mo_yu_sentence_idx -= 1;
-                            auto.mo_yu_timer = 0.0;
-                        }
-                    }
-                    if ui.button("⏸").clicked() {
-                        auto.playing = false;
-                    }
-                    if ui.button("⏭").clicked() {
-                        auto.mo_yu_sentence_idx =
-                            (auto.mo_yu_sentence_idx + 1).min(auto.mo_yu_sentences.len() - 1);
-                        auto.mo_yu_timer = 0.0;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!(
-                            "{}/{}",
-                            auto.mo_yu_sentence_idx + 1,
-                            auto.mo_yu_sentences.len()
-                        ));
-                    });
-                });
+        // Controls row
+        ui.horizontal(|ui| {
+            if ui.button("⏮").clicked() {
+                if mo_yu.sentence_idx > 0 {
+                    mo_yu.sentence_idx -= 1;
+                    mo_yu.timer = 0.0;
+                }
+            }
+            let play_label = if mo_yu.playing { "⏸" } else { "▶" };
+            if ui.button(play_label).clicked() {
+                mo_yu.playing = !mo_yu.playing;
+            }
+            if ui.button("⏭").clicked() {
+                if !mo_yu.sentences.is_empty() {
+                    mo_yu.sentence_idx = (mo_yu.sentence_idx + 1).min(mo_yu.sentences.len() - 1);
+                    mo_yu.timer = 0.0;
+                }
+            }
+
+            ui.add_space(10.0);
+            ui.label("Speed:");
+            ui.add(egui::Slider::new(&mut mo_yu.speed, 0.5..=5.0).text("x"));
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !mo_yu.sentences.is_empty() {
+                    ui.label(format!("{}/{}", mo_yu.sentence_idx + 1, mo_yu.sentences.len()));
+                }
             });
         });
+    });
+
+    if mo_yu.playing {
+        ui.ctx().request_repaint();
+    }
 }
 
 fn rotated_uvs(rotation: ViewRotation) -> (egui::Pos2, egui::Pos2, egui::Pos2, egui::Pos2) {

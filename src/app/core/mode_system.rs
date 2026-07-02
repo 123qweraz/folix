@@ -158,12 +158,34 @@ pub struct AutoState {
     pub playing: bool,
     pub speed: f32,
     pub progress: f32,
-    /// 摸鱼模式 — sentence-by-sentence floating overlay
-    pub mo_yu: bool,
-    pub mo_yu_sentences: Vec<String>,
-    pub mo_yu_sentence_idx: usize,
-    pub mo_yu_timer: f32,
-    pub mo_yu_page: usize,
+}
+
+/// 摸鱼模式 — independent sentence-by-sentence floating window
+#[derive(Clone)]
+pub struct MoYuState {
+    pub visible: bool,
+    pub playing: bool,
+    pub speed: f32,
+    pub voice: bool,
+    pub sentences: Vec<String>,
+    pub sentence_idx: usize,
+    pub timer: f32,
+    pub page: usize,
+}
+
+impl MoYuState {
+    pub fn new() -> Self {
+        Self {
+            visible: false,
+            playing: false,
+            speed: 1.0,
+            voice: false,
+            sentences: vec![],
+            sentence_idx: 0,
+            timer: 0.0,
+            page: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -314,11 +336,6 @@ impl TabModes {
                 playing: false,
                 speed: 1.0,
                 progress: 0.0,
-                mo_yu: false,
-                mo_yu_sentences: vec![],
-                mo_yu_sentence_idx: 0,
-                mo_yu_timer: 0.0,
-                mo_yu_page: 0,
             },
             annotate: AnnotateState {
                 tool: AnnotationTool::Highlight,

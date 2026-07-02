@@ -26,6 +26,7 @@ pub enum ShortcutAction {
     ToggleUI,
     Copy,
     ToggleAutoPlay,
+    ToggleMoYu,
 }
 
 impl ShortcutAction {
@@ -52,6 +53,7 @@ impl ShortcutAction {
             ShortcutAction::ToggleUI => "Toggle UI",
             ShortcutAction::Copy => "Copy",
             ShortcutAction::ToggleAutoPlay => "Toggle Auto Play",
+            ShortcutAction::ToggleMoYu => "Toggle Mo Yu",
         }
     }
 }
@@ -133,6 +135,7 @@ pub fn default_shortcuts() -> ShortcutMap {
     m.insert(ShortcutAction::ToggleSidebar, KeyCombo { key: "F12".into(), ctrl: false, shift: false, alt: false });
     m.insert(ShortcutAction::ToggleUI, KeyCombo { key: "Tab".into(), ctrl: false, shift: false, alt: false });
     m.insert(ShortcutAction::Copy, KeyCombo { key: "C".into(), ctrl: true, shift: false, alt: false });
+    m.insert(ShortcutAction::ToggleMoYu, KeyCombo { key: "M".into(), ctrl: false, shift: false, alt: false });
     m
 }
 
@@ -158,6 +161,7 @@ pub const ALL_ACTIONS: &[ShortcutAction] = &[
     ShortcutAction::ToggleUI,
     ShortcutAction::Copy,
     ShortcutAction::ToggleAutoPlay,
+    ShortcutAction::ToggleMoYu,
 ];
 
 pub const AVAILABLE_KEYS: &[&str] = &[
