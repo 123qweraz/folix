@@ -288,6 +288,7 @@ pub struct TabModes {
     pub paginator: Option<Paginator>,
     pub reading: ReadingState,
     pub auto: AutoState,
+    pub mo_yu: MoYuState,
     pub annotate: AnnotateState,
     pub edit: EditState,
     pub active: ModeKind,
@@ -337,6 +338,7 @@ impl TabModes {
                 speed: 1.0,
                 progress: 0.0,
             },
+            mo_yu: MoYuState::new(),
             annotate: AnnotateState {
                 tool: AnnotationTool::Highlight,
                 annotations: vec![],

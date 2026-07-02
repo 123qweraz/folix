@@ -1,5 +1,5 @@
 use crate::app::engines::DocumentHandle;
-use super::mode_system::{TabModes, ViewMode, MoYuState};
+use super::mode_system::{TabModes, ViewMode};
 use super::feature_system::FeatureSystem;
 use super::shortcuts::{ShortcutMap, default_shortcuts};
 use super::pdf_toolbox::PdfToolboxState;
@@ -107,7 +107,6 @@ pub struct AppState {
     pub feature_system: FeatureSystem,
     pub ui_visible: bool,
     pub settings: AppSettings,
-    pub mo_yu: Arc<Mutex<MoYuState>>,
 }
 
 impl AppState {
@@ -123,7 +122,6 @@ impl AppState {
             feature_system: FeatureSystem::new(),
             ui_visible: false,
             settings: AppSettings::default(),
-            mo_yu: Arc::new(Mutex::new(MoYuState::new())),
         };
         state.add_new_tab();
         state

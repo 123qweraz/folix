@@ -500,18 +500,6 @@ impl eframe::App for FolixApp {
             }
         }
 
-        if self.shortcut(ctx, SA::ToggleMoYu) {
-            let mut mo_yu = self.state.mo_yu.lock();
-            mo_yu.visible = !mo_yu.visible;
-            // If becoming visible, set page to current doc page
-            if mo_yu.visible {
-                if let Some(tab) = self.state.current_tab() {
-                    mo_yu.page = tab.modes.page;
-                    mo_yu.sentences.clear();
-                }
-            }
-        }
-
         if self.shortcut(ctx, SA::HighlightSel) {
             if let Some(tab) = self.state.current_tab_mut() {
                 Self::apply_highlight_selection(tab);
@@ -1280,35 +1268,39 @@ impl FolixApp {
             }
         }
 
-        // Render 摸鱼模式 viewport (independent native window)
+        // Render 摸鱼模式 viewport from current tab (light reading only)
         {
-            let mo_yu = self.state.mo_yu.clone();
-            let doc = self.state.current_tab()
-                .and_then(|t| t.document.clone());
-            if mo_yu.lock().visible {
-                ctx.show_viewport_immediate(
-                    egui::ViewportId::from_hash_of("mo_yu_viewport"),
-                    egui::ViewportBuilder::default()
-                        .with_title("🎵 摸鱼")
-                        .with_inner_size(egui::vec2(400.0, 240.0))
-                        .with_resizable(false),
-                    |vp_ctx, class| {
-                        if class == egui::ViewportClass::Embedded {
-                            egui::Window::new("🎵 摸鱼")
-                                .id(egui::Id::new("mo_yu_window"))
-                                .default_size(egui::vec2(400.0, 240.0))
-                                .show(vp_ctx, |ui| {
-                                    let mut mo_yu = mo_yu.lock();
-                                    mode_ui::render_mo_yu_ui(ui, &mut mo_yu, &doc);
+            let idx = self.state.active_tab;
+            let is_light = self.state.tabs.get(idx)
+                .map(|t| t.modes.active == ModeKind::LightReading)
+                .unwrap_or(false);
+            if is_light {
+                let show = self.state.tabs[idx].modes.mo_yu.visible;
+                if show {
+                    let doc = self.state.tabs[idx].document.clone();
+                    let mo_yu = &mut self.state.tabs[idx].modes.mo_yu;
+                    ctx.show_viewport_immediate(
+                        egui::ViewportId::from_hash_of("mo_yu_viewport"),
+                        egui::ViewportBuilder::default()
+                            .with_title("🎵 摸鱼")
+                            .with_inner_size(egui::vec2(360.0, 200.0))
+                            .with_resizable(false),
+                        |vp_ctx, class| {
+                            if class == egui::ViewportClass::Embedded {
+                                egui::Window::new("🎵 摸鱼")
+                                    .id(egui::Id::new("mo_yu_window"))
+                                    .default_size(egui::vec2(360.0, 200.0))
+                                    .show(vp_ctx, |ui| {
+                                        mode_ui::render_mo_yu_ui(ui, mo_yu, &doc);
+                                    });
+                            } else {
+                                egui::CentralPanel::default().show(vp_ctx, |ui| {
+                                    mode_ui::render_mo_yu_ui(ui, mo_yu, &doc);
                                 });
-                        } else {
-                            egui::CentralPanel::default().show(vp_ctx, |ui| {
-                                let mut mo_yu = mo_yu.lock();
-                                mode_ui::render_mo_yu_ui(ui, &mut mo_yu, &doc);
-                            });
-                        }
-                    },
-                );
+                            }
+                        },
+                    );
+                }
             }
         }
     }
@@ -1322,13 +1314,6 @@ impl FolixApp {
         let show_nav = self.state.settings.show_toolbar_nav;
         let show_view = self.state.settings.show_toolbar_view;
         let show_page = self.state.settings.show_toolbar_page;
-
-        // Read mo-yu visibility before mutable tab borrow
-        let mo_yu_state = self.state.mo_yu.lock();
-        let mo_yu_visible = mo_yu_state.visible;
-        let mut mo_yu_clicked = false;
-        let mut mo_yu_page = 0;
-        drop(mo_yu_state);
 
         // ── Row 1: mode tabs + nav + view + page number ──
         egui::TopBottomPanel::bottom("toolbar_row1").show(ctx, |ui| {
@@ -1356,14 +1341,6 @@ impl FolixApp {
                     if ui.selectable_label(selected, mk.name(lng)).clicked() {
                         tab.modes.switch_to(mk);
                     }
-                }
-
-                // 摸鱼模式 toggle (always visible)
-                ui.separator();
-                let mo_yu_label = if mo_yu_visible { "🎵 摸鱼" } else { "摸鱼" };
-                if ui.selectable_label(mo_yu_visible, mo_yu_label).clicked() {
-                    mo_yu_clicked = true;
-                    mo_yu_page = tab.modes.page;
                 }
 
                 if doc_count > 0 {
@@ -1476,16 +1453,6 @@ impl FolixApp {
             });
         });
 
-        // Handle mo-yu toggle click (after tab borrow dropped)
-        if mo_yu_clicked {
-            let mut mo_yu_state = self.state.mo_yu.lock();
-            mo_yu_state.visible = !mo_yu_state.visible;
-            if mo_yu_state.visible {
-                mo_yu_state.page = mo_yu_page;
-                mo_yu_state.sentences.clear();
-            }
-        }
-
         // ── Row 2: Mode-specific controls ──
         let show_row2 = self.state.current_tab().map(|tab| {
             let doc_count = page_count_for_tab(tab);
@@ -1514,6 +1481,20 @@ impl FolixApp {
                             }
                             ui.label(crate::app::i18n::tr(lng, "Speed:"));
                             ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
+
+                            // 摸鱼模式 toggle (Light Reading only)
+                            ui.separator();
+                            let mo_yu_visible = tab.modes.mo_yu.visible;
+                            let mo_yu_label = if mo_yu_visible { "🎵 摸鱼" } else { "摸鱼" };
+                            if ui.selectable_label(mo_yu_visible, mo_yu_label).clicked() {
+                                tab.modes.mo_yu.visible = !tab.modes.mo_yu.visible;
+                                if tab.modes.mo_yu.visible {
+                                    tab.modes.mo_yu.page = tab.modes.page;
+                                    tab.modes.mo_yu.sentences.clear();
+                                    tab.modes.mo_yu.playing = true;
+                                    tab.modes.mo_yu.timer = 0.0;
+                                }
+                            }
                         }
                         ModeKind::DeepReading => {
                             let tool = &tab.modes.annotate.tool;
