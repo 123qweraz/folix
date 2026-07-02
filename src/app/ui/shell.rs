@@ -1534,7 +1534,7 @@ impl FolixApp {
     fn handle_open_dialog(&mut self, _ctx: &egui::Context) {
         if self.open_dialog {
             let path = rfd::FileDialog::new()
-                .add_filter("Documents", &["pdf", "epub", "txt"])
+                .add_filter("Documents", &["pdf", "epub", "txt", "md", "docx", "png", "jpg", "jpeg", "bmp", "gif", "webp", "tiff", "tif"])
                 .pick_file();
             if let Some(path) = path {
                 self.open_file(path.to_string_lossy().to_string());

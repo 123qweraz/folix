@@ -1,5 +1,6 @@
 pub mod pdf_engine;
 pub mod reflow_engine;
+pub mod image_engine;
 pub mod edit_operations;
 pub mod pdf_operations;
 

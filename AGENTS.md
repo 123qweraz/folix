@@ -1,4 +1,4 @@
-# Folix — PDF/EPUB Reader
+# Folix — PDF/EPUB/MD/DOCX/Image Reader
 
 **Status**: Working prototype. Runnable binary with egui window, mode switching, and document loading.
 
@@ -7,14 +7,16 @@
 - **GUI**: egui + eframe (0.31), Glow renderer
 - **PDF**: Text + image rendering via `mupdf` (0.8, base14-fonts)
 - **EPUB**: Parsing via `rbook` (0.7)
-- **TXT**: std `read_to_string` + `encoding_rs` for GBK/Big5/Shift_JIS
+- **TXT/Markdown**: std `read_to_string` + `encoding_rs` for GBK/Big5/Shift_JIS; markdown formatting stripped via `strip_markdown()`
+- **DOCX**: ZIP + `quick-xml` (0.37) parsing of OOXML `word/document.xml`; heading styles → chapters
+- **Images**: `image` crate (0.25) with `ImageDocument` implementing `FixedLayout` (PNG, JPEG, GIF, BMP, WebP, TIFF)
 - **Storage**: SQLite via `rusqlite` (0.33, bundled)
-- **Other**: `serde`, `uuid`, `chrono`, `image`, `rfd` (file dialogs), `parking_lot`
+- **Other**: `serde`, `uuid`, `chrono`, `image`, `rfd` (file dialogs), `parking_lot`, `zip`, `quick-xml`
 
 ## Quick start
 ```bash
 cargo run            # launch the GUI app
-cargo test           # run all tests (pdf, txt, epub)
+cargo test           # run all tests (pdf, txt, epub, markdown, docx, image)
 cargo build          # compile (no warnings)
 ```
 
@@ -23,8 +25,8 @@ cargo build          # compile (no warnings)
 ### Document trait hierarchy
 ```
 Document (title, toc, metadata)
-  ├── FixedLayout   — page-based: PDF (MuPDF)
-  └── ReflowLayout  — chapter+block-based: EPUB, TXT
+  ├── FixedLayout   — page-based: PDF (MuPDF), images (PNG/JPG/GIF/BMP/WebP/TIFF via `image` crate)
+  └── ReflowLayout  — chapter+block-based: EPUB, TXT, Markdown, DOCX
 
 DocumentHandle enum { Fixed(Box<dyn FixedLayout>), Reflow(Box<dyn ReflowLayout>) }
     → wrapped in Arc<Mutex<DocumentHandle>> for UI
@@ -74,7 +76,7 @@ Input → Mode System → Mode Handler → per-mode UI + scoped features
 ## Directory structure
 - `src/app/config.rs` — ConfigData load/save (serde_json)
 - `src/app/core/` — AppState, TabModes, DocumentManager, FeatureSystem, shortcuts
-- `src/app/engines/` — Document/FixedLayout/ReflowLayout traits + PdfDocument / ReflowDocument / edit_operations
+- `src/app/engines/` — Document/FixedLayout/ReflowLayout traits + PdfDocument / ImageDocument / ReflowDocument / edit_operations
 - `src/app/ui/` — FolixApp (eframe shell), mode_ui (rendering + interaction), feature_ui
 - `src/app/paginator/` — Paginator (character-based page splitting for reflow content)
 - `src/app/storage/` — Database (SQLite CRUD for books/progress/annotations/bookmarks)
@@ -98,7 +100,7 @@ Input → Mode System → Mode Handler → per-mode UI + scoped features
 - 3 modes: LightReading (basic + auto-play), DeepReading (basic + annotation), Edit (basic + page ops)
 - Two-row bottom toolbar: Row 1 = shared controls, Row 2 = mode-specific
 - Settings tab (⚙) with toolbar icon size, visibility, background color, keyboard shortcut editor
-- File open dialog (rfd) for PDF, EPUB, TXT
+- File open dialog (rfd) for PDF, EPUB, TXT, MD, DOCX, PNG, JPG, BMP, GIF, WebP, TIFF
 - All modes: page nav, zoom slider, Paged/Scroll layout toggle
 - LightReading: play/pause, speed control, auto-play mode selector
 - DeepReading: tool selector (Highlight/Pen/Note/Eraser/Select), undo/clear, text selection + copy
@@ -106,6 +108,9 @@ Input → Mode System → Mode Handler → per-mode UI + scoped features
 - PDF rendering via MuPDF with GPU texture caching
 - EPUB text extraction (HTML tag stripping, encoding detection, image embedding)
 - Multi-encoding TXT (UTF-8, GBK, Big5, Shift_JIS)
+- Markdown (.md) with formatting stripped, headings as chapter boundaries
+- DOCX (.docx) via ZIP + quick-xml OOXML parsing; Heading styles → chapters
+- Image rendering (PNG, JPEG, GIF, BMP, WebP, TIFF) via `image` crate; single-page FixedLayout
 - SQLite schema + CRUD for books, progress, annotations, bookmarks, feature_usage, search_index
 - Paginator for reflowable content (character-based page splitting)
 - LayoutStream continuous scroll: pages rendered as a single continuous stream, auto-appended on scroll-to-bottom

@@ -1,5 +1,6 @@
 use super::{Document, ReflowLayout, TocEntry, StoredImage, ContentBlock, Chapter};
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 
 enum RawBlock {
     Text(String),
@@ -21,8 +22,10 @@ impl ReflowDocument {
         let lower = path.to_lowercase();
         if lower.ends_with(".epub") {
             Self::open_epub(path)
-        } else if lower.ends_with(".txt") {
-            Self::open_txt(path)
+        } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+            Self::open_text_file(path)
+        } else if lower.ends_with(".docx") {
+            Self::open_docx(path)
         } else {
             None
         }
@@ -86,7 +89,7 @@ impl ReflowDocument {
         })
     }
 
-    fn open_txt(path: &str) -> Option<Self> {
+    fn open_text_file(path: &str) -> Option<Self> {
         let data = std::fs::read(path).ok()?;
         let content = Self::decode_text(&data);
 
@@ -100,7 +103,10 @@ impl ReflowDocument {
             return None;
         }
 
-        // Split TXT into chapters by heading patterns or blank lines
+        let is_md = path.to_lowercase().ends_with(".md");
+        let content = if is_md { Self::strip_markdown(&content) } else { content };
+
+        // Split text into chapters by heading patterns or blank lines
         let (chapters, toc) = Self::split_txt_chapters(&content);
 
         // Pre-populate cache with chapter blocks
@@ -118,6 +124,240 @@ impl ReflowDocument {
             chapter_cache: std::sync::Mutex::new(cache),
             image_cache: std::sync::Mutex::new(HashMap::new()),
         })
+    }
+
+    fn strip_markdown(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let chars: Vec<char> = text.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+
+        while i < len {
+            // Code fence ``` … ```
+            if i + 2 < len && chars[i] == '`' && chars[i+1] == '`' && chars[i+2] == '`' {
+                i += 3;
+                while i < len && !(i + 2 < len && chars[i] == '`' && chars[i+1] == '`' && chars[i+2] == '`') {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                i += 3; // skip closing ```
+                continue;
+            }
+            // Inline code `…`
+            if chars[i] == '`' {
+                i += 1;
+                while i < len && chars[i] != '`' {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i < len { i += 1; } // skip closing `
+                continue;
+            }
+            // Image ![alt](url) — drop entirely
+            if i + 1 < len && chars[i] == '!' && chars[i+1] == '[' {
+                i += 2;
+                while i < len && chars[i] != ']' { i += 1; }
+                if i < len { i += 1; } // skip ]
+                if i < len && chars[i] == '(' {
+                    i += 1;
+                    while i < len && chars[i] != ')' { i += 1; }
+                    if i < len { i += 1; } // skip )
+                }
+                continue;
+            }
+            // Link [text](url) — keep text only
+            if chars[i] == '[' {
+                let start = i + 1;
+                let mut depth = 1;
+                let mut j = start;
+                while j < len && depth > 0 {
+                    if chars[j] == '[' { depth += 1; }
+                    else if chars[j] == ']' { depth -= 1; }
+                    j += 1;
+                }
+                let text_end = if depth == 0 { j - 1 } else { i + 1 };
+                // check for following (url)
+                if text_end + 1 < len && chars[text_end + 1] == '(' {
+                    // output link text
+                    for k in start..text_end {
+                        out.push(chars[k]);
+                    }
+                    i = text_end + 1;
+                    while i < len && chars[i] != ')' { i += 1; }
+                    if i < len { i += 1; }
+                } else {
+                    // not a link, just output [
+                    out.push('[');
+                    i = start;
+                }
+                continue;
+            }
+            // Strikethrough ~~text~~ or bold **text** or italic *text*
+            // Handle ~~ before ** before * to avoid partial matches
+            if i + 1 < len && chars[i] == '~' && chars[i+1] == '~' {
+                i += 2;
+                while i + 1 < len && !(chars[i] == '~' && chars[i+1] == '~') {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i + 1 < len { i += 2; } // skip ~~
+                continue;
+            }
+            if i + 1 < len && chars[i] == '*' && chars[i+1] == '*' {
+                i += 2;
+                while i + 1 < len && !(chars[i] == '*' && chars[i+1] == '*') {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i + 1 < len { i += 2; } // skip **
+                continue;
+            }
+            if chars[i] == '*' {
+                i += 1;
+                while i < len && chars[i] != '*' {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i < len { i += 1; } // skip *
+                continue;
+            }
+            // Blockquote >
+            if chars[i] == '>' && (i == 0 || chars[i-1] == '\n') {
+                i += 1;
+                if i < len && chars[i] == ' ' { i += 1; }
+                continue;
+            }
+            // Heading markers # — strip them (they become chapter boundaries later)
+            if chars[i] == '#' && (i == 0 || chars[i-1] == '\n') {
+                i += 1;
+                while i < len && (chars[i] == '#' || chars[i] == ' ') { i += 1; }
+                continue;
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        out
+    }
+
+    fn open_docx(path: &str) -> Option<Self> {
+        let data = std::fs::read(path).ok()?;
+        let cursor = std::io::Cursor::new(&data);
+        let mut archive = zip::ZipArchive::new(cursor).ok()?;
+
+        let mut document_xml = archive.by_name("word/document.xml").ok()?;
+        let mut xml_bytes = Vec::new();
+        document_xml.read_to_end(&mut xml_bytes).ok()?;
+
+        let doc_title = std::path::Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Untitled")
+            .to_string();
+
+        let (chapters, toc) = Self::parse_docx_xml(&xml_bytes);
+
+        if chapters.is_empty() {
+            return None;
+        }
+
+        let mut cache = HashMap::new();
+        for (i, (_, text)) in chapters.iter().enumerate() {
+            cache.insert(i, vec![ContentBlock::Text(text.clone())]);
+        }
+
+        Some(Self {
+            path: path.to_string(),
+            doc_title,
+            toc,
+            epub: None,
+            spine_items: vec![],
+            chapter_cache: std::sync::Mutex::new(cache),
+            image_cache: std::sync::Mutex::new(HashMap::new()),
+        })
+    }
+
+    fn parse_docx_xml(xml: &[u8]) -> (Vec<(String, String)>, Vec<TocEntry>) {
+        use quick_xml::events::Event;
+        use quick_xml::Reader;
+
+        let mut reader = Reader::from_reader(xml);
+        reader.config_mut().trim_text(true);
+
+        let mut chapters: Vec<(String, String)> = Vec::new();
+        let mut current_body = String::new();
+        let mut is_heading = false;
+        let mut heading_text = String::new();
+        let mut buf = Vec::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if tag.ends_with(":pStyle") || tag == "w:pStyle" {
+                        if let Ok(Some(val)) = e.try_get_attribute(b"w:val") {
+                            let v = String::from_utf8_lossy(&val.value).to_string();
+                            is_heading = v.starts_with("Heading") || v == "heading" || v.starts_with("heading");
+                        }
+                    }
+                }
+                Ok(Event::Text(ref e)) => {
+                    let text = e.unescape().unwrap_or_default().to_string();
+                    current_body.push_str(&text);
+                }
+                Ok(Event::End(ref e)) => {
+                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if tag.ends_with(":p") || tag == "w:p" {
+                        let trimmed = current_body.trim().to_string();
+                        if !trimmed.is_empty() {
+                            if is_heading {
+                                heading_text = trimmed;
+                            } else {
+                                if !heading_text.is_empty() {
+                                    chapters.push((heading_text.clone(), String::new()));
+                                    heading_text.clear();
+                                }
+                                chapters.push((String::new(), trimmed));
+                            }
+                        }
+                        current_body.clear();
+                        is_heading = false;
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        // Merge heading-only chapters with following body chapter
+        let mut merged: Vec<(String, String)> = Vec::new();
+        for (label, body) in &chapters {
+            if !label.is_empty() {
+                if body.is_empty() {
+                    merged.push((label.clone(), String::new()));
+                } else {
+                    merged.push((label.clone(), body.clone()));
+                }
+            } else {
+                if let Some(last) = merged.last_mut() {
+                    if !last.0.is_empty() && last.1.is_empty() {
+                        last.1 = format!("{}\n{}", last.0, body);
+                        continue;
+                    }
+                }
+                merged.push((String::new(), body.clone()));
+            }
+        }
+        merged.retain(|(_, b)| !b.is_empty());
+
+        let toc: Vec<TocEntry> = merged.iter().enumerate()
+            .filter(|(_, (label, _))| !label.is_empty())
+            .map(|(i, (label, _))| TocEntry { label: label.clone(), page_index: i })
+            .collect();
+
+        (merged, toc)
     }
 
     fn split_txt_chapters(text: &str) -> (Vec<(String, String)>, Vec<TocEntry>) {
