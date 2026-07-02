@@ -2,6 +2,7 @@ use crate::app::engines::DocumentHandle;
 use super::mode_system::{TabModes, ViewMode};
 use super::feature_system::FeatureSystem;
 use super::shortcuts::{ShortcutMap, default_shortcuts};
+use super::pdf_toolbox::PdfToolboxState;
 use std::sync::Arc;
 use parking_lot::Mutex;
 
@@ -10,6 +11,7 @@ pub enum TabContent {
     Document,
     NewTab,
     Settings,
+    PdfToolbox(PdfToolboxState),
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -59,8 +61,9 @@ pub struct OpenTab {
 
 impl OpenTab {
     pub fn title(&self) -> String {
-        match self.content {
+        match &self.content {
             TabContent::Settings => "⚙ Settings".to_string(),
+            TabContent::PdfToolbox(_) => "📄 PDF Tools".to_string(),
             _ => match &self.path {
                 Some(p) => std::path::Path::new(p)
                     .file_stem()
@@ -82,6 +85,17 @@ impl OpenTab {
 
     pub fn has_document(&self) -> bool {
         matches!(self.content, TabContent::Document) && self.document.is_some()
+    }
+
+    pub fn is_pdf_toolbox(&self) -> bool {
+        matches!(self.content, TabContent::PdfToolbox(_))
+    }
+
+    pub fn pdf_toolbox_mut(&mut self) -> Option<&mut PdfToolboxState> {
+        match &mut self.content {
+            TabContent::PdfToolbox(state) => Some(state),
+            _ => None,
+        }
     }
 }
 
@@ -149,6 +163,25 @@ impl AppState {
         let idx = self.tabs.len();
         self.tabs.push(OpenTab {
             content: TabContent::Settings,
+            document: None,
+            path: None,
+            modes: TabModes::new(),
+            book_id: None,
+        });
+        self.active_tab = idx;
+        idx
+    }
+
+    pub fn add_pdf_toolbox_tab(&mut self) -> usize {
+        for (i, tab) in self.tabs.iter().enumerate() {
+            if tab.is_pdf_toolbox() {
+                self.active_tab = i;
+                return i;
+            }
+        }
+        let idx = self.tabs.len();
+        self.tabs.push(OpenTab {
+            content: TabContent::PdfToolbox(PdfToolboxState::new()),
             document: None,
             path: None,
             modes: TabModes::new(),

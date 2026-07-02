@@ -6,7 +6,7 @@ use crate::app::engines::edit_operations;
 use crate::app::paginator::Paginator;
 use crate::app::platform::font_loader::FontLoader;
 use crate::app::storage::sqlite::Database;
-use super::mode_ui;
+use super::{mode_ui, pdf_toolbox};
 use std::collections::HashMap;
 
 pub struct FolixApp {
@@ -664,6 +664,10 @@ impl FolixApp {
             if ui.add(egui::Button::new("📂  Open File").min_size(egui::vec2(200.0, 36.0))).clicked() {
                 self.open_dialog = true;
             }
+            ui.add_space(8.0);
+            if ui.add(egui::Button::new("📄  PDF Tools").min_size(egui::vec2(200.0, 36.0))).clicked() {
+                self.state.add_pdf_toolbox_tab();
+            }
             ui.add_space(24.0);
 
             if !self.recent_files.is_empty() {
@@ -835,6 +839,15 @@ impl FolixApp {
         // Settings tab
         if self.state.tabs[idx].is_settings_tab() {
             self.render_settings_tab(ui);
+            return;
+        }
+
+        // PDF Toolbox tab
+        if self.state.tabs[idx].is_pdf_toolbox() {
+            let tab = &mut self.state.tabs[idx];
+            if let Some(state) = tab.pdf_toolbox_mut() {
+                pdf_toolbox::render_pdf_toolbox(ui, state);
+            }
             return;
         }
 

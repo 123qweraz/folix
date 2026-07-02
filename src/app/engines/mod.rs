@@ -1,6 +1,7 @@
 pub mod pdf_engine;
 pub mod reflow_engine;
 pub mod edit_operations;
+pub mod pdf_operations;
 
 use egui::{TextureId, TextureHandle};
 
