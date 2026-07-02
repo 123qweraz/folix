@@ -1,6 +1,5 @@
 use mupdf::{
-    Document as MuDocument,
-    pdf::{PdfDocument, PageSelection, InsertPosition, InsertPdfOptions, PageImageSource, InsertImageOptions},
+    pdf::{PdfDocument, PageRange, PageSelection, InsertPosition, InsertPdfOptions, PageImageSource, InsertImageOptions},
     Image, Colorspace, Matrix, ImageFormat, Size, Rect,
 };
 
@@ -10,7 +9,7 @@ fn open_pdf(path: &str) -> Result<PdfDocument, String> {
 
 /// Get the number of pages in a PDF.
 pub fn page_count(path: &str) -> Result<usize, String> {
-    let doc = MuDocument::open(path).map_err(|e| format!("open {path}: {e}"))?;
+    let doc = PdfDocument::open(path).map_err(|e| format!("open {path}: {e}"))?;
     let n = doc.page_count().map_err(|e| format!("page count {path}: {e}"))?;
     Ok(n as usize)
 }
@@ -40,35 +39,54 @@ pub fn merge_pdfs(inputs: &[String], output: &str) -> Result<(), String> {
 }
 
 /// Split PDF by page range (start..end, 1-indexed).
+/// Uses PdfDocument + insert_pdf instead of convert_to_pdf to avoid mupdf-rs 0.8 memory corruption.
 pub fn split_pdf_by_range(input: &str, output: &str, start: usize, end: usize) -> Result<(), String> {
-    let total = page_count(input)?;
+    let src = open_pdf(input)?;
+    let total = src.page_count().map_err(|e| format!("page count: {e}"))? as usize;
     let s = (start.max(1) - 1).min(total.saturating_sub(1));
     let e = end.max(start).min(total);
     if s >= e {
         return Err(format!("Invalid page range {start}..{end} (total pages: {total})"));
     }
-    let doc = MuDocument::open(input).map_err(|e| format!("open {input}: {e}"))?;
-    let out = doc.convert_to_pdf(s as i32, e as i32, 0)
-        .map_err(|e| format!("convert: {e}"))?;
+    let mut out = PdfDocument::new();
+    let opts = InsertPdfOptions {
+        source_pages: PageSelection::Range(PageRange::new(s, e)),
+        target: InsertPosition::Append,
+        rotate: None,
+        copy_links: true,
+        copy_annotations: true,
+        copy_widgets: true,
+    };
+    out.insert_pdf(&src, opts)
+        .map_err(|e| format!("insert pages {start}..{end}: {e}"))?;
     out.save(output).map_err(|e| format!("save: {e}"))?;
     Ok(())
 }
 
 /// Split PDF into chunks of N pages each.
 pub fn split_pdf_every_n(input: &str, output_dir: &str, n: usize) -> Result<Vec<String>, String> {
-    let total = page_count(input)?;
+    let src = open_pdf(input)?;
+    let total = src.page_count().map_err(|e| format!("page count: {e}"))? as usize;
     let n = n.max(1);
     let stem = std::path::Path::new(input)
         .file_stem().and_then(|s| s.to_str()).unwrap_or("split");
-    let doc = MuDocument::open(input).map_err(|e| format!("open {input}: {e}"))?;
     let mut outputs = Vec::new();
 
     for chunk in (0..total).step_by(n) {
         let start = chunk;
         let end = (chunk + n).min(total);
         let out_path = format!("{output_dir}/{stem}_p{}-p{}.pdf", start + 1, end);
-        let out = doc.convert_to_pdf(start as i32, end as i32, 0)
-            .map_err(|e| format!("convert pages {}-{}: {e}", start + 1, end))?;
+        let mut out = PdfDocument::new();
+        let opts = InsertPdfOptions {
+            source_pages: PageSelection::Range(PageRange::new(start, end)),
+            target: InsertPosition::Append,
+            rotate: None,
+            copy_links: true,
+            copy_annotations: true,
+            copy_widgets: true,
+        };
+        out.insert_pdf(&src, opts)
+            .map_err(|e| format!("insert pages {}-{}: {e}", start + 1, end))?;
         out.save(&out_path).map_err(|e| format!("save {out_path}: {e}"))?;
         outputs.push(out_path);
     }
@@ -77,11 +95,12 @@ pub fn split_pdf_every_n(input: &str, output_dir: &str, n: usize) -> Result<Vec<
 
 /// Split PDF by TOC chapters.
 pub fn split_pdf_by_toc(input: &str, output_dir: &str) -> Result<Vec<String>, String> {
-    let total = page_count(input)?;
+    let src = open_pdf(input)?;
+    let total = src.page_count().map_err(|e| format!("page count: {e}"))? as usize;
     let stem = std::path::Path::new(input)
         .file_stem().and_then(|s| s.to_str()).unwrap_or("split");
-    let doc = MuDocument::open(input).map_err(|e| format!("open {input}: {e}"))?;
-    let outlines = doc.outlines().map_err(|e| format!("outlines: {e}"))?;
+    // Read outlines
+    let outlines = src.outlines().map_err(|e| format!("outlines: {e}"))?;
     let mut outputs = Vec::new();
 
     if outlines.is_empty() {
@@ -103,8 +122,17 @@ pub fn split_pdf_by_toc(input: &str, output_dir: &str) -> Result<Vec<String>, St
             .collect();
         let safe_title = if safe_title.is_empty() { format!("chapter_{}", i + 1) } else { safe_title };
         let out_path = format!("{output_dir}/{stem}_{safe_title}.pdf");
-        let chapter_doc = doc.convert_to_pdf(*start_page as i32, end_page as i32, 0)
-            .map_err(|e| format!("convert chapter {title}: {e}"))?;
+        let mut chapter_doc = PdfDocument::new();
+        let opts = InsertPdfOptions {
+            source_pages: PageSelection::Range(PageRange::new(*start_page, end_page)),
+            target: InsertPosition::Append,
+            rotate: None,
+            copy_links: true,
+            copy_annotations: true,
+            copy_widgets: true,
+        };
+        chapter_doc.insert_pdf(&src, opts)
+            .map_err(|e| format!("insert chapter {title}: {e}"))?;
         chapter_doc.save(&out_path).map_err(|e| format!("save {out_path}: {e}"))?;
         outputs.push(out_path);
     }
@@ -121,7 +149,7 @@ fn collect_outlines(outlines: &[mupdf::Outline], result: &mut Vec<(String, usize
 
 /// Load TOC chapters from a PDF (returns flat list of title + page).
 pub fn load_toc_chapters(path: &str) -> Result<Vec<(String, usize)>, String> {
-    let doc = MuDocument::open(path).map_err(|e| format!("open {path}: {e}"))?;
+    let doc = PdfDocument::open(path).map_err(|e| format!("open {path}: {e}"))?;
     let outlines = doc.outlines().map_err(|e| format!("outlines: {e}"))?;
     let mut result = Vec::new();
     collect_outlines(&outlines, &mut result);
@@ -132,7 +160,7 @@ pub fn load_toc_chapters(path: &str) -> Result<Vec<(String, usize)>, String> {
 
 /// Extract PDF pages as PNG images.
 pub fn extract_pages_as_images(input: &str, output_dir: &str, pages: &[usize]) -> Result<Vec<String>, String> {
-    let doc = MuDocument::open(input).map_err(|e| format!("open {input}: {e}"))?;
+    let doc = PdfDocument::open(input).map_err(|e| format!("open {input}: {e}"))?;
     let stem = std::path::Path::new(input)
         .file_stem().and_then(|s| s.to_str()).unwrap_or("page");
     let cs = Colorspace::device_rgb();
@@ -153,7 +181,7 @@ pub fn extract_pages_as_images(input: &str, output_dir: &str, pages: &[usize]) -
 
 /// Extract entire PDF text to a .txt file.
 pub fn extract_pdf_text(input: &str, output: &str) -> Result<(), String> {
-    let doc = MuDocument::open(input).map_err(|e| format!("open {input}: {e}"))?;
+    let doc = PdfDocument::open(input).map_err(|e| format!("open {input}: {e}"))?;
     let total = doc.page_count().map_err(|e| format!("page count: {e}"))? as usize;
     let mut text = String::new();
 

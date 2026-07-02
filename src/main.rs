@@ -5,10 +5,16 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() -> eframe::Result<()> {
     env_logger::init();
+
+    // Load language before creating the window
+    let lang = folix::app::config::ConfigData::load()
+        .map(|c| c.settings.language)
+        .unwrap_or_else(|| "zh-CN".into());
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
-            .with_title("Folix"),
+            .with_title(folix::app::i18n::tr(&lang, "Folix")),
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };

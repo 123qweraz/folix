@@ -62,6 +62,22 @@ impl Database {
                 book_id TEXT NOT NULL,
                 page INTEGER NOT NULL,
                 content TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS vocabulary (
+                id TEXT PRIMARY KEY,
+                book_id TEXT NOT NULL,
+                word TEXT NOT NULL,
+                context_sentence TEXT,
+                definition TEXT,
+                page INTEGER NOT NULL DEFAULT 0,
+                added_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sentences (
+                id TEXT PRIMARY KEY,
+                book_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                page INTEGER NOT NULL DEFAULT 0,
+                added_at TEXT NOT NULL
             );"
         )?;
         Ok(())
@@ -163,6 +179,105 @@ impl Database {
             "DELETE FROM annotations WHERE book_id = ?1",
             params![book_id],
         )?;
+        Ok(())
+    }
+
+    // ── Vocabulary CRUD ──
+
+    pub fn add_vocabulary(&self, book_id: &str, word: &str, context_sentence: Option<&str>, definition: Option<&str>, page: usize) -> Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO vocabulary (id, book_id, word, context_sentence, definition, page, added_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, book_id, word, context_sentence, definition, page as i64, now],
+        )?;
+        Ok(id)
+    }
+
+    pub fn list_vocabulary(&self, book_id: &str) -> Result<Vec<(String, String, Option<String>, Option<String>, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, word, context_sentence, definition, page FROM vocabulary WHERE book_id = ?1 ORDER BY added_at DESC"
+        )?;
+        let rows = stmt.query_map(params![book_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i64>(4)? as usize,
+            ))
+        })?;
+        rows.collect()
+    }
+
+    pub fn delete_vocabulary(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM vocabulary WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn delete_book_vocabulary(&self, book_id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM vocabulary WHERE book_id = ?1", params![book_id])?;
+        Ok(())
+    }
+
+    // ── Sentences CRUD ──
+
+    pub fn add_sentence(&self, book_id: &str, text: &str, page: usize) -> Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO sentences (id, book_id, text, page, added_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, book_id, text, page as i64, now],
+        )?;
+        Ok(id)
+    }
+
+    pub fn list_sentences(&self, book_id: &str) -> Result<Vec<(String, String, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text, page FROM sentences WHERE book_id = ?1 ORDER BY added_at DESC"
+        )?;
+        let rows = stmt.query_map(params![book_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? as usize,
+            ))
+        })?;
+        rows.collect()
+    }
+
+    pub fn delete_sentence(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM sentences WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn delete_book_sentences(&self, book_id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM sentences WHERE book_id = ?1", params![book_id])?;
+        Ok(())
+    }
+
+    // ── Bookmarks CRUD (for persistence) ──
+    pub fn list_bookmarks(&self, book_id: &str) -> Result<Vec<(String, usize, Option<String>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, page, label FROM bookmarks WHERE book_id = ?1 ORDER BY page ASC"
+        )?;
+        let rows = stmt.query_map(params![book_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)? as usize,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        rows.collect()
+    }
+
+    pub fn delete_bookmark(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn delete_book_bookmarks(&self, book_id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM bookmarks WHERE book_id = ?1", params![book_id])?;
         Ok(())
     }
 }

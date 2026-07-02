@@ -1,5 +1,5 @@
 use crate::app::engines::{DocumentHandle, ContentBlock, TextWordPosition};
-use crate::app::core::mode_system::{ReadingState, ReadingLayout, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool};
+use crate::app::core::mode_system::{ReadingState, ReadingLayout, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool, Vocabulary, SidebarSection};
 use crate::app::paginator::Paginator;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -595,10 +595,11 @@ fn render_image_page(
                         doc_id: String::new(),
                         kind: AnnotationTool::Pen,
                         page: page_idx,
-                        rect: [0.0, 0.0, 0.0, 0.0],
+                        rect: [0.0; 4],
                         note: Some(data),
                         color: ann.current_color,
                     });
+                    ann.dirty = true;
                     ann.stroke_points.clear();
                 }
             }
@@ -672,6 +673,7 @@ fn render_image_page(
                 });
                 if let Some(idx) = hit {
                     ann.annotations.remove(idx);
+                    ann.dirty = true;
                 }
             }
         }
@@ -844,6 +846,7 @@ fn render_image_page(
                             } else {
                                 Some(ann.note_text_buffer.clone())
                             };
+                            ann.dirty = true;
                         }
                         ann.editing_note_id = None;
                         ann.note_text_buffer.clear();
@@ -951,14 +954,22 @@ fn render_image_page(
     response.context_menu(|ui| {
         if !selection.selected_word_indices.is_empty() && selection.page == page_idx {
             if let Some(words) = all_words.get(&page_idx) {
+                let selected_text: String = selection.selected_word_indices
+                    .iter()
+                    .filter_map(|&i| words.get(i))
+                    .map(|w| w.text.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(" ");
                 if ui.button("📋 Copy").clicked() {
-                    let selected_text: String = selection.selected_word_indices
-                        .iter()
-                        .filter_map(|&i| words.get(i))
-                        .map(|w| w.text.as_str())
-                        .collect::<Vec<&str>>()
-                        .join(" ");
-                    ui.ctx().copy_text(selected_text);
+                    ui.ctx().copy_text(selected_text.clone());
+                    ui.close_menu();
+                }
+                if ui.button("📝 Add to Vocabulary").clicked() {
+                    selection.pending_vocab = Some(selected_text.clone());
+                    ui.close_menu();
+                }
+                if ui.button("💬 Save Sentence").clicked() {
+                    selection.pending_sentence = Some(selected_text);
                     ui.close_menu();
                 }
             }
@@ -995,18 +1006,33 @@ pub fn render_sidebar(
     page: &mut usize,
     paginator: &mut Option<Paginator>,
     rs: &mut ReadingState,
+    lang: &str,
 ) {
-    ui.heading("Sidebar");
+    // Toggle buttons row
+    ui.horizontal(|ui| {
+        let sections = [
+            (SidebarSection::TOC, "📖"),
+            (SidebarSection::Search, "🔍"),
+            (SidebarSection::Bookmarks, "🔖"),
+            (SidebarSection::Vocab, "📝"),
+            (SidebarSection::Sentences, "💬"),
+        ];
+        for &(section, icon) in &sections {
+            let is_active = rs.sidebar_section == section;
+            if ui.selectable_label(is_active, icon).clicked() {
+                rs.sidebar_section = section;
+            }
+        }
+    });
     ui.separator();
 
     let _total_pages = document.lock().toc_entries().len();
 
-    egui::CollapsingHeader::new("📖 Table of Contents")
-        .default_open(true)
-        .show(ui, |ui| {
+    match rs.sidebar_section {
+        SidebarSection::TOC => {
             let toc = document.lock().toc_entries();
             if toc.is_empty() {
-                ui.label("No table of contents");
+                ui.label(crate::app::i18n::tr(lang, "No table of contents"));
             } else {
                 egui::ScrollArea::vertical()
                     .max_height(f32::INFINITY)
@@ -1029,16 +1055,11 @@ pub fn render_sidebar(
                         }
                     });
             }
-        });
-
-    ui.separator();
-
-    egui::CollapsingHeader::new("🔍 Search")
-        .default_open(true)
-        .show(ui, |ui| {
+        }
+        SidebarSection::Search => {
             let prev_query = rs.search.query.clone();
             ui.add(egui::TextEdit::singleline(&mut rs.search.query)
-                .hint_text("Search text...")
+                .hint_text(crate::app::i18n::tr(lang, "Search text..."))
                 .desired_width(f32::INFINITY));
 
             if rs.search.query != prev_query {
@@ -1076,7 +1097,7 @@ pub fn render_sidebar(
                 if total_matches > 0 {
                     ui.label(format!("{}/{}", current + 1, total_matches));
                 } else if !rs.search.query.is_empty() {
-                    ui.label("0 matches");
+                    ui.label(crate::app::i18n::tr(lang, "0 matches"));
                 }
                 let enabled = total_matches > 0;
                 if ui.add_enabled(enabled, egui::Button::new("▲")).clicked() {
@@ -1116,13 +1137,8 @@ pub fn render_sidebar(
                     }
                 }
             });
-        });
-
-    ui.separator();
-
-    egui::CollapsingHeader::new("🔖 Bookmarks")
-        .default_open(true)
-        .show(ui, |ui| {
+        }
+        SidebarSection::Bookmarks => {
             let mut remove_idx: Option<usize> = None;
             for (idx, bm) in rs.bookmarks.iter().enumerate() {
                 ui.horizontal(|ui| {
@@ -1136,11 +1152,86 @@ pub fn render_sidebar(
             }
             if let Some(idx) = remove_idx {
                 rs.bookmarks.remove(idx);
+                rs.bookmarks_dirty = true;
             }
 
-            if ui.button("+ Add Bookmark").clicked() {
-                let label = format!("Page {}", *page + 1);
+            if ui.button(crate::app::i18n::tr(lang, "+ Add Bookmark")).clicked() {
+                let label = format!("{} {}", crate::app::i18n::tr(lang, "Page"), *page + 1);
                 rs.bookmarks.push(Bookmark { page: *page, label });
+                rs.bookmarks_dirty = true;
             }
-        });
+        }
+        SidebarSection::Vocab => {
+            if ui.button(crate::app::i18n::tr(lang, "+ Add")).clicked() {
+                rs.show_add_vocab_dialog = true;
+                rs.add_vocab_text.clear();
+            }
+            let mut remove_idx: Option<usize> = None;
+            for (idx, v) in rs.vocab.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(false, format!("{} (p.{})", v.word, v.page + 1)).clicked() {
+                        *page = v.page;
+                    }
+                    if ui.button("×").clicked() {
+                        remove_idx = Some(idx);
+                    }
+                });
+            }
+            if let Some(idx) = remove_idx {
+                rs.vocab.remove(idx);
+                rs.vocab_dirty = true;
+            }
+        }
+        SidebarSection::Sentences => {
+            let mut remove_idx: Option<usize> = None;
+            for (idx, s) in rs.sentences.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    let preview: String = s.text.chars().take(40).collect();
+                    if ui.selectable_label(false, format!("{} (p.{})", preview, s.page + 1)).clicked() {
+                        *page = s.page;
+                    }
+                    if ui.button("×").clicked() {
+                        remove_idx = Some(idx);
+                    }
+                });
+            }
+            if let Some(idx) = remove_idx {
+                rs.sentences.remove(idx);
+                rs.sentences_dirty = true;
+            }
+        }
+    }
+
+    // Manual add vocab dialog (for EPUB/TXT without word-position selection)
+    if rs.show_add_vocab_dialog {
+        let mut keep = true;
+        egui::Window::new(crate::app::i18n::tr(lang, "Add Vocabulary"))
+            .open(&mut keep)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.label(crate::app::i18n::tr(lang, "Word / Phrase:"));
+                ui.add(egui::TextEdit::singleline(&mut rs.add_vocab_text)
+                    .desired_width(200.0));
+                ui.add_space(8.0);
+                if ui.button(crate::app::i18n::tr(lang, "Save")).clicked() {
+                    let text = rs.add_vocab_text.trim().to_string();
+                    if !text.is_empty() {
+                        rs.vocab.push(Vocabulary {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            word: text,
+                            context_sentence: None,
+                            definition: None,
+                            page: *page,
+                        });
+                        rs.vocab_dirty = true;
+                    }
+                    rs.show_add_vocab_dialog = false;
+                    rs.add_vocab_text.clear();
+                }
+            });
+        if !keep {
+            rs.show_add_vocab_dialog = false;
+            rs.add_vocab_text.clear();
+        }
+    }
 }

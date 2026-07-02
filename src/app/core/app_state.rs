@@ -28,6 +28,7 @@ pub struct AppSettings {
     pub scroll_speed: f32,
     #[serde(default = "super::shortcuts::default_shortcuts")]
     pub shortcuts: ShortcutMap,
+    pub language: String,
     #[serde(skip)]
     pub editing_shortcut: Option<usize>,
 }
@@ -46,6 +47,7 @@ impl Default for AppSettings {
             dark_mode: false,
             scroll_speed: 800.0,
             shortcuts: default_shortcuts(),
+            language: "zh-CN".into(),
             editing_shortcut: None,
         }
     }
@@ -60,17 +62,17 @@ pub struct OpenTab {
 }
 
 impl OpenTab {
-    pub fn title(&self) -> String {
+    pub fn title(&self, lang: &str) -> String {
         match &self.content {
-            TabContent::Settings => "⚙ Settings".to_string(),
-            TabContent::PdfToolbox(_) => "📄 PDF Tools".to_string(),
+            TabContent::Settings => crate::app::i18n::tr(lang, "⚙ Settings").to_string(),
+            TabContent::PdfToolbox(_) => crate::app::i18n::tr(lang, "📄 PDF Tools").to_string(),
             _ => match &self.path {
                 Some(p) => std::path::Path::new(p)
                     .file_stem()
                     .and_then(|s| s.to_str())
-                    .unwrap_or("Untitled")
+                    .unwrap_or_else(|| crate::app::i18n::tr(lang, "Untitled"))
                     .to_string(),
-                None => "+ New Tab".to_string(),
+                None => crate::app::i18n::tr(lang, "+ New Tab").to_string(),
             },
         }
     }
@@ -108,6 +110,11 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Translate a string key according to the current language setting.
+    pub fn tr(&self, text: &'static str) -> &'static str {
+        crate::app::i18n::tr(&self.settings.language, text)
+    }
+
     pub fn new() -> Self {
         let mut state = Self {
             tabs: Vec::new(),

@@ -57,6 +57,10 @@ pub struct SelectionState {
     pub char_anchor: Option<usize>,
     pub char_focus: Option<usize>,
     pub selected_text: String,
+    /// Pending vocabulary addition (word to add, set by context menu)
+    pub pending_vocab: Option<String>,
+    /// Pending sentence addition (text to save, set by context menu)
+    pub pending_sentence: Option<String>,
 }
 
 impl Default for SelectionState {
@@ -70,16 +74,49 @@ impl Default for SelectionState {
             char_anchor: None,
             char_focus: None,
             selected_text: String::new(),
+            pending_vocab: None,
+            pending_sentence: None,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct Vocabulary {
+    pub id: String,
+    pub word: String,
+    pub context_sentence: Option<String>,
+    pub definition: Option<String>,
+    pub page: usize,
+}
+
+#[derive(Clone)]
+pub struct Sentence_ {
+    pub id: String,
+    pub text: String,
+    pub page: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SidebarSection {
+    TOC,
+    Search,
+    Bookmarks,
+    Vocab,
+    Sentences,
 }
 
 #[derive(Clone)]
 pub struct ReadingState {
     pub view_mode: ViewMode,
     pub show_sidebar: bool,
+    pub sidebar_section: SidebarSection,
+    pub show_add_vocab_dialog: bool,
+    pub add_vocab_text: String,
+    pub show_goto_dialog: bool,
+    pub goto_page_text: String,
     pub search: SearchState,
     pub bookmarks: Vec<Bookmark>,
+    pub bookmarks_dirty: bool,
     pub scroll_offset_y: f32,
     pub total_height: f32,
     pub selection: SelectionState,
@@ -93,6 +130,12 @@ pub struct ReadingState {
     pub scroll_velocity: f32,
     /// Cached chapter data for reflow stream (loaded once, not per-frame).
     pub chapter_cache: Vec<Option<crate::app::engines::Chapter>>,
+    /// Vocabulary (生词本) for the current book.
+    pub vocab: Vec<Vocabulary>,
+    pub vocab_dirty: bool,
+    /// Sentence collection (句子收藏) for the current book.
+    pub sentences: Vec<Sentence_>,
+    pub sentences_dirty: bool,
 }
 
 #[derive(Clone)]
@@ -144,6 +187,7 @@ pub struct AnnotateState {
     pub editing_note_id: Option<String>,
     pub note_text_buffer: String,
     pub current_color: [u8; 4],
+    pub dirty: bool,
 }
 
 #[derive(Clone)]
@@ -180,13 +224,14 @@ pub enum ModeKind {
 }
 
 impl ModeKind {
-    pub fn name(&self) -> &str {
-        match self {
+    pub fn name(&self, lang: &str) -> &'static str {
+        let key = match self {
             ModeKind::LightReading => "Light",
             ModeKind::DeepReading => "Deep",
             ModeKind::PageEdit => "Page",
             ModeKind::ContentEdit => "Content",
-        }
+        };
+        crate::app::i18n::tr(lang, key)
     }
 }
 
@@ -219,8 +264,14 @@ impl TabModes {
             reading: ReadingState {
                 view_mode: ViewMode::Text,
                 show_sidebar: false,
+                sidebar_section: SidebarSection::TOC,
+                show_add_vocab_dialog: false,
+                add_vocab_text: String::new(),
+                show_goto_dialog: false,
+                goto_page_text: String::new(),
                 search: SearchState::new(),
                 bookmarks: vec![],
+                bookmarks_dirty: false,
                 scroll_offset_y: 0.0,
                 total_height: 0.0,
                 selection: SelectionState::default(),
@@ -229,6 +280,10 @@ impl TabModes {
                 stream_jump_to: None,
                 scroll_velocity: 0.0,
                 chapter_cache: vec![],
+                vocab: vec![],
+                vocab_dirty: false,
+                sentences: vec![],
+                sentences_dirty: false,
             },
             auto: AutoState {
                 playing: false,
@@ -246,6 +301,7 @@ impl TabModes {
                 editing_note_id: None,
                 note_text_buffer: String::new(),
                 current_color: HIGHLIGHT_COLORS[0],
+                dirty: false,
             },
             edit: EditState::Page(PageEditState),
             active: ModeKind::LightReading,

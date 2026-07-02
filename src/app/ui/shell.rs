@@ -1,6 +1,7 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
-use crate::app::core::mode_system::{ViewMode, Annotation, AnnotationTool, EditState, ContentEditState};
+use crate::app::core::mode_system::{ViewMode, Annotation, AnnotationTool, EditState, ContentEditState, Bookmark, Vocabulary, Sentence_};
+use crate::app::config::RecentFile;
 use crate::app::core::shortcuts::{key_from_str, ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::edit_operations;
 use crate::app::paginator::Paginator;
@@ -14,7 +15,7 @@ pub struct FolixApp {
     pub open_dialog: bool,
     pub show_about: bool,
     pub status_message: String,
-    pub recent_files: Vec<String>,
+    pub recent_files: Vec<RecentFile>,
     pub db: Option<Database>,
     pub image_texture_cache: HashMap<String, egui::TextureHandle>,
 }
@@ -30,7 +31,7 @@ impl FolixApp {
         if let Some(ref cfg) = config {
             state.settings = cfg.settings.clone();
         }
-        let recent_files = config.as_ref().map(|c| c.recent_files.clone()).unwrap_or_default();
+        let recent_files: Vec<RecentFile> = config.as_ref().map(|c| c.recent_files.clone()).unwrap_or_default();
 
         let mut app = Self {
             state,
@@ -58,7 +59,10 @@ impl FolixApp {
     fn save_config(&self) {
         let data = crate::app::config::ConfigData {
             settings: self.state.settings.clone(),
-            recent_files: self.recent_files.clone(),
+            recent_files: self.recent_files.iter().map(|f| RecentFile {
+                path: f.path.clone(),
+                pinned: f.pinned,
+            }).collect(),
         };
         data.save();
     }
@@ -113,10 +117,23 @@ impl FolixApp {
     }
 
     fn open_file(&mut self, path_str: String) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         self.image_texture_cache.clear();
-        self.recent_files.retain(|p| p != &path_str);
-        self.recent_files.insert(0, path_str.clone());
-        self.recent_files.truncate(10);
+        // Update recent files: remove old entry, add to front (pinned preserved)
+        let was_pinned = self.recent_files.iter()
+            .find(|f| f.path == path_str)
+            .map(|f| f.pinned)
+            .unwrap_or(false);
+        self.recent_files.retain(|f| f.path != path_str);
+        self.recent_files.insert(0, RecentFile { path: path_str.clone(), pinned: was_pinned });
+        // Truncate non-pinned files to keep max 10
+        let pinned_count = self.recent_files.iter().filter(|f| f.pinned).count();
+        let non_pinned_max = 10usize.saturating_sub(pinned_count);
+        let mut non_pinned = 0usize;
+        self.recent_files.retain(|f| {
+            if f.pinned { true } else { non_pinned += 1; non_pinned <= non_pinned_max }
+        });
         self.save_config();
 
         if let Some(doc) = DocumentManager::open(&path_str) {
@@ -173,6 +190,37 @@ impl FolixApp {
                                     });
                                 }
                             }
+                            // Load bookmarks
+                            if let Ok(rows) = db.list_bookmarks(&book_id) {
+                                for (_, page, label) in rows {
+                                    tab.modes.reading.bookmarks.push(Bookmark {
+                                        page,
+                                        label: label.unwrap_or_default(),
+                                    });
+                                }
+                            }
+                            // Load vocabulary
+                            if let Ok(rows) = db.list_vocabulary(&book_id) {
+                                for (id, word, context, definition, page) in rows {
+                                    tab.modes.reading.vocab.push(Vocabulary {
+                                        id,
+                                        word,
+                                        context_sentence: context,
+                                        definition,
+                                        page,
+                                    });
+                                }
+                            }
+                            // Load sentences
+                            if let Ok(rows) = db.list_sentences(&book_id) {
+                                for (id, text, page) in rows {
+                                    tab.modes.reading.sentences.push(Sentence_ {
+                                        id,
+                                        text,
+                                        page,
+                                    });
+                                }
+                            }
                             // Load progress
                             if let Ok(Some((saved_page, _))) = db.load_progress(&book_id) {
                                 let is_fixed = d.lock().as_fixed().is_some();
@@ -203,9 +251,9 @@ impl FolixApp {
             }
 
             self.state.feature_system.use_feature("open_file");
-            self.status_message = format!("Opened: {}", path_str);
+            self.status_message = format!("{} {}", crate::app::i18n::tr(lng, "Opened:"), path_str);
         } else {
-            self.status_message = format!("Failed to open: {}", path_str);
+            self.status_message = format!("{} {}", crate::app::i18n::tr(lng, "Failed to open:"), path_str);
         }
     }
 
@@ -229,6 +277,8 @@ impl FolixApp {
     }
 
     fn reload_document(&mut self, path: &str) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         if let Some(doc) = DocumentManager::open(path) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.document = Some(doc);
@@ -242,10 +292,10 @@ impl FolixApp {
                     tab.modes.page = tab.modes.page.min(max);
                     tab.modes.auto.progress = (tab.modes.auto.progress as usize).min(max) as f32;
                 }
-                self.status_message = format!("Saved: {}", path);
+                self.status_message = format!("{} {}", crate::app::i18n::tr(lng, "Saved:"), path);
             }
         } else {
-            self.status_message = format!("Failed to reload: {}", path);
+            self.status_message = format!("{} {}", crate::app::i18n::tr(lng, "Failed to reload:"), path);
         }
     }
 
@@ -297,6 +347,7 @@ impl FolixApp {
                         note: None,
                         color: tab.modes.annotate.current_color,
                     });
+                    tab.modes.annotate.dirty = true;
                     tab.modes.reading.selection.selected_word_indices.clear();
                     tab.modes.reading.selection.anchor = None;
                     tab.modes.reading.selection.focus = None;
@@ -308,6 +359,8 @@ impl FolixApp {
 
 impl eframe::App for FolixApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         // Apply dark/light theme
         ctx.set_visuals(if self.state.settings.dark_mode {
             egui::Visuals::dark()
@@ -446,7 +499,7 @@ impl eframe::App for FolixApp {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.reading.bookmarks.push(crate::app::core::mode_system::Bookmark {
                     page: tab.modes.page,
-                    label: format!("Page {}", tab.modes.page + 1),
+                    label: format!("{} {}", crate::app::i18n::tr(lng, "Page"), tab.modes.page + 1),
                 });
             }
         }
@@ -479,10 +532,10 @@ impl eframe::App for FolixApp {
             }
         }
 
+        self.render_menu_bar(ctx);
         if self.state.ui_visible {
-            self.render_menu_bar(ctx);
+            self.render_tab_bar(ctx);
         }
-        self.render_tab_bar(ctx);
 
         // Sidebar (LightReading & DeepReading only)
         let sidebar = self.state.current_tab().is_some_and(|t| {
@@ -499,7 +552,7 @@ impl eframe::App for FolixApp {
                     if let Some(tab) = self.state.current_tab_mut() {
                         let active = tab.modes.active;
                         if active == ModeKind::LightReading || active == ModeKind::DeepReading {
-                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.paginator, &mut tab.modes.reading);
+                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.paginator, &mut tab.modes.reading, lng);
                         }
                     }
                 });
@@ -519,70 +572,137 @@ impl eframe::App for FolixApp {
         }
         self.handle_open_dialog(ctx);
         self.render_about(ctx);
+
+        // Goto page dialog
+        if let Some(tab) = self.state.current_tab_mut() {
+            if tab.modes.reading.show_goto_dialog {
+                let max = page_count_for_tab(tab).saturating_sub(1);
+                let mut keep = true;
+                egui::Window::new(crate::app::i18n::tr(lng, "Go to Page"))
+                    .open(&mut keep)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!("{} (1-{})", crate::app::i18n::tr(lng, "Page number:"), max + 1));
+                        ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_page_text)
+                            .desired_width(100.0));
+                        ui.add_space(8.0);
+                        if ui.button(crate::app::i18n::tr(lng, "Go")).clicked() {
+                            let target = tab.modes.reading.goto_page_text.trim().parse::<usize>().ok();
+                            if let Some(p) = target {
+                                let p = p.max(1).min(max + 1).saturating_sub(1);
+                                page_jump(tab, p);
+                            }
+                            tab.modes.reading.show_goto_dialog = false;
+                            tab.modes.reading.goto_page_text.clear();
+                        }
+                    });
+                if !keep {
+                    tab.modes.reading.show_goto_dialog = false;
+                    tab.modes.reading.goto_page_text.clear();
+                }
+            }
+        }
     }
 }
 
 impl FolixApp {
     fn render_menu_bar(&mut self, ctx: &egui::Context) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Open...").clicked() {
+                // ── File ──
+                ui.menu_button(crate::app::i18n::tr(lng, "File"), |ui| {
+                    if ui.button(crate::app::i18n::tr(lng, "Open...")).clicked() {
                         self.open_dialog = true;
                         ui.close_menu();
                     }
-                    if ui.button("Close").clicked() {
+                    if ui.button(crate::app::i18n::tr(lng, "Close")).clicked() {
                         if !self.state.tabs.is_empty() {
                             self.state.close_tab(self.state.active_tab);
                         }
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Quit").clicked() {
+                    if ui.button(crate::app::i18n::tr(lng, "Quit")).clicked() {
                         std::process::exit(0);
                     }
                 });
 
-                ui.menu_button("Mode", |ui| {
+                // ── Navigate ──
+                ui.menu_button(crate::app::i18n::tr(lng, "Navigate"), |ui| {
+                    if ui.button(crate::app::i18n::tr(lng, "Go to Page...")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            tab.modes.reading.show_goto_dialog = true;
+                            tab.modes.reading.goto_page_text.clear();
+                        }
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button(crate::app::i18n::tr(lng, "First Page")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() { page_jump(tab, 0); }
+                        ui.close_menu();
+                    }
+                    if ui.button(crate::app::i18n::tr(lng, "Last Page")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            let max = page_count_for_tab(tab).saturating_sub(1);
+                            page_jump(tab, max);
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button(crate::app::i18n::tr(lng, "Prev Page")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            let cur = tab.modes.page;
+                            if cur > 0 { page_jump(tab, cur - 1); }
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button(crate::app::i18n::tr(lng, "Next Page")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            let cur = tab.modes.page;
+                            let max = page_count_for_tab(tab).saturating_sub(1);
+                            if cur < max { page_jump(tab, cur + 1); }
+                        }
+                        ui.close_menu();
+                    }
+                });
+
+                // ── Mode ──
+                ui.menu_button(crate::app::i18n::tr(lng, "Mode"), |ui| {
                     let is_fixed = self.state.current_tab()
                         .and_then(|t| t.document.as_ref())
                         .map(|d| d.lock().is_fixed())
                         .unwrap_or(true);
-                    let mode_names: &[&str] = if is_fixed {
-                        &["LightReading", "DeepReading", "PageEdit"]
+                    let mode_kinds: &[ModeKind] = if is_fixed {
+                        &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::PageEdit]
                     } else {
-                        &["LightReading", "DeepReading", "ContentEdit"]
+                        &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::ContentEdit]
                     };
-                    let current_name = self.state.current_tab()
-                        .map(|t| t.modes.active.name().to_string())
-                        .unwrap_or_else(|| "Light".to_string());
-                    for mode_name in mode_names {
-                        let selected = current_name == *mode_name;
-                        if ui.selectable_label(selected, *mode_name).clicked() {
+                    let current = self.state.current_tab().map(|t| t.modes.active);
+                    for &mk in mode_kinds {
+                        let selected = current == Some(mk);
+                        let label = mk.name(lng);
+                        if ui.selectable_label(selected, label).clicked() {
                             if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                tab.modes.switch_to(match *mode_name {
-                                    "DeepReading" => ModeKind::DeepReading,
-                                    "PageEdit" => ModeKind::PageEdit,
-                                    "ContentEdit" => ModeKind::ContentEdit,
-                                    _ => ModeKind::LightReading,
-                                });
+                                tab.modes.switch_to(mk);
                             }
                             ui.close_menu();
                         }
                     }
 
-                    if current_name == "LightReading" {
+                    // Layout toggle (available in reading modes)
+                    if current == Some(ModeKind::LightReading) || current == Some(ModeKind::DeepReading) {
                         ui.separator();
                         let layout = self.state.current_tab()
                             .map(|t| t.modes.reading_layout);
                         if let Some(layout) = layout {
-                            if ui.selectable_label(layout == ReadingLayout::Paged, "Paged").clicked() {
+                            if ui.selectable_label(layout == ReadingLayout::Paged, crate::app::i18n::tr(lng, "Paged")).clicked() {
                                 if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
                                     tab.modes.reading_layout = ReadingLayout::Paged;
                                 }
                                 ui.close_menu();
                             }
-                            if ui.selectable_label(layout == ReadingLayout::Scroll, "Scroll").clicked() {
+                            if ui.selectable_label(layout == ReadingLayout::Scroll, crate::app::i18n::tr(lng, "Scroll")).clicked() {
                                 if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
                                     tab.modes.reading_layout = ReadingLayout::Scroll;
                                 }
@@ -590,10 +710,107 @@ impl FolixApp {
                             }
                         }
                     }
+
+                    // Zoom controls
+                    ui.separator();
+                    if ui.button(crate::app::i18n::tr(lng, "Zoom In")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            tab.modes.scale = (tab.modes.scale + 0.1).min(3.0);
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button(crate::app::i18n::tr(lng, "Zoom Out")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            tab.modes.scale = (tab.modes.scale - 0.1).max(0.5);
+                        }
+                        ui.close_menu();
+                    }
                 });
 
-                ui.menu_button("Help", |ui| {
-                    if ui.button("About Folix").clicked() {
+                // ── Tools ──
+                ui.menu_button(crate::app::i18n::tr(lng, "Tools"), |ui| {
+                    let current = self.state.current_tab().map(|t| t.modes.active);
+
+                    // Sidebar toggle
+                    if ui.button(crate::app::i18n::tr(lng, "Toggle Sidebar")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            tab.modes.reading.show_sidebar = !tab.modes.reading.show_sidebar;
+                        }
+                        ui.close_menu();
+                    }
+
+                    // Add bookmark
+                    if ui.button(crate::app::i18n::tr(lng, "Add Bookmark")).clicked() {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            tab.modes.reading.bookmarks.push(Bookmark {
+                                page: tab.modes.page,
+                                label: format!("{} {}", crate::app::i18n::tr(lng, "Page"), tab.modes.page + 1),
+                            });
+                            tab.modes.reading.bookmarks_dirty = true;
+                        }
+                        ui.close_menu();
+                    }
+
+                    // Deep-reading annotation tools
+                    if current == Some(ModeKind::DeepReading) {
+                        ui.separator();
+                        let tool = self.state.current_tab().map(|t| t.modes.annotate.tool.clone());
+
+                        if ui.selectable_label(tool == Some(AnnotationTool::Highlight), crate::app::i18n::tr(lng, "Sel")).clicked() {
+                            if let Some(tab) = self.state.current_tab_mut() { tab.modes.annotate.tool = AnnotationTool::Highlight; }
+                            ui.close_menu();
+                        }
+                        if ui.selectable_label(tool == Some(AnnotationTool::Pen), crate::app::i18n::tr(lng, "Pen")).clicked() {
+                            if let Some(tab) = self.state.current_tab_mut() { tab.modes.annotate.tool = AnnotationTool::Pen; }
+                            ui.close_menu();
+                        }
+                        if ui.selectable_label(tool == Some(AnnotationTool::Eraser), crate::app::i18n::tr(lng, "Eraser")).clicked() {
+                            if let Some(tab) = self.state.current_tab_mut() { tab.modes.annotate.tool = AnnotationTool::Eraser; }
+                            ui.close_menu();
+                        }
+
+                        if ui.button(crate::app::i18n::tr(lng, "High")).clicked() {
+                            Self::apply_highlight_selection(
+                                self.state.current_tab_mut().unwrap()
+                            );
+                            ui.close_menu();
+                        }
+                        if ui.button(crate::app::i18n::tr(lng, "Undo")).clicked() {
+                            if let Some(tab) = self.state.current_tab_mut() {
+                                tab.modes.annotate.annotations.pop();
+                                tab.modes.annotate.dirty = true;
+                            }
+                            ui.close_menu();
+                        }
+                        if ui.button(crate::app::i18n::tr(lng, "Clr")).clicked() {
+                            if let Some(tab) = self.state.current_tab_mut() {
+                                tab.modes.annotate.annotations.clear();
+                                tab.modes.annotate.dirty = true;
+                            }
+                            ui.close_menu();
+                        }
+                    }
+
+                    // Light-reading auto-play
+                    if current == Some(ModeKind::LightReading) {
+                        ui.separator();
+                        let playing = self.state.current_tab().map(|t| t.modes.auto.playing).unwrap_or(false);
+                        let play_label = if playing { "⏸" } else { "▶" };
+                        if ui.button(play_label).clicked() {
+                            if let Some(tab) = self.state.current_tab_mut() {
+                                tab.modes.auto.playing = !tab.modes.auto.playing;
+                                if tab.modes.auto.playing {
+                                    tab.modes.auto.progress = 0.0;
+                                }
+                            }
+                            ui.close_menu();
+                        }
+                    }
+                });
+
+                // ── Help ──
+                ui.menu_button(crate::app::i18n::tr(lng, "Help"), |ui| {
+                    if ui.button(crate::app::i18n::tr(lng, "About Folix")).clicked() {
                         self.show_about = true;
                         ui.close_menu();
                     }
@@ -603,6 +820,8 @@ impl FolixApp {
     }
 
     fn render_tab_bar(&mut self, ctx: &egui::Context) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 // Sidebar toggle — leftmost position
@@ -611,7 +830,11 @@ impl FolixApp {
                     let active = t.modes.active;
                     (active == ModeKind::LightReading || active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
                 });
-                let side_btn = if show_side { "📑 Sidebar" } else { "📑" };
+                let side_btn = if show_side {
+                    crate::app::i18n::tr(lng, "📑 Sidebar")
+                } else {
+                    "📑"
+                };
                 if has_doc {
                     if ui.button(side_btn).clicked() {
                         if let Some(t) = self.state.current_tab_mut() {
@@ -634,7 +857,7 @@ impl FolixApp {
                 let mut to_close: Option<usize> = None;
                 let mut i = 0;
                 while i < self.state.tabs.len() {
-                    let title = self.state.tabs[i].title();
+                    let title = self.state.tabs[i].title(lng);
                     let is_active = i == self.state.active_tab;
 
                     if ui.selectable_label(is_active, &title).clicked() {
@@ -656,55 +879,98 @@ impl FolixApp {
     }
 
     fn render_new_tab_page(&mut self, ui: &mut egui::Ui) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         ui.vertical_centered(|ui| {
             ui.add_space(100.0);
-            ui.heading("Folix");
-            ui.label("PDF / EPUB / TXT Reader");
+            ui.heading(crate::app::i18n::tr(lng, "Folix"));
+            ui.label(crate::app::i18n::tr(lng, "PDF / EPUB / TXT Reader"));
             ui.add_space(20.0);
-            if ui.add(egui::Button::new("📂  Open File").min_size(egui::vec2(200.0, 36.0))).clicked() {
+            if ui.add(egui::Button::new(crate::app::i18n::tr(lng, "📂  Open File")).min_size(egui::vec2(200.0, 36.0))).clicked() {
                 self.open_dialog = true;
             }
             ui.add_space(8.0);
-            if ui.add(egui::Button::new("📄  PDF Tools").min_size(egui::vec2(200.0, 36.0))).clicked() {
+            if ui.add(egui::Button::new(crate::app::i18n::tr(lng, "📄  PDF Tools")).min_size(egui::vec2(200.0, 36.0))).clicked() {
                 self.state.add_pdf_toolbox_tab();
             }
             ui.add_space(24.0);
 
             if !self.recent_files.is_empty() {
-                ui.label("Recent Files");
+                ui.label(crate::app::i18n::tr(lng, "Recent Files"));
                 ui.separator();
                 egui::ScrollArea::vertical()
                     .max_height(300.0)
                     .show(ui, |ui| {
-                        for path in self.recent_files.clone() {
-                            let name = std::path::Path::new(&path)
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or(&path);
-                            if ui.selectable_label(false, name).clicked() {
-                                self.open_file(path);
+                        let mut to_remove: Option<usize> = None;
+                        let mut to_toggle_pin: Option<usize> = None;
+                        let items: Vec<(usize, RecentFile)> = self.recent_files.iter()
+                            .enumerate().map(|(i, f)| (i, f.clone())).collect();
+                        // Pinned files first
+                        let pinned: Vec<_> = items.iter().filter(|(_, f)| f.pinned).collect();
+                        let unpinned: Vec<_> = items.iter().filter(|(_, f)| !f.pinned).collect();
+                        for (idx, rf) in &pinned {
+                            ui.horizontal(|ui| {
+                                let name = std::path::Path::new(&rf.path)
+                                    .file_name()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or(&rf.path);
+                                if ui.selectable_label(false, name).clicked() {
+                                    self.open_file(rf.path.clone());
+                                }
+                                if ui.button("📌").clicked() { to_toggle_pin = Some(*idx); }
+                                if ui.button("✕").clicked() { to_remove = Some(*idx); }
+                            });
+                        }
+                        if !pinned.is_empty() && !unpinned.is_empty() {
+                            ui.separator();
+                        }
+                        for (idx, rf) in &unpinned {
+                            ui.horizontal(|ui| {
+                                let name = std::path::Path::new(&rf.path)
+                                    .file_name()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or(&rf.path);
+                                if ui.selectable_label(false, name).clicked() {
+                                    self.open_file(rf.path.clone());
+                                }
+                                if ui.button("📌").clicked() { to_toggle_pin = Some(*idx); }
+                                if ui.button("✕").clicked() { to_remove = Some(*idx); }
+                            });
+                        }
+                        if let Some(idx) = to_remove {
+                            self.recent_files.remove(idx);
+                            self.save_config();
+                        }
+                        if let Some(idx) = to_toggle_pin {
+                            if let Some(f) = self.recent_files.get_mut(idx) {
+                                f.pinned = !f.pinned;
                             }
+                            // Re-sort: pinned files first
+                            self.recent_files.sort_by(|a, _| if a.pinned { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater });
+                            self.save_config();
                         }
                     });
             } else {
-                ui.label("No recent files");
-                ui.colored_label(egui::Color32::GRAY, "Open a file or drag-and-drop to get started.");
+                ui.label(crate::app::i18n::tr(lng, "No recent files"));
+                ui.colored_label(egui::Color32::GRAY, crate::app::i18n::tr(lng, "Open a file or drag-and-drop to get started."));
             }
         });
     }
 
     fn render_settings_tab(&mut self, ui: &mut egui::Ui) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         ui.add_space(20.0);
 
         // ── Appearance ──
-        ui.heading("Appearance");
+        ui.heading(crate::app::i18n::tr(lng, "Appearance"));
         ui.separator();
         egui::Grid::new("appearance_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
-            ui.label("Toolbar Icon Size:");
+            ui.label(crate::app::i18n::tr(lng, "Toolbar Icon Size:"));
             ui.add(egui::Slider::new(&mut self.state.settings.toolbar_icon_size, 12.0..=32.0));
             ui.end_row();
 
-            ui.label("Background Color:");
+            ui.label(crate::app::i18n::tr(lng, "Background Color:"));
             let mut color = [
                 self.state.settings.background_color[0] as f32 / 255.0,
                 self.state.settings.background_color[1] as f32 / 255.0,
@@ -721,52 +987,73 @@ impl FolixApp {
             ui.end_row();
         });
         ui.add_space(8.0);
-        ui.label("Toolbars:");
+
+        // Language selector
+        ui.label(crate::app::i18n::tr(lng, "Language"));
+        egui::ComboBox::from_id_salt("lang_selector")
+            .selected_text({
+                if self.state.settings.language == "zh-CN" { "简体中文" } else { "English" }
+            })
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(self.state.settings.language == "zh-CN", "简体中文").clicked() {
+                    self.state.settings.language = "zh-CN".into();
+                    self.save_config();
+                }
+                if ui.selectable_label(self.state.settings.language == "en", "English").clicked() {
+                    self.state.settings.language = "en".into();
+                    self.save_config();
+                }
+            });
+        ui.add_space(8.0);
+
+        // Toolbar visibility toggles (same format as before, but translated)
+        ui.label(crate::app::i18n::tr(lng, "Toolbars:"));
         egui::Grid::new("toolbar_grid").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-            ui.checkbox(&mut self.state.settings.show_toolbar_nav, "📖 基础浏览  ◀▶ ▲▼");
+            ui.checkbox(&mut self.state.settings.show_toolbar_nav, crate::app::i18n::tr(lng, "📖 Nav  ◀▶ ▲▼"));
             ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_view, "🔍 视图调节  缩放 + 布局");
+            ui.checkbox(&mut self.state.settings.show_toolbar_view, crate::app::i18n::tr(lng, "🔍 View  Zoom+Layout"));
             ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_page, "📄 显示页码");
+            ui.checkbox(&mut self.state.settings.show_toolbar_page, crate::app::i18n::tr(lng, "📄 Page"));
             ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_auto, "▶ 自动阅读");
+            ui.checkbox(&mut self.state.settings.show_toolbar_auto, crate::app::i18n::tr(lng, "▶ Auto-read"));
             ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_annotate, "🖊 标注");
+            ui.checkbox(&mut self.state.settings.show_toolbar_annotate, crate::app::i18n::tr(lng, "🖊 Annotate"));
             ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_edit, "✏ 页面编辑");
+            ui.checkbox(&mut self.state.settings.show_toolbar_edit, crate::app::i18n::tr(lng, "✏ Page Edit"));
             ui.end_row();
         });
-        ui.checkbox(&mut self.state.settings.dark_mode, "Dark Mode (Night)");
+        ui.checkbox(&mut self.state.settings.dark_mode, crate::app::i18n::tr(lng, "Dark Mode (Night)"));
 
         ui.add_space(20.0);
 
         // ── Scrolling ──
-        ui.heading("Scrolling");
+        ui.heading(crate::app::i18n::tr(lng, "Scrolling"));
         ui.separator();
-        ui.label("Scroll Speed (px/s):");
-        ui.add(egui::Slider::new(&mut self.state.settings.scroll_speed, 200.0..=4000.0).suffix(" px/s"));
+        ui.label(crate::app::i18n::tr(lng, "Scroll Speed (px/s):"));
+        ui.add(egui::Slider::new(&mut self.state.settings.scroll_speed, 200.0..=4000.0)
+            .suffix(crate::app::i18n::tr(lng, " px/s")));
         ui.add_space(20.0);
 
         // ── Keyboard Shortcuts ──
-        ui.heading("Keyboard Shortcuts");
+        ui.heading(crate::app::i18n::tr(lng, "Keyboard Shortcuts"));
         ui.separator();
-        ui.label("Click a shortcut row to edit its key binding.");
+        ui.label(crate::app::i18n::tr(lng, "Click a shortcut row to edit its key binding."));
         ui.add_space(8.0);
 
         egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
             egui::Grid::new("shortcuts_grid").num_columns(5).spacing([12.0, 4.0]).striped(true).show(ui, |ui| {
-                ui.strong("Action");
-                ui.strong("Key");
+                ui.strong(crate::app::i18n::tr(lng, "Action"));
+                ui.strong(crate::app::i18n::tr(lng, "Key"));
                 ui.strong("Ctrl");
-                ui.strong("Shift");
-                ui.strong("Alt");
+                ui.strong(crate::app::i18n::tr(lng, "Shift"));
+                ui.strong(crate::app::i18n::tr(lng, "Alt"));
                 ui.end_row();
 
                 let s = &mut self.state.settings;
                 for (i, action) in ALL_ACTIONS.iter().enumerate() {
                     let combo = s.shortcuts.get_mut(action);
 
-                    ui.label(action.label());
+                    ui.label(crate::app::i18n::tr(lng, action.label()));
 
                     if s.editing_shortcut == Some(i) {
                         if let Some(combo) = combo {
@@ -785,7 +1072,7 @@ impl FolixApp {
                             ui.checkbox(&mut combo.shift, "");
                             ui.checkbox(&mut combo.alt, "");
                         } else {
-                            ui.label("(unset)");
+                            ui.label(crate::app::i18n::tr(lng, "(unset)"));
                             ui.label(""); ui.label(""); ui.label("");
                         }
                         if ui.button("Done").clicked() {
@@ -797,7 +1084,7 @@ impl FolixApp {
                                 s.editing_shortcut = Some(i);
                             }
                         } else {
-                            ui.label("(unset)");
+                            ui.label(crate::app::i18n::tr(lng, "(unset)"));
                         }
                         ui.label(""); ui.label(""); ui.label("");
                         ui.label("");
@@ -812,19 +1099,17 @@ impl FolixApp {
         // ── Info ──
         ui.heading("Info");
         ui.separator();
-        ui.label("Config file: ./folix.conf");
+        ui.label(crate::app::i18n::tr(lng, "Config file: ./folix.conf"));
         ui.horizontal(|ui| {
-            if ui.button("Reset Shortcuts to Default").clicked() {
+            if ui.button(crate::app::i18n::tr(lng, "Reset Shortcuts to Default")).clicked() {
                 self.state.settings.shortcuts = crate::app::core::shortcuts::default_shortcuts();
                 self.state.settings.editing_shortcut = None;
             }
-            if ui.button("Save Config Now").clicked() {
+            if ui.button(crate::app::i18n::tr(lng, "Save Config Now")).clicked() {
                 self.save_config();
-                self.status_message = "Config saved".to_string();
+                self.status_message = crate::app::i18n::tr(lng, "Config saved").to_string();
             }
         });
-
-        self.save_config();
     }
 
     fn render_document_view(&mut self, ui: &mut egui::Ui) {
@@ -852,7 +1137,7 @@ impl FolixApp {
         }
 
         // Document tab
-        let mode_name = self.state.tabs[idx].modes.active.name().to_string();
+        let mode_name = self.state.tabs[idx].modes.active.name(&self.state.settings.language).to_string();
         let pinned_names: Vec<String> = self.state.feature_system.pinned_features(&mode_name)
             .iter().map(|f| f.id.clone()).collect();
 
@@ -884,8 +1169,31 @@ impl FolixApp {
             &mut self.image_texture_cache,
         );
 
-        // Sync annotations to database
-        if is_deep {
+        // Handle pending vocabulary/sentence additions from context menu
+        if let Some(word) = tab.modes.reading.selection.pending_vocab.take() {
+            tab.modes.reading.vocab.push(Vocabulary {
+                id: uuid::Uuid::new_v4().to_string(),
+                word,
+                context_sentence: None,
+                definition: None,
+                page: tab.modes.page,
+            });
+            tab.modes.reading.vocab_dirty = true;
+            // Clear text selection after adding
+            tab.modes.reading.selection.selected_word_indices.clear();
+        }
+        if let Some(text) = tab.modes.reading.selection.pending_sentence.take() {
+            tab.modes.reading.sentences.push(Sentence_ {
+                id: uuid::Uuid::new_v4().to_string(),
+                text,
+                page: tab.modes.page,
+            });
+            tab.modes.reading.sentences_dirty = true;
+            tab.modes.reading.selection.selected_word_indices.clear();
+        }
+
+        // Sync annotations to database (only when dirty)
+        if is_deep && tab.modes.annotate.dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
                     let _ = db.delete_book_annotations(book_id);
@@ -898,12 +1206,59 @@ impl FolixApp {
                             ann.note.as_deref(),
                         );
                     }
+                    tab.modes.annotate.dirty = false;
+                }
+            }
+        }
+
+        // Sync vocabulary
+        if tab.modes.reading.vocab_dirty {
+            if let Some(ref db) = self.db {
+                if let Some(book_id) = &tab.book_id {
+                    let _ = db.delete_book_vocabulary(book_id);
+                    for v in &tab.modes.reading.vocab {
+                        let _ = db.add_vocabulary(
+                            book_id, &v.word,
+                            v.context_sentence.as_deref(),
+                            v.definition.as_deref(),
+                            v.page,
+                        );
+                    }
+                    tab.modes.reading.vocab_dirty = false;
+                }
+            }
+        }
+
+        // Sync sentences
+        if tab.modes.reading.sentences_dirty {
+            if let Some(ref db) = self.db {
+                if let Some(book_id) = &tab.book_id {
+                    let _ = db.delete_book_sentences(book_id);
+                    for s in &tab.modes.reading.sentences {
+                        let _ = db.add_sentence(book_id, &s.text, s.page);
+                    }
+                    tab.modes.reading.sentences_dirty = false;
+                }
+            }
+        }
+
+        // Sync bookmarks
+        if tab.modes.reading.bookmarks_dirty {
+            if let Some(ref db) = self.db {
+                if let Some(book_id) = &tab.book_id {
+                    let _ = db.delete_book_bookmarks(book_id);
+                    for bm in &tab.modes.reading.bookmarks {
+                        let _ = db.add_bookmark(book_id, bm.page, Some(&bm.label));
+                    }
+                    tab.modes.reading.bookmarks_dirty = false;
                 }
             }
         }
     }
 
     fn render_toolbars(&mut self, ctx: &egui::Context) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         let speed = self.state.settings.scroll_speed;
         let mut needs_reload: Option<String> = None;
 
@@ -934,7 +1289,7 @@ impl FolixApp {
                 };
                 for &mk in mode_names {
                     let selected = tab.modes.active == mk;
-                    if ui.selectable_label(selected, mk.name()).clicked() {
+                    if ui.selectable_label(selected, mk.name(lng)).clicked() {
                         tab.modes.switch_to(mk);
                     }
                 }
@@ -971,7 +1326,7 @@ impl FolixApp {
                         ui.separator();
                         let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
                         if is_fixed_doc {
-                            let layout_label = if is_paged { "Paged" } else { "Scroll" };
+                            let layout_label = if is_paged { crate::app::i18n::tr(lng, "Paged") } else { crate::app::i18n::tr(lng, "Scroll") };
                             if ui.button(layout_label).clicked() {
                                 tab.modes.reading_layout = if is_paged { ReadingLayout::Scroll } else { ReadingLayout::Paged };
                             }
@@ -1028,7 +1383,7 @@ impl FolixApp {
                                     tab.modes.auto.progress = 0.0;
                                 }
                             }
-                            ui.label("Speed:");
+                            ui.label(crate::app::i18n::tr(lng, "Speed:"));
                             ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
 
                         }
@@ -1037,13 +1392,13 @@ impl FolixApp {
                             let is_sel = *tool == AnnotationTool::Highlight;
                             let is_pen = *tool == AnnotationTool::Pen;
                             let is_eraser = *tool == AnnotationTool::Eraser;
-                            if ui.selectable_label(is_sel, "Sel").clicked() {
+                            if ui.selectable_label(is_sel, crate::app::i18n::tr(lng, "Sel")).clicked() {
                                 tab.modes.annotate.tool = AnnotationTool::Highlight;
                             }
-                            if ui.selectable_label(is_pen, "Pen").clicked() {
+                            if ui.selectable_label(is_pen, crate::app::i18n::tr(lng, "Pen")).clicked() {
                                 tab.modes.annotate.tool = AnnotationTool::Pen;
                             }
-                            if ui.selectable_label(is_eraser, "Eraser").clicked() {
+                            if ui.selectable_label(is_eraser, crate::app::i18n::tr(lng, "Eraser")).clicked() {
                                 tab.modes.annotate.tool = AnnotationTool::Eraser;
                             }
                             ui.separator();
@@ -1051,7 +1406,7 @@ impl FolixApp {
                             // Highlight Selected button
                             let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
                                 && tab.modes.reading.selection.page == tab.modes.page;
-                            if ui.add_enabled(has_sel, egui::Button::new("High")).clicked() {
+                            if ui.add_enabled(has_sel, egui::Button::new(crate::app::i18n::tr(lng, "High"))).clicked() {
                                 if let Some(ref doc) = tab.document {
                                     let page = tab.modes.page;
                                     let words = doc.lock().as_fixed().map(|f| f.page_text_positions(page)).unwrap_or_default();
@@ -1074,6 +1429,7 @@ impl FolixApp {
                                             note: None,
                                             color: tab.modes.annotate.current_color,
                                         });
+                                        tab.modes.annotate.dirty = true;
                                         tab.modes.reading.selection.selected_word_indices.clear();
                                         tab.modes.reading.selection.anchor = None;
                                         tab.modes.reading.selection.focus = None;
@@ -1082,7 +1438,7 @@ impl FolixApp {
                             }
 
                             // Note on last highlight button
-                            if ui.button("Note").clicked() {
+                            if ui.button(crate::app::i18n::tr(lng, "Note")).clicked() {
                                 let page = tab.modes.page;
                                 if let Some(last) = tab.modes.annotate.annotations.iter().rev().find(|a| {
                                     a.page == page && a.kind == AnnotationTool::Highlight
@@ -1104,29 +1460,31 @@ impl FolixApp {
                                 }
                             }
                             ui.separator();
-                            if ui.button("Undo").clicked() {
+                            if ui.button(crate::app::i18n::tr(lng, "Undo")).clicked() {
                                 tab.modes.annotate.annotations.pop();
+                                tab.modes.annotate.dirty = true;
                             }
-                            if ui.button("Clr").clicked() {
+                            if ui.button(crate::app::i18n::tr(lng, "Clr")).clicked() {
                                 tab.modes.annotate.annotations.clear();
+                                tab.modes.annotate.dirty = true;
                             }
                         }
                         ModeKind::PageEdit => {
                             let path = tab.path.clone();
                             if let Some(ref p) = path {
-                                if ui.button("↻ CW").clicked() {
+                                if ui.button(crate::app::i18n::tr(lng, "↻ CW")).clicked() {
                                     let page = tab.modes.page;
                                     if edit_operations::rotate_page(p, page, 90).is_ok() {
                                         needs_reload = Some(p.clone());
                                     }
                                 }
-                                if ui.button("↻ CCW").clicked() {
+                                if ui.button(crate::app::i18n::tr(lng, "↻ CCW")).clicked() {
                                     let page = tab.modes.page;
                                     if edit_operations::rotate_page(p, page, 270).is_ok() {
                                         needs_reload = Some(p.clone());
                                     }
                                 }
-                                if ui.button("Del").clicked() {
+                                if ui.button(crate::app::i18n::tr(lng, "Del")).clicked() {
                                     let page = tab.modes.page;
                                     if page_count_for_tab(tab) > 1 {
                                         if edit_operations::delete_page(p, page).is_ok() {
@@ -1134,7 +1492,7 @@ impl FolixApp {
                                         }
                                     }
                                 }
-                                if ui.button("+ Page").clicked() {
+                                if ui.button(crate::app::i18n::tr(lng, "+ Page")).clicked() {
                                     let page = tab.modes.page;
                                     if edit_operations::insert_blank_page(p, page).is_ok() {
                                         needs_reload = Some(p.clone());
@@ -1149,17 +1507,17 @@ impl FolixApp {
                                 });
                             }
                             let state = tab.modes.edit.as_content().unwrap();
-                            if ui.button("A-").clicked() {
+                            if ui.button(crate::app::i18n::tr(lng, "A-")).clicked() {
                                 state.font_size_scale = (state.font_size_scale - 0.1).max(0.5);
                             }
-                            if ui.button("A+").clicked() {
+                            if ui.button(crate::app::i18n::tr(lng, "A+")).clicked() {
                                 state.font_size_scale = (state.font_size_scale + 0.1).min(2.0);
                             }
                             ui.label(format!("{:.0}%", state.font_size_scale * 100.0));
-                            if ui.selectable_label(state.bold, "B").clicked() {
+                            if ui.selectable_label(state.bold, crate::app::i18n::tr(lng, "B")).clicked() {
                                 state.bold = !state.bold;
                             }
-                            if ui.selectable_label(state.italic, "I").clicked() {
+                            if ui.selectable_label(state.italic, crate::app::i18n::tr(lng, "I")).clicked() {
                                 state.italic = !state.italic;
                             }
                         }
@@ -1186,15 +1544,16 @@ impl FolixApp {
     }
 
     fn render_about(&mut self, ctx: &egui::Context) {
+        let lng_s = self.state.settings.language.clone();
+        let lng = &lng_s;
         if self.show_about {
-            egui::Window::new("About Folix")
+            egui::Window::new(crate::app::i18n::tr(lng, "About Folix"))
                 .open(&mut self.show_about)
                 .show(ctx, |ui| {
-                    ui.heading("Folix");
-                    ui.label("PDF/EPUB Reader v0.1.0");
+                    ui.heading(crate::app::i18n::tr(lng, "Folix"));
+                    ui.label(format!("{} v0.1.0", crate::app::i18n::tr(lng, "PDF/EPUB Reader")));
                     ui.separator();
-                    ui.label("A document reading engine with mode state machine + GPU rendering.");
-                    ui.label("Stack: Rust, egui, wgpu, MuPDF, SQLite FTS5");
+                    ui.label(crate::app::i18n::tr(lng, "Built with egui + mupdf"));
                 });
         }
     }
