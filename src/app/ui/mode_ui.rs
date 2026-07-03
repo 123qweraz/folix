@@ -253,11 +253,23 @@ pub fn render_document(
                                                 );
                                             }
                                         };
-                                        let (w, h) = decoded.dimensions();
+                                        let (native_w, native_h) = decoded.dimensions();
+                                        let aspect = native_w as f32 / native_h as f32;
+                                        let display_w = (ui.available_width().min(600.0)).ceil() as u32;
+                                        let display_h = (display_w as f32 / aspect).ceil() as u32;
+                                        let resized = if display_w < native_w {
+                                            image::imageops::resize(
+                                                &decoded, display_w.max(1), display_h.max(1),
+                                                image::imageops::FilterType::Lanczos3,
+                                            )
+                                        } else {
+                                            decoded
+                                        };
+                                        let (rw, rh) = resized.dimensions();
                                         let color_image =
                                             egui::ColorImage::from_rgba_unmultiplied(
-                                                [w as usize, h as usize],
-                                                decoded.as_raw(),
+                                                [rw as usize, rh as usize],
+                                                resized.as_raw(),
                                             );
                                         ui.ctx().load_texture(
                                             &key,
