@@ -187,18 +187,8 @@ pub fn render_document(
                 if target < reading.stream_page_y_starts.len() {
                     sa = sa.vertical_scroll_offset(reading.stream_page_y_starts[target]);
                     reading.stream_jump_to = None;
-                } else {
-                    // Estimate scroll position from average page height.
-                    let est_page_h = if reading.stream_page_y_starts.len() > 1 {
-                        (reading.stream_page_y_starts.last().unwrap()
-                            - reading.stream_page_y_starts[0])
-                            / (reading.stream_page_y_starts.len() as f32 - 1.0)
-                    } else {
-                        ui.available_size().y.max(100.0)
-                    };
-                    sa = sa.vertical_scroll_offset(est_page_h * target as f32);
-                    reading.stream_jump_to = None;
                 }
+                // else: defer jump until stream_page_y_starts is populated next frame
             }
 
             let output = sa.show_viewport(ui, |ui, _viewport| {
