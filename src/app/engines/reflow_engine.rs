@@ -66,14 +66,23 @@ impl ReflowDocument {
             }
         }
 
-        // Build ToC — page_index = chapter index for non-image docs
+        // Build id → spine index map from spine items
+        let mut id_to_spine_idx: HashMap<String, usize> = HashMap::new();
+        for (i, (id, _)) in spine_items.iter().enumerate() {
+            id_to_spine_idx.insert(id.clone(), i);
+        }
+
+        // Build ToC — page_index = spine index (not flattened TOC index)
         let mut toc: Vec<TocEntry> = Vec::new();
         let toc_data = epub.toc();
         if let Some(contents) = toc_data.contents() {
-            for (entry, chapter_idx) in contents.flatten().zip(0..) {
+            for (i, entry) in contents.flatten().enumerate() {
+                let page_index = entry.manifest_entry()
+                    .and_then(|me| id_to_spine_idx.get(me.id()).copied())
+                    .unwrap_or(i);
                 toc.push(TocEntry {
                     label: entry.label().to_string(),
-                    page_index: chapter_idx,
+                    page_index,
                 });
             }
         }
