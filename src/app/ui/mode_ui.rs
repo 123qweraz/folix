@@ -1148,16 +1148,22 @@ pub fn render_mo_yu_ui(
     ui.add_space(((av.y - content_h) / 2.0).max(0.0));
 
     ui.horizontal(|ui| {
-        // Drag handle
-        let handle = ui.add(
-            egui::Label::new(
-                egui::RichText::new("||").size(16.0).color(text_color),
-            )
-            .sense(egui::Sense::click()),
+        // Drag handle — small grey block
+        let (handle_rect, handle_resp) = ui.allocate_exact_size(
+            egui::vec2(6.0, 14.0),
+            egui::Sense::click(),
         );
-        if handle.is_pointer_button_down_on() {
+        if handle_resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if handle_resp.is_pointer_button_down_on() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
+        ui.painter().rect_filled(
+            handle_rect,
+            egui::CornerRadius::same(2),
+            egui::Color32::from_gray(128),
+        );
 
         // Measure text & available width
         let avail_w = ui.available_width().max(10.0);

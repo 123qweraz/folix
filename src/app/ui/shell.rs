@@ -1388,6 +1388,17 @@ impl FolixApp {
                             .with_resizable(false)
                             .with_decorations(false),
                         |vp_ctx, class| {
+                            // Position at bottom-right on first frame
+                            if !mo_yu.positioned {
+                                if let Some(monitor) = vp_ctx.input(|i| i.viewport().monitor_size) {
+                                    let pos = egui::pos2(
+                                        (monitor.x - 400.0 - 10.0).max(0.0),
+                                        (monitor.y - 24.0 - 10.0).max(0.0),
+                                    );
+                                    vp_ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+                                }
+                                mo_yu.positioned = true;
+                            }
                             if class == egui::ViewportClass::Embedded {
                                 let mut visible = mo_yu.visible;
                                 let resp = egui::Window::new("")
@@ -1599,6 +1610,7 @@ impl FolixApp {
                                     tab.modes.mo_yu.sentences.clear();
                                     tab.modes.mo_yu.playing = true;
                                     tab.modes.mo_yu.timer = 0.0;
+                                    tab.modes.mo_yu.positioned = false;
                                 }
                             }
                         }

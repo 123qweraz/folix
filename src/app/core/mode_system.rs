@@ -172,6 +172,7 @@ pub struct MoYuState {
     pub timer: f32,
     pub page: usize,
     pub scroll_x: f32,
+    pub positioned: bool,
 }
 
 impl MoYuState {
@@ -186,6 +187,7 @@ impl MoYuState {
             timer: 0.0,
             page: 0,
             scroll_x: 0.0,
+            positioned: false,
         }
     }
 }
