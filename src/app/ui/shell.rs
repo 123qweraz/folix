@@ -54,6 +54,10 @@ impl FolixApp {
         if let Some(ref db) = self.db {
             for tab in &self.state.tabs {
                 if let Some(ref book_id) = tab.book_id {
+                    // Skip tabs that haven't finished positioning (pending stream jump)
+                    if tab.modes.reading.stream_jump_to.is_some() {
+                        continue;
+                    }
                     let _ = db.save_progress(book_id, tab.modes.page, tab.modes.auto.progress as f64);
                 }
             }
