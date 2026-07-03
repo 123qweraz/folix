@@ -1,92 +1,90 @@
 # Folix
 
-A cross-platform document reader and PDF toolbox, written in Rust.
+跨平台文档阅读器与 PDF 工具箱，使用 Rust 编写。
 
-Folix is a GPU-accelerated desktop application that reads PDF, EPUB, TXT, Markdown, DOCX, and image files. It combines a modern reader with annotation tools, auto-reading, full-text search, vocabulary management, and batch PDF operations—all in a tabbed, keyboard-friendly interface.
+Folix 是一个 GPU 加速的桌面应用，支持 PDF、EPUB、TXT、Markdown、DOCX 和图片文件。它融合了现代阅读器与标注工具、自动朗读、全文搜索、生词本以及批量 PDF 操作——全部集成在标签式、键盘友好的界面中。
 
-## Features
+## 功能
 
-### Reading
-- **Multi-format support**: PDF (via MuPDF), EPUB (via rbook), TXT/MD/DOCX (custom parsing), images
-- **Two reading layouts**: Paged mode (traditional page-by-page) and Scroll mode (continuous vertical)
-- **Table of Contents**: Navigate by chapter for all formats
-- **Auto-reading**: Timed page advance or continuous scroll, 0.5x–5.0x speed
-- **Bookmarks**: Per-document, persisted to SQLite
-- **Reading position**: Auto-saved every 5s, restored on reopen
+### 阅读
+- **多格式支持**：PDF（MuPDF）、EPUB（rbook）、TXT/MD/DOCX（自定义解析）、图片
+- **两种布局**：翻页模式（逐页浏览）和滚动模式（连续滚动）
+- **目录导航**：所有格式均支持按章节跳转
+- **自动朗读**：定时翻页或连续滚动，0.5x–5.0x 速度可调
+- **书签**：每文档独立，持久化到 SQLite
+- **阅读位置**：每 5 秒自动保存，重新打开时恢复
 
-### Annotation (Deep Reading Mode)
-- **Highlight**: Select text and apply one of 8 colors
-- **Pen**: Freehand drawing on PDF pages
-- **Note**: Attach text notes to highlighted regions
-- **Eraser**: Remove annotations by clicking
-- All annotations persisted to SQLite
+### 标注（精读模式）
+- **高亮**：选择文本，应用 8 种颜色之一
+- **画笔**：在 PDF 页面上自由绘制
+- **笔记**：为高亮区域附加文字笔记
+- **橡皮擦**：点击删除标注
+- 所有标注持久化到 SQLite
 
-### Text & Search
-- **Text selection**: Click/drag, Shift-click, Ctrl+drag additive selection
-- **Copy to clipboard**: Right-click context menu or Ctrl+C
-- **Full-text search**: Sidebar panel with per-page match highlighting and result navigation
-- **Vocabulary**: Right-click → "Add to Vocabulary" with context sentence
-- **Sentence collection**: Save sentences with page references
+### 文本与搜索
+- **文本选择**：点击/拖拽、Shift 点击、Ctrl 拖拽累加选择
+- **复制到剪贴板**：右键菜单或 Ctrl+C
+- **全文搜索**：侧栏面板，逐页匹配高亮，结果导航
+- **生词本**：右键 → "加入生词本"，附带上下文句子
+- **句子收藏**：保存句子及页码引用
 
-### PDF Toolbox
-- **Merge PDFs**: Combine multiple files in order
-- **Split PDF**: By page range, every N pages, or by TOC chapters
-- **Extract images**: Export each page as PNG
-- **Extract text**: Export all text to .txt
-- **Images to PDF**: Convert images to a single PDF
-- **Page editing**: Rotate, delete, insert blank pages
+### PDF 工具箱
+- **合并 PDF**：按顺序合并多个文件
+- **拆分 PDF**：按页码范围、每 N 页、或按目录章节拆分
+- **提取图片**：将每页导出为 PNG
+- **提取文字**：将所有文字导出到 .txt
+- **图片转 PDF**：将图片文件合并为单个 PDF
+- **页面编辑**：旋转、删除、插入空白页
 
-### Other
-- **Tabbed interface**: Multi-document browsing with middle-click close
-- **MoYu (摸鱼) Mode**: Floating mini-reader for discreet reading
-- **Keyboard shortcuts**: 20+ fully customizable shortcuts
-- **i18n**: Chinese and English UI
-- **Dark/Light mode**
-- **Recent files**: Pinned and unpinned, with "Show in folder"
-- **Drag-and-drop**: Open files by dragging into the window
+### 其他
+- **标签式界面**：多文档浏览，中键关闭标签
+- **摸鱼模式**：浮动迷你阅读器，低调阅读
+- **快捷键**：20+ 个完全可自定义的快捷键
+- **国际化**：中文和英文界面
+- **深色/浅色模式**
+- **最近文件**：支持置顶和"在文件夹中显示"
+- **拖拽打开**：将文件拖入窗口即可打开
 
-## Supported Formats
+## 支持格式
 
-| Format | Engine |
-|--------|--------|
+| 格式 | 引擎 |
+|------|------|
 | PDF | MuPDF |
-| EPUB | rbook + custom reflow |
-| TXT | UTF-8 / GBK / Big5 / Shift_JIS auto-detection |
-| Markdown (.md) | Custom parser (strips markdown syntax) |
+| EPUB | rbook + 自定义重排 |
+| TXT | UTF-8 / GBK / Big5 / Shift_JIS 自动检测 |
+| Markdown (.md) | 自定义解析器（去除 Markdown 语法） |
 | DOCX | ZIP + quick-xml |
 | PNG, JPG, JPEG, GIF, BMP, WEBP, TIFF | image crate |
 
-## Build
+## 构建
 
 ```bash
-# Requires Rust 2021 edition
+# 需要 Rust 2021 edition
 git clone https://github.com/your-username/folix.git
 cd folix
 cargo build --release
 ```
 
-Run with:
+运行：
 
 ```bash
 cargo run --release
 ```
 
-## Tech Stack
+## 技术栈
 
-| Crate | Use |
-|-------|-----|
-| eframe / egui 0.31 | GUI framework (immediate mode, OpenGL) |
-| mupdf 0.8 | PDF rendering and manipulation |
-| rbook 0.7 | EPUB parsing |
-| rusqlite 0.33 | Persistence (progress, annotations, bookmarks, vocabulary) |
-| image 0.25 | Image decoding |
-| tikv-jemallocator | Memory allocator |
-| serde / serde_json | Config serialization |
-| encoding_rs 0.8 | CJK text encoding detection |
-| quick-xml 0.37 | DOCX XML parsing |
+| 依赖库 | 用途 |
+|--------|------|
+| eframe / egui 0.31 | GUI 框架（即时模式，OpenGL） |
+| mupdf 0.8 | PDF 渲染与操作 |
+| rbook 0.7 | EPUB 解析 |
+| rusqlite 0.33 | 持久化（进度、标注、书签、生词） |
+| image 0.25 | 图片解码 |
+| tikv-jemallocator | 内存分配器 |
+| serde / serde_json | 配置序列化 |
+| encoding_rs 0.8 | CJK 文本编码检测 |
+| quick-xml 0.37 | DOCX XML 解析 |
 
-## Project Status
+## 项目状态
 
-Folix is in active development (v0.1.0). EPUB image support and non-CJK font fallback are works in progress.
-
-
+Folix 正在积极开发中（v0.1.0）。EPUB 图片支持和非 CJK 字体回退功能仍在进行中。
