@@ -1647,7 +1647,15 @@ impl FolixApp {
                                 }
                             }
                             ui.label(crate::app::i18n::tr(lng, "Speed:"));
-                            ui.add(egui::Slider::new(&mut tab.modes.auto.speed, 0.5..=5.0).text("x"));
+                            let speed = &mut tab.modes.auto.speed;
+                            let speeds: [f32; 8] = [0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
+                            for &s in &speeds {
+                                let label = if s.fract() == 0.0 { format!("{}x", s as i32) } else { format!("{}x", s) };
+                                let selected = (*speed - s).abs() < 0.01;
+                                if ui.selectable_label(selected, label).clicked() {
+                                    *speed = s;
+                                }
+                            }
 
                             // 摸鱼模式 toggle (Light Reading only)
                             ui.separator();
