@@ -1144,6 +1144,9 @@ impl FolixApp {
         ui.label(crate::app::i18n::tr(lng, "Scroll Speed (px/s):"));
         ui.add(egui::Slider::new(&mut self.state.settings.scroll_speed, 200.0..=4000.0)
             .suffix(crate::app::i18n::tr(lng, " px/s")));
+        ui.label(crate::app::i18n::tr(lng, "摸鱼 Speed:"));
+        ui.add(egui::Slider::new(&mut self.state.settings.mo_yu_speed, 0.5..=5.0)
+            .suffix("x"));
         ui.add_space(20.0);
 
         // ── Keyboard Shortcuts ──
@@ -1380,6 +1383,7 @@ impl FolixApp {
                 if show {
                     let doc = self.state.tabs[idx].document.clone();
                     let mo_yu = &mut self.state.tabs[idx].modes.mo_yu;
+                    mo_yu.speed = self.state.settings.mo_yu_speed;
                     ctx.show_viewport_immediate(
                         egui::ViewportId::from_hash_of("mo_yu_viewport"),
                         egui::ViewportBuilder::default()

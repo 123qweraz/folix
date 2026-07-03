@@ -26,6 +26,7 @@ pub struct AppSettings {
     pub background_color: [u8; 4],
     pub dark_mode: bool,
     pub scroll_speed: f32,
+    pub mo_yu_speed: f32,
     #[serde(default = "super::shortcuts::default_shortcuts")]
     pub shortcuts: ShortcutMap,
     pub language: String,
@@ -46,6 +47,7 @@ impl Default for AppSettings {
             background_color: [255, 255, 255, 255],
             dark_mode: false,
             scroll_speed: 800.0,
+            mo_yu_speed: 1.5,
             shortcuts: default_shortcuts(),
             language: "zh-CN".into(),
             editing_shortcut: None,
