@@ -19,6 +19,7 @@ pub struct FolixApp {
     pub db: Option<Database>,
     pub image_texture_cache: HashMap<String, egui::TextureHandle>,
     pub settings_section: usize,
+    pub last_sync: f64,
 }
 
 impl FolixApp {
@@ -43,6 +44,7 @@ impl FolixApp {
             db,
             image_texture_cache: HashMap::new(),
             settings_section: 0,
+            last_sync: 0.0,
         };
         app.init_features();
         app
@@ -547,6 +549,13 @@ impl eframe::App for FolixApp {
                     }
                 }
             }
+        }
+
+        // Periodic auto-save of reading progress
+        let now = ctx.input(|i| i.time);
+        if (now - self.last_sync) > 5.0 {
+            self.sync_progress();
+            self.last_sync = now;
         }
 
         self.render_menu_bar(ctx);
@@ -1815,6 +1824,12 @@ impl FolixApp {
                     ui.label(crate::app::i18n::tr(lng, "Built with egui + mupdf"));
                 });
         }
+    }
+}
+
+impl Drop for FolixApp {
+    fn drop(&mut self) {
+        self.sync_progress();
     }
 }
 
