@@ -122,7 +122,7 @@ impl AppState {
             tabs: Vec::new(),
             active_tab: 0,
             feature_system: FeatureSystem::new(),
-            ui_visible: false,
+            ui_visible: true,
             settings: AppSettings::default(),
         };
         state.add_new_tab();
