@@ -18,6 +18,7 @@ pub struct FolixApp {
     pub recent_files: Vec<RecentFile>,
     pub db: Option<Database>,
     pub image_texture_cache: HashMap<String, egui::TextureHandle>,
+    pub settings_section: usize,
 }
 
 impl FolixApp {
@@ -41,6 +42,7 @@ impl FolixApp {
             recent_files,
             db,
             image_texture_cache: HashMap::new(),
+            settings_section: 0,
         };
         app.init_features();
         app
@@ -1072,157 +1074,182 @@ impl FolixApp {
     fn render_settings_tab(&mut self, ui: &mut egui::Ui) {
         let lng_s = self.state.settings.language.clone();
         let lng = &lng_s;
-        ui.add_space(20.0);
 
-        // ── Appearance ──
-        ui.heading(crate::app::i18n::tr(lng, "Appearance"));
-        ui.separator();
-        egui::Grid::new("appearance_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
-            ui.label(crate::app::i18n::tr(lng, "Toolbar Icon Size:"));
-            ui.add(egui::Slider::new(&mut self.state.settings.toolbar_icon_size, 12.0..=32.0));
-            ui.end_row();
+        // Sidebar state
+        const SETTINGS_SECTIONS: &[&str] = &["Appearance", "Scrolling", "Shortcuts", "Info"];
+        let section_names: Vec<&str> = SETTINGS_SECTIONS.iter().map(|s| crate::app::i18n::tr(lng, s)).collect();
+        let mut current = self.settings_section;
 
-            ui.label(crate::app::i18n::tr(lng, "Background Color:"));
-            let mut color = [
-                self.state.settings.background_color[0] as f32 / 255.0,
-                self.state.settings.background_color[1] as f32 / 255.0,
-                self.state.settings.background_color[2] as f32 / 255.0,
-                self.state.settings.background_color[3] as f32 / 255.0,
-            ];
-            ui.color_edit_button_rgba_unmultiplied(&mut color);
-            self.state.settings.background_color = [
-                (color[0] * 255.0) as u8,
-                (color[1] * 255.0) as u8,
-                (color[2] * 255.0) as u8,
-                (color[3] * 255.0) as u8,
-            ];
-            ui.end_row();
-        });
-        ui.add_space(8.0);
-
-        // Language selector
-        ui.label(crate::app::i18n::tr(lng, "Language"));
-        egui::ComboBox::from_id_salt("lang_selector")
-            .selected_text({
-                if self.state.settings.language == "zh-CN" { "简体中文" } else { "English" }
-            })
-            .show_ui(ui, |ui| {
-                if ui.selectable_label(self.state.settings.language == "zh-CN", "简体中文").clicked() {
-                    self.state.settings.language = "zh-CN".into();
-                    self.save_config();
-                }
-                if ui.selectable_label(self.state.settings.language == "en", "English").clicked() {
-                    self.state.settings.language = "en".into();
-                    self.save_config();
-                }
-            });
-        ui.add_space(8.0);
-
-        // Toolbar visibility toggles (same format as before, but translated)
-        ui.label(crate::app::i18n::tr(lng, "Toolbars:"));
-        egui::Grid::new("toolbar_grid").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-            ui.checkbox(&mut self.state.settings.show_toolbar_nav, crate::app::i18n::tr(lng, "📖 Nav  ◀▶ ▲▼"));
-            ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_view, crate::app::i18n::tr(lng, "🔍 View  Zoom+Layout"));
-            ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_page, crate::app::i18n::tr(lng, "📄 Page"));
-            ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_auto, crate::app::i18n::tr(lng, "▶ Auto-read"));
-            ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_annotate, crate::app::i18n::tr(lng, "🖊 Annotate"));
-            ui.end_row();
-            ui.checkbox(&mut self.state.settings.show_toolbar_edit, crate::app::i18n::tr(lng, "✏ Page Edit"));
-            ui.end_row();
-        });
-        ui.checkbox(&mut self.state.settings.dark_mode, crate::app::i18n::tr(lng, "Dark Mode (Night)"));
-
-        ui.add_space(20.0);
-
-        // ── Scrolling ──
-        ui.heading(crate::app::i18n::tr(lng, "Scrolling"));
-        ui.separator();
-        ui.label(crate::app::i18n::tr(lng, "Scroll Speed (px/s):"));
-        ui.add(egui::Slider::new(&mut self.state.settings.scroll_speed, 200.0..=4000.0)
-            .suffix(crate::app::i18n::tr(lng, " px/s")));
-        ui.label(crate::app::i18n::tr(lng, "摸鱼 Speed:"));
-        ui.add(egui::Slider::new(&mut self.state.settings.mo_yu_speed, 0.5..=5.0)
-            .suffix("x"));
-        ui.add_space(20.0);
-
-        // ── Keyboard Shortcuts ──
-        ui.heading(crate::app::i18n::tr(lng, "Keyboard Shortcuts"));
-        ui.separator();
-        ui.label(crate::app::i18n::tr(lng, "Click a shortcut row to edit its key binding."));
-        ui.add_space(8.0);
-
-        egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-            egui::Grid::new("shortcuts_grid").num_columns(5).spacing([12.0, 4.0]).striped(true).show(ui, |ui| {
-                ui.strong(crate::app::i18n::tr(lng, "Action"));
-                ui.strong(crate::app::i18n::tr(lng, "Key"));
-                ui.strong("Ctrl");
-                ui.strong(crate::app::i18n::tr(lng, "Shift"));
-                ui.strong(crate::app::i18n::tr(lng, "Alt"));
-                ui.end_row();
-
-                let s = &mut self.state.settings;
-                for (i, action) in ALL_ACTIONS.iter().enumerate() {
-                    let combo = s.shortcuts.get_mut(action);
-
-                    ui.label(crate::app::i18n::tr(lng, action.label()));
-
-                    if s.editing_shortcut == Some(i) {
-                        if let Some(combo) = combo {
-                            let mut key_idx = AVAILABLE_KEYS.iter().position(|k| *k == combo.key).unwrap_or(0);
-                            egui::ComboBox::from_id_salt(format!("key_{}", i))
-                                .selected_text(&combo.key)
-                                .show_ui(ui, |ui| {
-                                    for (j, k) in AVAILABLE_KEYS.iter().enumerate() {
-                                        ui.selectable_value(&mut key_idx, j, *k);
-                                    }
-                                });
-                            if key_idx < AVAILABLE_KEYS.len() {
-                                combo.key = AVAILABLE_KEYS[key_idx].to_string();
-                            }
-                            ui.checkbox(&mut combo.ctrl, "");
-                            ui.checkbox(&mut combo.shift, "");
-                            ui.checkbox(&mut combo.alt, "");
-                        } else {
-                            ui.label(crate::app::i18n::tr(lng, "(unset)"));
-                            ui.label(""); ui.label(""); ui.label("");
+        egui::SidePanel::left("settings_sidebar")
+            .resizable(false)
+            .default_width(140.0)
+            .show_inside(ui, |ui| {
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    for (i, name) in section_names.iter().enumerate() {
+                        let selected = i == current;
+                        if ui.selectable_label(selected, *name).clicked() {
+                            current = i;
                         }
-                        if ui.button("Done").clicked() {
-                            s.editing_shortcut = None;
-                        }
-                    } else {
-                        if let Some(combo) = combo {
-                            if ui.button(combo.display()).clicked() {
-                                s.editing_shortcut = Some(i);
-                            }
-                        } else {
-                            ui.label(crate::app::i18n::tr(lng, "(unset)"));
-                        }
-                        ui.label(""); ui.label(""); ui.label("");
-                        ui.label("");
                     }
-                    ui.end_row();
-                }
+                });
             });
-        });
 
-        ui.add_space(16.0);
+        self.settings_section = current;
 
-        // ── Info ──
-        ui.heading("Info");
-        ui.separator();
-        ui.label(crate::app::i18n::tr(lng, "Config file: ./folix.conf"));
-        ui.horizontal(|ui| {
-            if ui.button(crate::app::i18n::tr(lng, "Reset Shortcuts to Default")).clicked() {
-                self.state.settings.shortcuts = crate::app::core::shortcuts::default_shortcuts();
-                self.state.settings.editing_shortcut = None;
-            }
-            if ui.button(crate::app::i18n::tr(lng, "Save Config Now")).clicked() {
-                self.save_config();
-                self.status_message = crate::app::i18n::tr(lng, "Config saved").to_string();
+        // Right content area with scroll
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(8.0);
+
+            match self.settings_section {
+                0 => {
+                    // ── Appearance ──
+                    ui.heading(crate::app::i18n::tr(lng, "Appearance"));
+                    ui.separator();
+                    egui::Grid::new("appearance_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
+                        ui.label(crate::app::i18n::tr(lng, "Toolbar Icon Size:"));
+                        ui.add(egui::Slider::new(&mut self.state.settings.toolbar_icon_size, 12.0..=32.0));
+                        ui.end_row();
+
+                        ui.label(crate::app::i18n::tr(lng, "Background Color:"));
+                        let mut color = [
+                            self.state.settings.background_color[0] as f32 / 255.0,
+                            self.state.settings.background_color[1] as f32 / 255.0,
+                            self.state.settings.background_color[2] as f32 / 255.0,
+                            self.state.settings.background_color[3] as f32 / 255.0,
+                        ];
+                        ui.color_edit_button_rgba_unmultiplied(&mut color);
+                        self.state.settings.background_color = [
+                            (color[0] * 255.0) as u8,
+                            (color[1] * 255.0) as u8,
+                            (color[2] * 255.0) as u8,
+                            (color[3] * 255.0) as u8,
+                        ];
+                        ui.end_row();
+                    });
+                    ui.add_space(8.0);
+
+                    ui.label(crate::app::i18n::tr(lng, "Language"));
+                    egui::ComboBox::from_id_salt("lang_selector")
+                        .selected_text({
+                            if self.state.settings.language == "zh-CN" { "简体中文" } else { "English" }
+                        })
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(self.state.settings.language == "zh-CN", "简体中文").clicked() {
+                                self.state.settings.language = "zh-CN".into();
+                                self.save_config();
+                            }
+                            if ui.selectable_label(self.state.settings.language == "en", "English").clicked() {
+                                self.state.settings.language = "en".into();
+                                self.save_config();
+                            }
+                        });
+                    ui.add_space(8.0);
+
+                    ui.label(crate::app::i18n::tr(lng, "Toolbars:"));
+                    egui::Grid::new("toolbar_grid").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+                        ui.checkbox(&mut self.state.settings.show_toolbar_nav, crate::app::i18n::tr(lng, "📖 Nav  ◀▶ ▲▼"));
+                        ui.end_row();
+                        ui.checkbox(&mut self.state.settings.show_toolbar_view, crate::app::i18n::tr(lng, "🔍 View  Zoom+Layout"));
+                        ui.end_row();
+                        ui.checkbox(&mut self.state.settings.show_toolbar_page, crate::app::i18n::tr(lng, "📄 Page"));
+                        ui.end_row();
+                        ui.checkbox(&mut self.state.settings.show_toolbar_auto, crate::app::i18n::tr(lng, "▶ Auto-read"));
+                        ui.end_row();
+                        ui.checkbox(&mut self.state.settings.show_toolbar_annotate, crate::app::i18n::tr(lng, "🖊 Annotate"));
+                        ui.end_row();
+                        ui.checkbox(&mut self.state.settings.show_toolbar_edit, crate::app::i18n::tr(lng, "✏ Page Edit"));
+                        ui.end_row();
+                    });
+                    ui.checkbox(&mut self.state.settings.dark_mode, crate::app::i18n::tr(lng, "Dark Mode (Night)"));
+                }
+                1 => {
+                    // ── Scrolling ──
+                    ui.heading(crate::app::i18n::tr(lng, "Scrolling"));
+                    ui.separator();
+                    ui.label(crate::app::i18n::tr(lng, "Scroll Speed (px/s):"));
+                    ui.add(egui::Slider::new(&mut self.state.settings.scroll_speed, 200.0..=4000.0)
+                        .suffix(crate::app::i18n::tr(lng, " px/s")));
+                    ui.label(crate::app::i18n::tr(lng, "摸鱼 Speed:"));
+                    ui.add(egui::Slider::new(&mut self.state.settings.mo_yu_speed, 0.5..=5.0)
+                        .suffix("x"));
+                }
+                2 => {
+                    // ── Keyboard Shortcuts ──
+                    ui.heading(crate::app::i18n::tr(lng, "Keyboard Shortcuts"));
+                    ui.separator();
+                    ui.label(crate::app::i18n::tr(lng, "Click a shortcut row to edit its key binding."));
+                    ui.add_space(8.0);
+
+                    egui::Grid::new("shortcuts_grid").num_columns(5).spacing([12.0, 4.0]).striped(true).show(ui, |ui| {
+                        ui.strong(crate::app::i18n::tr(lng, "Action"));
+                        ui.strong(crate::app::i18n::tr(lng, "Key"));
+                        ui.strong("Ctrl");
+                        ui.strong(crate::app::i18n::tr(lng, "Shift"));
+                        ui.strong(crate::app::i18n::tr(lng, "Alt"));
+                        ui.end_row();
+
+                        let s = &mut self.state.settings;
+                        for (i, action) in ALL_ACTIONS.iter().enumerate() {
+                            let combo = s.shortcuts.get_mut(action);
+
+                            ui.label(crate::app::i18n::tr(lng, action.label()));
+
+                            if s.editing_shortcut == Some(i) {
+                                if let Some(combo) = combo {
+                                    let mut key_idx = AVAILABLE_KEYS.iter().position(|k| *k == combo.key).unwrap_or(0);
+                                    egui::ComboBox::from_id_salt(format!("key_{}", i))
+                                        .selected_text(&combo.key)
+                                        .show_ui(ui, |ui| {
+                                            for (j, k) in AVAILABLE_KEYS.iter().enumerate() {
+                                                ui.selectable_value(&mut key_idx, j, *k);
+                                            }
+                                        });
+                                    if key_idx < AVAILABLE_KEYS.len() {
+                                        combo.key = AVAILABLE_KEYS[key_idx].to_string();
+                                    }
+                                    ui.checkbox(&mut combo.ctrl, "");
+                                    ui.checkbox(&mut combo.shift, "");
+                                    ui.checkbox(&mut combo.alt, "");
+                                } else {
+                                    ui.label(crate::app::i18n::tr(lng, "(unset)"));
+                                    ui.label(""); ui.label(""); ui.label("");
+                                }
+                                if ui.button("Done").clicked() {
+                                    s.editing_shortcut = None;
+                                }
+                            } else {
+                                if let Some(combo) = combo {
+                                    if ui.button(combo.display()).clicked() {
+                                        s.editing_shortcut = Some(i);
+                                    }
+                                } else {
+                                    ui.label(crate::app::i18n::tr(lng, "(unset)"));
+                                }
+                                ui.label(""); ui.label(""); ui.label("");
+                                ui.label("");
+                            }
+                            ui.end_row();
+                        }
+                    });
+                }
+                3 => {
+                    // ── Info ──
+                    ui.heading("Info");
+                    ui.separator();
+                    ui.label(crate::app::i18n::tr(lng, "Config file: ./folix.conf"));
+                    ui.horizontal(|ui| {
+                        if ui.button(crate::app::i18n::tr(lng, "Reset Shortcuts to Default")).clicked() {
+                            self.state.settings.shortcuts = crate::app::core::shortcuts::default_shortcuts();
+                            self.state.settings.editing_shortcut = None;
+                        }
+                        if ui.button(crate::app::i18n::tr(lng, "Save Config Now")).clicked() {
+                            self.save_config();
+                            self.status_message = crate::app::i18n::tr(lng, "Config saved").to_string();
+                        }
+                    });
+                }
+                _ => {}
             }
         });
     }
