@@ -1109,8 +1109,17 @@ pub fn render_mo_yu_ui(
         }
     }
 
+    // Fill available space and make it a drag handle for the window
+    let text_color = ui.style().visuals.text_color();
+    let (_, resp) = ui.allocate_exact_size(
+        ui.available_size(),
+        egui::Sense::drag(),
+    );
+    if resp.dragged() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+
     if mo_yu.sentences.is_empty() {
-        ui.label("");
         return;
     }
 
@@ -1140,7 +1149,7 @@ pub fn render_mo_yu_ui(
         egui::Label::new(
             egui::RichText::new(sentence)
                 .size(16.0)
-                .color(egui::Color32::from_gray(200)),
+                .color(text_color),
         )
         .truncate()
         .selectable(false),
