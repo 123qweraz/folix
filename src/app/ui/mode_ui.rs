@@ -1074,7 +1074,7 @@ pub fn extract_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
-/// Render the 摸鱼模式 UI — one sentence at a time with controls.
+/// Render the 摸鱼模式 UI — minimal single-line text display.
 /// Called from the mo-yu viewport (or embedded window fallback).
 pub fn render_mo_yu_ui(
     ui: &mut egui::Ui,
@@ -1109,13 +1109,8 @@ pub fn render_mo_yu_ui(
         }
     }
 
-    let window_w = ui.available_width().max(200.0);
-
     if mo_yu.sentences.is_empty() {
-        ui.vertical_centered(|ui| {
-            ui.add_space(40.0);
-            ui.label("No content loaded");
-        });
+        ui.label("");
         return;
     }
 
@@ -1129,7 +1124,6 @@ pub fn render_mo_yu_ui(
             mo_yu.timer = 0.0;
             mo_yu.sentence_idx += 1;
             if mo_yu.sentence_idx >= mo_yu.sentences.len() {
-                // Silently advance to next page
                 mo_yu.page += 1;
                 mo_yu.sentences.clear();
                 mo_yu.sentence_idx = 0;
@@ -1141,64 +1135,16 @@ pub fn render_mo_yu_ui(
         .map(|s| s.as_str())
         .unwrap_or("");
 
-    let progress_ratio = if mo_yu.playing && !mo_yu.sentences.is_empty() {
-        let s = &mo_yu.sentences[mo_yu.sentence_idx];
-        let dur = ((s.len() as f32 / 8.0).max(1.5) / mo_yu.speed).min(10.0);
-        (mo_yu.timer / dur).min(1.0)
-    } else {
-        0.0
-    };
-
-    ui.vertical_centered(|ui| {
-        // Progress bar
-        let pb = egui::ProgressBar::new(progress_ratio)
-            .show_percentage()
-            .desired_width(window_w - 20.0);
-        ui.add(pb);
-        ui.add_space(8.0);
-
-        // Current sentence — wrapped for fixed width
-        let label = egui::Label::new(
+    // Single line of text, truncated
+    ui.add(
+        egui::Label::new(
             egui::RichText::new(sentence)
-                .size(18.0)
-                .color(egui::Color32::from_rgb(50, 50, 50)),
+                .size(16.0)
+                .color(egui::Color32::from_gray(200)),
         )
-        .wrap()
-        .selectable(true);
-        ui.add_sized(egui::vec2(window_w - 20.0, 80.0), label);
-
-        ui.add_space(4.0);
-
-        // Controls row
-        ui.horizontal(|ui| {
-            if ui.button("⏮").clicked() {
-                if mo_yu.sentence_idx > 0 {
-                    mo_yu.sentence_idx -= 1;
-                    mo_yu.timer = 0.0;
-                }
-            }
-            let play_label = if mo_yu.playing { "⏸" } else { "▶" };
-            if ui.button(play_label).clicked() {
-                mo_yu.playing = !mo_yu.playing;
-            }
-            if ui.button("⏭").clicked() {
-                if !mo_yu.sentences.is_empty() {
-                    mo_yu.sentence_idx = (mo_yu.sentence_idx + 1).min(mo_yu.sentences.len() - 1);
-                    mo_yu.timer = 0.0;
-                }
-            }
-
-            ui.add_space(10.0);
-            ui.label("Speed:");
-            ui.add(egui::Slider::new(&mut mo_yu.speed, 0.5..=5.0).text("x"));
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if !mo_yu.sentences.is_empty() {
-                    ui.label(format!("{}/{}", mo_yu.sentence_idx + 1, mo_yu.sentences.len()));
-                }
-            });
-        });
-    });
+        .truncate()
+        .selectable(false),
+    );
 
     if mo_yu.playing {
         ui.ctx().request_repaint();

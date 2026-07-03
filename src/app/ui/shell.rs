@@ -1383,16 +1383,19 @@ impl FolixApp {
                     ctx.show_viewport_immediate(
                         egui::ViewportId::from_hash_of("mo_yu_viewport"),
                         egui::ViewportBuilder::default()
-                            .with_title("🎵 摸鱼")
-                            .with_inner_size(egui::vec2(360.0, 200.0))
-                            .with_resizable(false),
+                            .with_title("")
+                            .with_inner_size(egui::vec2(400.0, 28.0))
+                            .with_resizable(false)
+                            .with_decorations(false),
                         |vp_ctx, class| {
                             if class == egui::ViewportClass::Embedded {
                                 let mut visible = mo_yu.visible;
-                                let resp = egui::Window::new("🎵 摸鱼")
+                                let resp = egui::Window::new("")
                                     .id(egui::Id::new("mo_yu_window"))
                                     .open(&mut visible)
-                                    .default_size(egui::vec2(360.0, 200.0))
+                                    .title_bar(false)
+                                    .default_size(egui::vec2(400.0, 28.0))
+                                    .resizable(false)
                                     .show(vp_ctx, |ui| {
                                         mode_ui::render_mo_yu_ui(ui, mo_yu, &doc);
                                     });
