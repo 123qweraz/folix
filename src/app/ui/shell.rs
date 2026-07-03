@@ -396,8 +396,8 @@ impl eframe::App for FolixApp {
         }
 
         if self.shortcut(ctx, SA::CloseTab) {
-            self.state.close_tab(self.state.active_tab);
             self.sync_progress();
+            self.state.close_tab(self.state.active_tab);
         }
 
         if self.shortcut(ctx, SA::Quit) {
@@ -946,6 +946,7 @@ impl FolixApp {
                 }
 
                 if let Some(idx) = to_close {
+                    self.sync_progress();
                     self.state.close_tab(idx);
                 }
             });
