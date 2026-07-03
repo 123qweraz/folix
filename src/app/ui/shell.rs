@@ -1648,7 +1648,7 @@ impl FolixApp {
                             }
                             ui.label(crate::app::i18n::tr(lng, "Speed:"));
                             let speed = &mut tab.modes.auto.speed;
-                            let speeds: [f32; 8] = [0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
+                            let speeds: [f32; 7] = [0.1, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0];
                             for &s in &speeds {
                                 let label = if s.fract() == 0.0 { format!("{}x", s as i32) } else { format!("{}x", s) };
                                 let selected = (*speed - s).abs() < 0.01;
