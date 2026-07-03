@@ -171,6 +171,7 @@ pub struct MoYuState {
     pub sentence_idx: usize,
     pub timer: f32,
     pub page: usize,
+    pub scroll_x: f32,
 }
 
 impl MoYuState {
@@ -184,6 +185,7 @@ impl MoYuState {
             sentence_idx: 0,
             timer: 0.0,
             page: 0,
+            scroll_x: 0.0,
         }
     }
 }

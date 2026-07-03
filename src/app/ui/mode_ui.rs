@@ -1050,39 +1050,26 @@ fn render_image_page(
     });
 }
 
-/// Strip punctuation from text and split into display chunks (one line per chunk).
-pub fn prepare_mo_yu_chunks(text: &str, max_chars: usize) -> Vec<String> {
-    let clean: String = text.chars()
-        .filter(|c| !c.is_ascii_punctuation() && !matches!(c,
-            '。' | '！' | '？' | '，' | '；' | '：' | '、' | '“' | '”' | '‘' | '’' |
-            '《' | '》' | '（' | '）' | '【' | '】' | '·' | '—' | '～' | '…' |
-            '『' | '』' | '「' | '」' | '─' | '━'
-        ))
-        .collect();
-
-    let mut chunks = Vec::new();
-    for line in clean.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.chars().count() <= max_chars {
-            chunks.push(line.to_string());
-        } else {
-            let mut start = 0;
-            let chars: Vec<char> = line.chars().collect();
-            while start < chars.len() {
-                let end = (start + max_chars).min(chars.len());
-                let chunk: String = chars[start..end].iter().collect();
-                let trimmed = chunk.trim().to_string();
-                if !trimmed.is_empty() {
-                    chunks.push(trimmed);
-                }
-                start = end;
+/// Split text into sentences at sentence-ending punctuation only.
+/// Keeps all internal punctuation (commas, quotes, etc.) intact.
+pub fn split_sentences(text: &str) -> Vec<String> {
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    for c in text.chars() {
+        current.push(c);
+        if matches!(c, '。' | '！' | '？' | '.' | '!' | '?' | '\n') {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() && trimmed.len() > 1 {
+                sentences.push(trimmed);
             }
+            current.clear();
         }
     }
-    chunks
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() && trimmed.len() > 1 {
+        sentences.push(trimmed);
+    }
+    sentences
 }
 
 /// Extract sentences from text, splitting on Chinese/English punctuation.
@@ -1109,20 +1096,18 @@ pub fn extract_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
-/// Render the 摸鱼模式 UI — minimal single-line text display.
-/// Called from the mo-yu viewport (or embedded window fallback).
+/// Render the 摸鱼模式 UI — minimal single-line text with marquee for long sentences.
 pub fn render_mo_yu_ui(
     ui: &mut egui::Ui,
     mo_yu: &mut MoYuState,
     document: &Option<Arc<Mutex<DocumentHandle>>>,
 ) {
-    // Clear background to prevent text stacking
     let bg = ui.style().visuals.window_fill();
     ui.painter().rect_filled(ui.max_rect(), 0.0, bg);
 
     let dt = ui.input(|i| i.unstable_dt);
 
-    // Re-extract chunks if empty
+    // Re-extract sentences if empty
     if mo_yu.sentences.is_empty() {
         if let Some(ref doc) = document {
             let doc = doc.lock();
@@ -1139,43 +1124,28 @@ pub fn render_mo_yu_ui(
                 String::new()
             };
             drop(doc);
-            // ~22 Chinese chars fit in 400px with 16px font minus handle
-            let chunks = prepare_mo_yu_chunks(&text, 22);
-            if !chunks.is_empty() {
-                mo_yu.sentences = chunks;
+            let sentences = split_sentences(&text);
+            if !sentences.is_empty() {
+                mo_yu.sentences = sentences;
                 mo_yu.sentence_idx = 0;
                 mo_yu.timer = 0.0;
+                mo_yu.scroll_x = 0.0;
             }
         }
     }
 
-    // Advance timer when playing
-    if mo_yu.playing && !mo_yu.sentences.is_empty() {
-        mo_yu.timer += dt;
-        let chunk = &mo_yu.sentences[mo_yu.sentence_idx];
-        let duration = ((chunk.len() as f32 / 8.0).max(1.5) / mo_yu.speed).min(10.0);
-
-        if mo_yu.timer >= duration {
-            mo_yu.timer = 0.0;
-            mo_yu.sentence_idx += 1;
-            if mo_yu.sentence_idx >= mo_yu.sentences.len() {
-                mo_yu.page += 1;
-                mo_yu.sentences.clear();
-                mo_yu.sentence_idx = 0;
-            }
-        }
-    }
-
-    let chunk = mo_yu.sentences.get(mo_yu.sentence_idx)
+    let sentence = mo_yu.sentences.get(mo_yu.sentence_idx)
         .map(|s| s.as_str())
         .unwrap_or("");
 
     let text_color = ui.style().visuals.text_color();
+    let font_id = egui::FontId::proportional(16.0);
 
-    // Center content vertically
+    // Center vertically
     let av = ui.available_size();
     let content_h = 20.0;
     ui.add_space(((av.y - content_h) / 2.0).max(0.0));
+
     ui.horizontal(|ui| {
         // Drag handle
         let handle = ui.add(
@@ -1188,16 +1158,65 @@ pub fn render_mo_yu_ui(
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
-        // Single line of text
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(chunk)
-                    .size(16.0)
-                    .color(text_color),
-            )
-            .selectable(false),
-        );
+        // Measure text & available width
+        let avail_w = ui.available_width().max(10.0);
+        let text_w = ui.fonts(|f| f.layout_no_wrap(sentence.to_string(), font_id.clone(), text_color))
+            .rect.width();
+
+        if text_w <= avail_w {
+            // Sentence fits — show normally
+            ui.add(egui::Label::new(
+                egui::RichText::new(sentence).size(16.0).color(text_color),
+            ).selectable(false));
+        } else {
+            // Marquee: scroll text left continuously
+            let (text_rect, _) = ui.allocate_exact_size(
+                egui::vec2(avail_w, content_h),
+                egui::Sense::hover(),
+            );
+
+            const SPEED: f32 = 50.0;
+            let cycle = text_w + 60.0; // scroll + gap
+            mo_yu.scroll_x = (mo_yu.scroll_x + dt * SPEED) % cycle;
+
+            let paint_x = if mo_yu.scroll_x <= text_w {
+                text_rect.left() - mo_yu.scroll_x
+            } else {
+                text_rect.left() + avail_w // gap, off-screen right
+            };
+
+            ui.painter().text(
+                egui::pos2(paint_x, text_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                sentence,
+                font_id,
+                text_color,
+            );
+        }
     });
+
+    // Advance timer when playing
+    if mo_yu.playing && !mo_yu.sentences.is_empty() {
+        let s = &mo_yu.sentences[mo_yu.sentence_idx];
+        let base = (s.len() as f32 / 8.0).max(1.5) / mo_yu.speed;
+        // For long sentences, give extra time for scrolling
+        let text_w_est = s.len() as f32 * 9.0; // rough estimate
+        let avail_w_est = 360.0;
+        let extra = if text_w_est > avail_w_est { (text_w_est - avail_w_est) / 50.0 } else { 0.0 };
+        let duration = (base + extra).min(15.0);
+
+        mo_yu.timer += dt;
+        if mo_yu.timer >= duration {
+            mo_yu.timer = 0.0;
+            mo_yu.scroll_x = 0.0;
+            mo_yu.sentence_idx += 1;
+            if mo_yu.sentence_idx >= mo_yu.sentences.len() {
+                mo_yu.page += 1;
+                mo_yu.sentences.clear();
+                mo_yu.sentence_idx = 0;
+            }
+        }
+    }
 
     if mo_yu.playing {
         ui.ctx().request_repaint();
