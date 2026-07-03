@@ -1086,9 +1086,20 @@ pub fn render_mo_yu_ui(
     // Re-extract sentences if page changed since last extraction
     if mo_yu.sentences.is_empty() {
         if let Some(ref doc) = document {
-            let text = doc.lock().as_fixed()
-                .map(|f| f.page_text(mo_yu.page))
-                .unwrap_or_default();
+            let doc = doc.lock();
+            let text = if let Some(fixed) = doc.as_fixed() {
+                fixed.page_text(mo_yu.page)
+            } else if let Some(reflow) = doc.as_reflow() {
+                let mut all = String::new();
+                for i in 0..reflow.chapter_count() {
+                    all.push_str(&reflow.chapter_text(i));
+                    all.push('\n');
+                }
+                all
+            } else {
+                String::new()
+            };
+            drop(doc);
             let sentences = extract_sentences(&text);
             if !sentences.is_empty() {
                 mo_yu.sentences = sentences;

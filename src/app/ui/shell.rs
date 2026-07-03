@@ -1388,16 +1388,26 @@ impl FolixApp {
                             .with_resizable(false),
                         |vp_ctx, class| {
                             if class == egui::ViewportClass::Embedded {
-                                egui::Window::new("🎵 摸鱼")
+                                let mut visible = mo_yu.visible;
+                                let resp = egui::Window::new("🎵 摸鱼")
                                     .id(egui::Id::new("mo_yu_window"))
+                                    .open(&mut visible)
                                     .default_size(egui::vec2(360.0, 200.0))
                                     .show(vp_ctx, |ui| {
                                         mode_ui::render_mo_yu_ui(ui, mo_yu, &doc);
                                     });
+                                if resp.is_some() {
+                                    mo_yu.visible = visible;
+                                } else {
+                                    mo_yu.visible = false;
+                                }
                             } else {
                                 egui::CentralPanel::default().show(vp_ctx, |ui| {
                                     mode_ui::render_mo_yu_ui(ui, mo_yu, &doc);
                                 });
+                                if vp_ctx.input(|i| i.viewport().close_requested()) {
+                                    mo_yu.visible = false;
+                                }
                             }
                         },
                     );
