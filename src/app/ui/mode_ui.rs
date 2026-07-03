@@ -1109,22 +1109,8 @@ pub fn render_mo_yu_ui(
         }
     }
 
-    // Fill available space and make it a drag handle for the window
-    let text_color = ui.style().visuals.text_color();
-    let (_, resp) = ui.allocate_exact_size(
-        ui.available_size(),
-        egui::Sense::drag(),
-    );
-    if resp.dragged() {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-    }
-
-    if mo_yu.sentences.is_empty() {
-        return;
-    }
-
     // Advance timer when playing
-    if mo_yu.playing {
+    if mo_yu.playing && !mo_yu.sentences.is_empty() {
         mo_yu.timer += dt;
         let sentence = &mo_yu.sentences[mo_yu.sentence_idx];
         let duration = ((sentence.len() as f32 / 8.0).max(1.5) / mo_yu.speed).min(10.0);
@@ -1144,16 +1130,31 @@ pub fn render_mo_yu_ui(
         .map(|s| s.as_str())
         .unwrap_or("");
 
-    // Single line of text, truncated
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(sentence)
-                .size(16.0)
-                .color(text_color),
-        )
-        .truncate()
-        .selectable(false),
-    );
+    let text_color = ui.style().visuals.text_color();
+
+    ui.horizontal(|ui| {
+        // Small drag handle
+        let handle = ui.add(
+            egui::Label::new(
+                egui::RichText::new("⠿").size(11.0).color(text_color),
+            )
+            .sense(egui::Sense::drag()),
+        );
+        if handle.dragged() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+
+        // Single line of text, truncated
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(sentence)
+                    .size(16.0)
+                    .color(text_color),
+            )
+            .truncate()
+            .selectable(false),
+        );
+    });
 
     if mo_yu.playing {
         ui.ctx().request_repaint();
