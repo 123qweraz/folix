@@ -1135,8 +1135,8 @@ pub fn render_mo_yu_ui(
                 String::new()
             };
             drop(doc);
-            // ~25 Chinese chars fit in 400px with 16px font
-            let chunks = prepare_mo_yu_chunks(&text, 25);
+            // ~22 Chinese chars fit in 400px with 16px font minus handle
+            let chunks = prepare_mo_yu_chunks(&text, 22);
             if !chunks.is_empty() {
                 mo_yu.sentences = chunks;
                 mo_yu.sentence_idx = 0;
@@ -1173,10 +1173,10 @@ pub fn render_mo_yu_ui(
     let content_h = 20.0;
     ui.add_space(((av.y - content_h) / 2.0).max(0.0));
     ui.horizontal(|ui| {
-        // Small drag handle
+        // Drag handle
         let handle = ui.add(
             egui::Label::new(
-                egui::RichText::new("|").size(16.0).color(text_color),
+                egui::RichText::new("||").size(16.0).color(text_color),
             )
             .sense(egui::Sense::click()),
         );
@@ -1184,14 +1184,13 @@ pub fn render_mo_yu_ui(
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
-        // Single line of text, truncated
+        // Single line of text
         ui.add(
             egui::Label::new(
                 egui::RichText::new(chunk)
                     .size(16.0)
                     .color(text_color),
             )
-            .truncate()
             .selectable(false),
         );
     });

@@ -1386,8 +1386,7 @@ impl FolixApp {
                             .with_title("")
                             .with_inner_size(egui::vec2(400.0, 24.0))
                             .with_resizable(false)
-                            .with_decorations(false)
-                            .with_transparent(true),
+                            .with_decorations(false),
                         |vp_ctx, class| {
                             if class == egui::ViewportClass::Embedded {
                                 let mut visible = mo_yu.visible;
