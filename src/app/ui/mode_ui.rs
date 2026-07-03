@@ -1050,7 +1050,7 @@ fn render_image_page(
     });
 }
 
-/// Extract sentences from text, splitting on 。！？.!? and newlines.
+/// Extract sentences from text, splitting on Chinese/English punctuation.
 pub fn extract_sentences(text: &str) -> Vec<String> {
     if text.is_empty() {
         return vec![];
@@ -1059,16 +1059,16 @@ pub fn extract_sentences(text: &str) -> Vec<String> {
     let mut current = String::new();
     for c in text.chars() {
         current.push(c);
-        if matches!(c, '。' | '！' | '？' | '.' | '!' | '?' | '\n') {
+        if matches!(c, '。' | '！' | '？' | '，' | '；' | '：' | '.' | '!' | '?' | ',' | ';' | '\n') {
             let trimmed = current.trim().to_string();
-            if !trimmed.is_empty() {
+            if !trimmed.is_empty() && trimmed.len() > 1 {
                 sentences.push(trimmed);
             }
             current.clear();
         }
     }
     let trimmed = current.trim().to_string();
-    if !trimmed.is_empty() {
+    if !trimmed.is_empty() && trimmed.len() > 1 {
         sentences.push(trimmed);
     }
     sentences
@@ -1136,11 +1136,11 @@ pub fn render_mo_yu_ui(
         // Small drag handle
         let handle = ui.add(
             egui::Label::new(
-                egui::RichText::new("⠿").size(11.0).color(text_color),
+                egui::RichText::new("|").size(16.0).color(text_color),
             )
-            .sense(egui::Sense::drag()),
+            .sense(egui::Sense::click()),
         );
-        if handle.dragged() {
+        if handle.is_pointer_button_down_on() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
