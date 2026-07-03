@@ -1384,9 +1384,10 @@ impl FolixApp {
                         egui::ViewportId::from_hash_of("mo_yu_viewport"),
                         egui::ViewportBuilder::default()
                             .with_title("")
-                            .with_inner_size(egui::vec2(400.0, 28.0))
+                            .with_inner_size(egui::vec2(400.0, 24.0))
                             .with_resizable(false)
-                            .with_decorations(false),
+                            .with_decorations(false)
+                            .with_transparent(true),
                         |vp_ctx, class| {
                             if class == egui::ViewportClass::Embedded {
                                 let mut visible = mo_yu.visible;
@@ -1394,7 +1395,8 @@ impl FolixApp {
                                     .id(egui::Id::new("mo_yu_window"))
                                     .open(&mut visible)
                                     .title_bar(false)
-                                    .default_size(egui::vec2(400.0, 28.0))
+                                    .frame(egui::Frame::NONE)
+                                    .default_size(egui::vec2(400.0, 24.0))
                                     .resizable(false)
                                     .show(vp_ctx, |ui| {
                                         mode_ui::render_mo_yu_ui(ui, mo_yu, &doc);
@@ -1405,9 +1407,11 @@ impl FolixApp {
                                     mo_yu.visible = false;
                                 }
                             } else {
-                                egui::CentralPanel::default().show(vp_ctx, |ui| {
-                                    mode_ui::render_mo_yu_ui(ui, mo_yu, &doc);
-                                });
+                                egui::CentralPanel::default()
+                                    .frame(egui::Frame::NONE)
+                                    .show(vp_ctx, |ui| {
+                                        mode_ui::render_mo_yu_ui(ui, mo_yu, &doc);
+                                    });
                                 if vp_ctx.input(|i| i.viewport().close_requested()) {
                                     mo_yu.visible = false;
                                 }

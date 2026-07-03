@@ -1050,6 +1050,41 @@ fn render_image_page(
     });
 }
 
+/// Strip punctuation from text and split into display chunks (one line per chunk).
+pub fn prepare_mo_yu_chunks(text: &str, max_chars: usize) -> Vec<String> {
+    let clean: String = text.chars()
+        .filter(|c| !c.is_ascii_punctuation() && !matches!(c,
+            '。' | '！' | '？' | '，' | '；' | '：' | '、' | '“' | '”' | '‘' | '’' |
+            '《' | '》' | '（' | '）' | '【' | '】' | '·' | '—' | '～' | '…' |
+            '『' | '』' | '「' | '」' | '─' | '━'
+        ))
+        .collect();
+
+    let mut chunks = Vec::new();
+    for line in clean.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.chars().count() <= max_chars {
+            chunks.push(line.to_string());
+        } else {
+            let mut start = 0;
+            let chars: Vec<char> = line.chars().collect();
+            while start < chars.len() {
+                let end = (start + max_chars).min(chars.len());
+                let chunk: String = chars[start..end].iter().collect();
+                let trimmed = chunk.trim().to_string();
+                if !trimmed.is_empty() {
+                    chunks.push(trimmed);
+                }
+                start = end;
+            }
+        }
+    }
+    chunks
+}
+
 /// Extract sentences from text, splitting on Chinese/English punctuation.
 pub fn extract_sentences(text: &str) -> Vec<String> {
     if text.is_empty() {
@@ -1083,7 +1118,7 @@ pub fn render_mo_yu_ui(
 ) {
     let dt = ui.input(|i| i.unstable_dt);
 
-    // Re-extract sentences if page changed since last extraction
+    // Re-extract chunks if empty
     if mo_yu.sentences.is_empty() {
         if let Some(ref doc) = document {
             let doc = doc.lock();
@@ -1100,9 +1135,10 @@ pub fn render_mo_yu_ui(
                 String::new()
             };
             drop(doc);
-            let sentences = extract_sentences(&text);
-            if !sentences.is_empty() {
-                mo_yu.sentences = sentences;
+            // ~25 Chinese chars fit in 400px with 16px font
+            let chunks = prepare_mo_yu_chunks(&text, 25);
+            if !chunks.is_empty() {
+                mo_yu.sentences = chunks;
                 mo_yu.sentence_idx = 0;
                 mo_yu.timer = 0.0;
             }
@@ -1112,8 +1148,8 @@ pub fn render_mo_yu_ui(
     // Advance timer when playing
     if mo_yu.playing && !mo_yu.sentences.is_empty() {
         mo_yu.timer += dt;
-        let sentence = &mo_yu.sentences[mo_yu.sentence_idx];
-        let duration = ((sentence.len() as f32 / 8.0).max(1.5) / mo_yu.speed).min(10.0);
+        let chunk = &mo_yu.sentences[mo_yu.sentence_idx];
+        let duration = ((chunk.len() as f32 / 8.0).max(1.5) / mo_yu.speed).min(10.0);
 
         if mo_yu.timer >= duration {
             mo_yu.timer = 0.0;
@@ -1126,12 +1162,16 @@ pub fn render_mo_yu_ui(
         }
     }
 
-    let sentence = mo_yu.sentences.get(mo_yu.sentence_idx)
+    let chunk = mo_yu.sentences.get(mo_yu.sentence_idx)
         .map(|s| s.as_str())
         .unwrap_or("");
 
     let text_color = ui.style().visuals.text_color();
 
+    // Center content vertically
+    let av = ui.available_size();
+    let content_h = 20.0;
+    ui.add_space(((av.y - content_h) / 2.0).max(0.0));
     ui.horizontal(|ui| {
         // Small drag handle
         let handle = ui.add(
@@ -1147,7 +1187,7 @@ pub fn render_mo_yu_ui(
         // Single line of text, truncated
         ui.add(
             egui::Label::new(
-                egui::RichText::new(sentence)
+                egui::RichText::new(chunk)
                     .size(16.0)
                     .color(text_color),
             )
