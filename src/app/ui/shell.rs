@@ -910,7 +910,8 @@ impl FolixApp {
                         .truncate()
                         .selectable(false)
                     );
-                    let x_resp = cui.add(
+                    let x_resp = cui.add_sized(
+                        egui::vec2(16.0, inner.height()),
                         egui::Label::new(
                             egui::RichText::new("×").size(13.0).color(style.visuals.text_color()),
                         )
