@@ -881,7 +881,7 @@ impl FolixApp {
                     }
                     // Paint background with active/hover/ inactive states
                     let bg = if is_active {
-                        style.visuals.selection.bg_fill
+                        egui::Color32::WHITE
                     } else if tab_resp.hovered() {
                         style.visuals.faint_bg_color
                     } else {
