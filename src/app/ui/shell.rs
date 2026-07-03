@@ -911,7 +911,7 @@ impl FolixApp {
                         egui::pos2(inner.right() - 16.0, inner.top()),
                         egui::vec2(16.0, inner.height()),
                     );
-                    let x_resp = ui.interact(x_rect, ui.next_auto_id(), egui::Sense::click());
+                    let x_resp = ui.interact(x_rect, egui::Id::new(("tab_close_btn", i)), egui::Sense::click());
                     if tab_resp.middle_clicked() {
                         to_close = Some(i);
                     }
