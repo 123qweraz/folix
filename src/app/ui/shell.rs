@@ -52,7 +52,7 @@ impl FolixApp {
 
     fn sync_progress(&self) {
         if let Some(ref db) = self.db {
-            if let Some(tab) = self.state.current_tab() {
+            for tab in &self.state.tabs {
                 if let Some(ref book_id) = tab.book_id {
                     let _ = db.save_progress(book_id, tab.modes.page, tab.modes.auto.progress as f64);
                 }
