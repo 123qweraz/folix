@@ -6,6 +6,7 @@ pub static DEFAULT_SHORTCUTS: LazyLock<ShortcutMap> = LazyLock::new(default_shor
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 pub enum ShortcutAction {
     OpenFile,
+    NewTab,
     CloseTab,
     Quit,
     Reload,
@@ -33,6 +34,7 @@ impl ShortcutAction {
     pub fn label(&self) -> &str {
         match self {
             ShortcutAction::OpenFile => "Open File",
+            ShortcutAction::NewTab => "New Tab",
             ShortcutAction::CloseTab => "Close Tab",
             ShortcutAction::Quit => "Quit",
             ShortcutAction::Reload => "Reload",
@@ -115,6 +117,7 @@ pub type ShortcutMap = std::collections::HashMap<ShortcutAction, KeyCombo>;
 pub fn default_shortcuts() -> ShortcutMap {
     let mut m = std::collections::HashMap::new();
     m.insert(ShortcutAction::OpenFile, KeyCombo { key: "O".into(), ctrl: true, shift: false, alt: false });
+    m.insert(ShortcutAction::NewTab, KeyCombo { key: "T".into(), ctrl: true, shift: false, alt: false });
     m.insert(ShortcutAction::CloseTab, KeyCombo { key: "W".into(), ctrl: true, shift: false, alt: false });
     m.insert(ShortcutAction::Quit, KeyCombo { key: "Q".into(), ctrl: true, shift: false, alt: false });
     m.insert(ShortcutAction::Reload, KeyCombo { key: "F5".into(), ctrl: false, shift: false, alt: false });
@@ -141,6 +144,7 @@ pub fn default_shortcuts() -> ShortcutMap {
 
 pub const ALL_ACTIONS: &[ShortcutAction] = &[
     ShortcutAction::OpenFile,
+    ShortcutAction::NewTab,
     ShortcutAction::CloseTab,
     ShortcutAction::Quit,
     ShortcutAction::Reload,

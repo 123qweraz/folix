@@ -387,6 +387,10 @@ impl eframe::App for FolixApp {
         // Keyboard shortcuts (from config, with built-in defaults)
         if self.shortcut(ctx, SA::OpenFile) { self.open_dialog = true; }
 
+        if self.shortcut(ctx, SA::NewTab) {
+            self.state.add_new_tab();
+        }
+
         if self.shortcut(ctx, SA::CloseTab) {
             self.state.close_tab(self.state.active_tab);
             self.sync_progress();
@@ -855,31 +859,77 @@ impl FolixApp {
                     ui.separator();
                 }
 
-                // Settings button
-                if ui.button("⚙").clicked() {
-                    self.state.add_settings_tab();
-                }
-
-                // "+" button to create a new tab
-                if ui.button(" + ").clicked() {
-                    self.state.add_new_tab();
-                }
-
                 let mut to_close: Option<usize> = None;
+                const TAB_W: f32 = 150.0;
+                const TAB_H: f32 = 28.0;
+                let style = ctx.style();
                 let mut i = 0;
                 while i < self.state.tabs.len() {
                     let title = self.state.tabs[i].title(lng);
                     let is_active = i == self.state.active_tab;
 
-                    if ui.selectable_label(is_active, &title).clicked() {
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(TAB_W, TAB_H),
+                        egui::Sense::click(),
+                    );
+                    let tab_resp = ui.interact(rect, ui.next_auto_id(), egui::Sense::click());
+                    if tab_resp.clicked() {
                         self.state.active_tab = i;
                     }
-
-                    if ui.button("×").clicked() {
+                    if tab_resp.middle_clicked() {
                         to_close = Some(i);
                     }
+                    // Paint background with active/hover/ inactive states
+                    let bg = if is_active {
+                        style.visuals.selection.bg_fill
+                    } else if tab_resp.hovered() {
+                        style.visuals.faint_bg_color
+                    } else {
+                        egui::Color32::from_black_alpha(10)
+                    };
+                    ui.painter().rect_filled(rect, egui::CornerRadius::same(4), bg);
+                    // Underline accent for active tab
+                    if is_active {
+                        let line_y = rect.bottom() - 2.0;
+                        ui.painter().line_segment(
+                            [egui::pos2(rect.left() + 4.0, line_y), egui::pos2(rect.right() - 4.0, line_y)],
+                            egui::Stroke::new(2.0, style.visuals.selection.stroke.color),
+                        );
+                    }
+                    // Content: title + ×
+                    let inner = rect.shrink2(egui::vec2(6.0, 2.0));
+                    let mut cui = ui.new_child(egui::UiBuilder::new()
+                        .max_rect(inner)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)));
+                    let _ = cui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&title).size(13.0)
+                        )
+                        .truncate()
+                        .selectable(false)
+                    );
+                    let x_rect = egui::Rect::from_min_size(
+                        egui::pos2(inner.right() - 16.0, inner.top()),
+                        egui::vec2(16.0, inner.height()),
+                    );
+                    let x_resp = cui.interact(x_rect, cui.next_auto_id(), egui::Sense::click());
+                    if x_resp.clicked() {
+                        to_close = Some(i);
+                    }
+                    cui.painter().text(
+                        x_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "×",
+                        egui::FontId::default(),
+                        style.visuals.text_color(),
+                    );
 
                     i += 1;
+                }
+
+                // "+" button — after all tabs
+                if ui.button(" + ").clicked() {
+                    self.state.add_new_tab();
                 }
 
                 if let Some(idx) = to_close {
@@ -904,6 +954,10 @@ impl FolixApp {
             if ui.add(egui::Button::new(crate::app::i18n::tr(lng, "📄  PDF Tools")).min_size(egui::vec2(200.0, 36.0))).clicked() {
                 self.state.add_pdf_toolbox_tab();
             }
+            ui.add_space(8.0);
+            if ui.add(egui::Button::new(crate::app::i18n::tr(lng, "⚙  Settings")).min_size(egui::vec2(200.0, 36.0))).clicked() {
+                self.state.add_settings_tab();
+            }
             ui.add_space(24.0);
 
             if !self.recent_files.is_empty() {
@@ -914,50 +968,97 @@ impl FolixApp {
                     .show(ui, |ui| {
                         let mut to_remove: Option<usize> = None;
                         let mut to_toggle_pin: Option<usize> = None;
-                        let items: Vec<(usize, RecentFile)> = self.recent_files.iter()
-                            .enumerate().map(|(i, f)| (i, f.clone())).collect();
-                        // Pinned files first
-                        let pinned: Vec<_> = items.iter().filter(|(_, f)| f.pinned).collect();
-                        let unpinned: Vec<_> = items.iter().filter(|(_, f)| !f.pinned).collect();
-                        for (idx, rf) in &pinned {
-                            ui.horizontal(|ui| {
-                                let name = std::path::Path::new(&rf.path)
-                                    .file_name()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or(&rf.path);
-                                if ui.selectable_label(false, name).clicked() {
-                                    self.open_file(rf.path.clone());
-                                }
-                                if ui.button("📌").clicked() { to_toggle_pin = Some(*idx); }
-                                if ui.button("✕").clicked() { to_remove = Some(*idx); }
-                            });
-                        }
-                        if !pinned.is_empty() && !unpinned.is_empty() {
+
+                        // Build sorted list: pinned first
+                        let mut sorted: Vec<(usize, RecentFile)> = self.recent_files.iter()
+                            .enumerate()
+                            .map(|(i, f)| (i, f.clone()))
+                            .collect();
+                        sorted.sort_by(|a, b| {
+                            b.1.pinned.cmp(&a.1.pinned)
+                                .then_with(|| a.1.path.cmp(&b.1.path))
+                        });
+
+                        for (idx, rf) in &sorted {
+                            let path = std::path::Path::new(&rf.path);
+                            let name = path.file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or(&rf.path);
+                            let parent = path.parent()
+                                .and_then(|p| p.to_str())
+                                .unwrap_or("");
+                            let ext = path.extension()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            let icon = match ext.as_str() {
+                                "pdf" => "📕",
+                                "epub" => "📘",
+                                "md" | "markdown" => "📝",
+                                "docx" | "doc" => "📄",
+                                "txt" => "📃",
+                                "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "tiff" | "tif" => "🖼",
+                                _ => "📄",
+                            };
+
+                            // Row with fixed-width frame
+                            egui::Frame::NONE
+                                .fill(egui::Color32::from_black_alpha(8))
+                                .inner_margin(egui::Margin::symmetric(8, 4))
+                                .corner_radius(egui::CornerRadius::same(4))
+                                .show(ui, |ui| {
+                                    ui.set_max_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        // Clickable area: icon + name + path
+                                        let file_btn = ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(format!("{} {}", icon, name)).size(14.0)
+                                            ).sense(egui::Sense::click())
+                                        );
+                                        if file_btn.clicked() {
+                                            self.open_file(rf.path.clone());
+                                        }
+                                        if file_btn.middle_clicked() {
+                                            // Show in folder on middle click
+                                            show_in_folder(&rf.path);
+                                        }
+                                        // Path in gray
+                                        if !parent.is_empty() {
+                                            ui.colored_label(
+                                                egui::Color32::GRAY,
+                                                egui::RichText::new(parent).size(11.0),
+                                            );
+                                        }
+                                        // Spacer + actions
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if ui.button("✕").clicked() {
+                                                to_remove = Some(*idx);
+                                            }
+                                            if ui.button("📁").clicked() {
+                                                show_in_folder(&rf.path);
+                                            }
+                                            let pin_icon = if rf.pinned { "📌" } else { "📍" };
+                                            if ui.button(pin_icon).clicked() {
+                                                to_toggle_pin = Some(*idx);
+                                            }
+                                        });
+                                    });
+                                });
                             ui.separator();
                         }
-                        for (idx, rf) in &unpinned {
-                            ui.horizontal(|ui| {
-                                let name = std::path::Path::new(&rf.path)
-                                    .file_name()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or(&rf.path);
-                                if ui.selectable_label(false, name).clicked() {
-                                    self.open_file(rf.path.clone());
-                                }
-                                if ui.button("📌").clicked() { to_toggle_pin = Some(*idx); }
-                                if ui.button("✕").clicked() { to_remove = Some(*idx); }
-                            });
-                        }
+
                         if let Some(idx) = to_remove {
-                            self.recent_files.remove(idx);
+                            // Find actual index in original vec
+                            if let Some(pos) = self.recent_files.iter().position(|f| f.path == sorted[idx].1.path) {
+                                self.recent_files.remove(pos);
+                            }
                             self.save_config();
                         }
                         if let Some(idx) = to_toggle_pin {
-                            if let Some(f) = self.recent_files.get_mut(idx) {
+                            if let Some(f) = self.recent_files.iter_mut().find(|f| f.path == sorted[idx].1.path) {
                                 f.pinned = !f.pinned;
                             }
-                            // Re-sort: pinned files first
-                            self.recent_files.sort_by(|a, _| if a.pinned { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater });
+                            self.recent_files.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| a.path.cmp(&b.path)));
                             self.save_config();
                         }
                     });
@@ -1315,16 +1416,13 @@ impl FolixApp {
         let show_view = self.state.settings.show_toolbar_view;
         let show_page = self.state.settings.show_toolbar_page;
 
-        // ── Row 1: mode tabs + nav + view + page number ──
+        // ── Row 1: mode tabs only ──
         egui::TopBottomPanel::bottom("toolbar_row1").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let tab = self.state.current_tab_mut();
                 if tab.is_none() { return; }
                 let tab = tab.unwrap();
 
-                let doc_count = page_count_for_tab(tab);
-
-                // Ensure active mode is compatible with document type
                 let is_fixed_doc = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
                 let valid_for_fixed = matches!(tab.modes.active, ModeKind::LightReading | ModeKind::DeepReading | ModeKind::PageEdit);
                 let valid_for_reflow = matches!(tab.modes.active, ModeKind::LightReading | ModeKind::DeepReading | ModeKind::ContentEdit);
@@ -1343,10 +1441,29 @@ impl FolixApp {
                     }
                 }
 
+                // ── Page number (right side) ──
+                let doc_count = page_count_for_tab(tab);
+                if doc_count > 0 && show_page {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!("Pg {}/{}", tab.modes.page + 1, doc_count));
+                    });
+                }
+            });
+        });
+
+        // ── Row 2: nav + view + page + mode-specific controls ──
+        egui::TopBottomPanel::bottom("toolbar_row2").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let tab = self.state.current_tab_mut();
+                if tab.is_none() { return; }
+                let tab = tab.unwrap();
+
+                let doc_count = page_count_for_tab(tab);
+                let is_fixed_doc = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
+
                 if doc_count > 0 {
                     // ── Navigation section ──
                     if show_nav {
-                        ui.separator();
                         let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
                         if is_paged {
                             if ui.add_enabled(tab.modes.page > 0, egui::Button::new("◀")).clicked() {
@@ -1368,11 +1485,11 @@ impl FolixApp {
                                 tab.modes.reading.scroll_velocity = speed;
                             }
                         }
+                        ui.separator();
                     }
 
                     // ── View adjustment section ──
                     if show_view {
-                        ui.separator();
                         let is_paged = tab.modes.reading_layout == ReadingLayout::Paged;
                         if is_fixed_doc {
                             let layout_label = if is_paged { crate::app::i18n::tr(lng, "Paged") } else { crate::app::i18n::tr(lng, "Scroll") };
@@ -1381,7 +1498,6 @@ impl FolixApp {
                             }
                         }
 
-                        // Fit mode buttons
                         if is_fixed_doc {
                             let fit_w = tab.modes.fit_mode == FitMode::FitWidth;
                             if ui.selectable_label(fit_w, crate::app::i18n::tr(lng, "Fit Width")).clicked() {
@@ -1401,7 +1517,6 @@ impl FolixApp {
                             }
                         }
 
-                        // Rotation buttons
                         if is_fixed_doc {
                             if ui.button(crate::app::i18n::tr(lng, "↻ 90°")).clicked() {
                                 let next = match tab.modes.view_rotation {
@@ -1440,37 +1555,12 @@ impl FolixApp {
                             tab.modes.scale = (z + 0.1).min(10.0);
                             tab.modes.fit_mode = FitMode::Free;
                         }
-                    }
-
-                    // ── Page number section ──
-                    if show_page {
                         ui.separator();
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(format!("Page {}/{}", tab.modes.page + 1, doc_count));
-                        });
                     }
                 }
-            });
-        });
 
-        // ── Row 2: Mode-specific controls ──
-        let show_row2 = self.state.current_tab().map(|tab| {
-            let doc_count = page_count_for_tab(tab);
-            doc_count > 0 && match tab.modes.active {
-                ModeKind::LightReading => self.state.settings.show_toolbar_auto,
-                ModeKind::DeepReading => self.state.settings.show_toolbar_annotate,
-                ModeKind::PageEdit | ModeKind::ContentEdit => self.state.settings.show_toolbar_edit,
-            }
-        }).unwrap_or(false);
-
-        if show_row2 {
-            egui::TopBottomPanel::bottom("toolbar_row2").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let tab = self.state.current_tab_mut();
-                    if tab.is_none() { return; }
-                    let tab = tab.unwrap();
-
-                    match tab.modes.active {
+                // ── Mode-specific controls ──
+                match tab.modes.active {
                         ModeKind::LightReading => {
                             let play_label = if tab.modes.auto.playing { "⏸" } else { "▶" };
                             if ui.button(play_label).clicked() {
@@ -1633,7 +1723,6 @@ impl FolixApp {
                     }
                 });
             });
-        }
 
         if let Some(path) = needs_reload {
             self.reload_document(&path);
@@ -1684,6 +1773,18 @@ fn page_count_for_tab(tab: &crate::app::core::app_state::OpenTab) -> usize {
 }
 
 /// Navigate to a page, handling both fixed (PDF) and reflow (stream) documents.
+fn show_in_folder(path: &str) {
+    let parent = std::path::Path::new(path).parent();
+    let dir = parent.and_then(|p| p.to_str()).unwrap_or("");
+    if dir.is_empty() { return; }
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg("/select,").arg(path).spawn();
+}
+
 fn page_jump(tab: &mut crate::app::core::app_state::OpenTab, target: usize) {
     let max = page_count_for_tab(tab).saturating_sub(1);
     let target = target.min(max);
