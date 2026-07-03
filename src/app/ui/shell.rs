@@ -903,28 +903,22 @@ impl FolixApp {
                     let mut cui = ui.new_child(egui::UiBuilder::new()
                         .max_rect(inner)
                         .layout(egui::Layout::left_to_right(egui::Align::Center)));
-                    let _ = cui.add(
+                    cui.add(
                         egui::Label::new(
                             egui::RichText::new(&title).size(13.0)
                         )
                         .truncate()
                         .selectable(false)
                     );
-                    let x_rect = egui::Rect::from_min_size(
-                        egui::pos2(inner.right() - 16.0, inner.top()),
-                        egui::vec2(16.0, inner.height()),
+                    let x_resp = cui.add(
+                        egui::Label::new(
+                            egui::RichText::new("×").size(13.0).color(style.visuals.text_color()),
+                        )
+                        .sense(egui::Sense::click()),
                     );
-                    let x_resp = cui.interact(x_rect, cui.next_auto_id(), egui::Sense::click());
                     if x_resp.clicked() {
                         to_close = Some(i);
                     }
-                    cui.painter().text(
-                        x_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "×",
-                        egui::FontId::default(),
-                        style.visuals.text_color(),
-                    );
 
                     i += 1;
                 }
