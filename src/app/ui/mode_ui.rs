@@ -1050,19 +1050,20 @@ fn render_image_page(
     });
 }
 
-/// Split text into sentences at sentence-ending punctuation only.
-/// Keeps all internal punctuation (commas, quotes, etc.) intact.
+/// Split text at sentence and clause boundaries (。！？，；.!?,;\n).
+/// Delimiters are consumed (not included in output chunks).
 pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
     for c in text.chars() {
-        current.push(c);
-        if matches!(c, '。' | '！' | '？' | '.' | '!' | '?' | '\n') {
+        if matches!(c, '。' | '！' | '？' | '，' | '；' | '.' | '!' | '?' | ',' | ';' | '\n') {
             let trimmed = current.trim().to_string();
             if !trimmed.is_empty() && trimmed.len() > 1 {
                 sentences.push(trimmed);
             }
             current.clear();
+        } else {
+            current.push(c);
         }
     }
     let trimmed = current.trim().to_string();
