@@ -1116,6 +1116,10 @@ pub fn render_mo_yu_ui(
     mo_yu: &mut MoYuState,
     document: &Option<Arc<Mutex<DocumentHandle>>>,
 ) {
+    // Clear background to prevent text stacking
+    let bg = ui.style().visuals.window_fill();
+    ui.painter().rect_filled(ui.max_rect(), 0.0, bg);
+
     let dt = ui.input(|i| i.unstable_dt);
 
     // Re-extract chunks if empty
