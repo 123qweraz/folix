@@ -191,150 +191,103 @@ pub fn render_document(
                 // else: defer jump until stream_page_y_starts is populated next frame
             }
 
-            let output = sa.show_viewport(ui, |ui, viewport| {
+            let output = sa.show_viewport(ui, |ui, _viewport| {
                 let mut y_starts: Vec<f32> = Vec::new();
-                const VIS_BUFFER: usize = 5;
-
-                // Determine visible page range using cached y_starts from last frame
-                let (vis_start, vis_end) = if reading.stream_page_y_starts.len() == loaded + 1 {
-                    let avg_h = if reading.stream_page_y_starts.len() > 1 {
-                        (reading.stream_page_y_starts.last().unwrap()
-                            - reading.stream_page_y_starts[0])
-                            / (reading.stream_page_y_starts.len() as f32 - 1.0)
-                    } else {
-                        ui.available_height().max(100.0)
-                    };
-                    let buf = avg_h * VIS_BUFFER as f32;
-                    let view_top = viewport.min.y;
-                    let view_bot = viewport.max.y;
-                    let start_before = reading.stream_page_y_starts
-                        .iter()
-                        .rposition(|&y| y <= (view_top - buf).max(0.0))
-                        .map(|i| i.saturating_add(1))
-                        .unwrap_or(0);
-                    let vis_start = start_before.min(loaded);
-                    let vis_end = reading.stream_page_y_starts
-                        .iter()
-                        .rposition(|&y| y <= view_bot + buf)
-                        .unwrap_or(loaded)
-                        .min(loaded);
-                    (vis_start, vis_end)
-                } else {
-                    (0usize, loaded)
-                };
 
                 for p in 0..=loaded {
                     y_starts.push(ui.min_rect().bottom());
 
-                    if p >= vis_start && p <= vis_end {
-                        // Visible page — render content
-                        let chapter = reading.chapter_cache[p as usize].as_ref().unwrap();
-                        let chapter_idx = pag.chapter_idx_for_page(p).unwrap_or(0);
-                        let entries = pag.page_entries(p);
+                    let chapter = reading.chapter_cache[p as usize].as_ref().unwrap();
+                    let chapter_idx = pag.chapter_idx_for_page(p).unwrap_or(0);
+                    let entries = pag.page_entries(p);
 
-                        if p > 0 {
-                            ui.separator();
+                    if p > 0 {
+                        ui.separator();
+                    }
+
+                    for entry in entries {
+                        if entry.block_idx >= chapter.blocks.len() {
+                            continue;
                         }
-
-                        for entry in entries {
-                            if entry.block_idx >= chapter.blocks.len() {
-                                continue;
-                            }
-                            match &chapter.blocks[entry.block_idx] {
-                                ContentBlock::Text(text) => {
-                                    let char_start = entry.char_range.start;
-                                    let char_end = entry.char_range.end.min(text.chars().count());
-                                    let slice = if char_start < char_end {
-                                        let mut iter = text.char_indices();
-                                        let start_byte = iter.nth(char_start).map(|(i, _)| i).unwrap_or(0);
-                                        let end_byte = iter.nth(char_end - char_start - 1).map(|(i, _)| i).unwrap_or(text.len());
-                                        &text[start_byte..end_byte]
-                                    } else {
-                                        ""
-                                    };
-                                    if !slice.is_empty() {
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(slice)
-                                                    .size(16.0 * *scale),
-                                            )
-                                            .wrap()
-                                            .selectable(true),
-                                        );
-                                    }
-                                }
-                                ContentBlock::Image(img) => {
-                                    let key =
-                                        format!("epub_img_{}_{}", chapter_idx, entry.block_idx);
-                                    let texture =
-                                        image_cache.entry(key.clone()).or_insert_with(|| {
-                                            let decoded = match image::load_from_memory(
-                                                &img.raw_bytes,
-                                            ) {
-                                                Ok(d) => d.into_rgba8(),
-                                                Err(_) => {
-                                                    return ui.ctx().load_texture(
-                                                        &key,
-                                                        egui::ColorImage::new(
-                                                            [1, 1],
-                                                            egui::Color32::RED,
-                                                        ),
-                                                        egui::TextureOptions::default(),
-                                                    );
-                                                }
-                                            };
-                                            let (native_w, native_h) = decoded.dimensions();
-                                            let aspect = native_w as f32 / native_h as f32;
-                                            let display_w = (ui.available_width().min(600.0)).ceil() as u32;
-                                            let display_h = (display_w as f32 / aspect).ceil() as u32;
-                                            let resized = if display_w < native_w {
-                                                image::imageops::resize(
-                                                    &decoded, display_w.max(1), display_h.max(1),
-                                                    image::imageops::FilterType::Lanczos3,
-                                                )
-                                            } else {
-                                                decoded
-                                            };
-                                            let (rw, rh) = resized.dimensions();
-                                            let color_image =
-                                                egui::ColorImage::from_rgba_unmultiplied(
-                                                    [rw as usize, rh as usize],
-                                                    resized.as_raw(),
-                                                );
-                                            ui.ctx().load_texture(
-                                                &key,
-                                                color_image,
-                                                egui::TextureOptions::default(),
-                                            )
-                                        });
-                                    let aspect = img.width as f32 / img.height as f32;
-                                    let max_w = ui.available_width().min(600.0);
-                                    let h = max_w / aspect;
-                                    ui.add_sized(
-                                        egui::vec2(max_w, h + 8.0),
-                                        egui::Image::new((
-                                            texture.id(),
-                                            egui::vec2(max_w, h),
-                                        )),
+                        match &chapter.blocks[entry.block_idx] {
+                            ContentBlock::Text(text) => {
+                                let char_start = entry.char_range.start;
+                                let char_end = entry.char_range.end.min(text.chars().count());
+                                let slice = if char_start < char_end {
+                                    let mut iter = text.char_indices();
+                                    let start_byte = iter.nth(char_start).map(|(i, _)| i).unwrap_or(0);
+                                    let end_byte = iter.nth(char_end - char_start - 1).map(|(i, _)| i).unwrap_or(text.len());
+                                    &text[start_byte..end_byte]
+                                } else {
+                                    ""
+                                };
+                                if !slice.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(slice)
+                                                .size(16.0 * *scale),
+                                        )
+                                        .wrap()
+                                        .selectable(true),
                                     );
                                 }
                             }
+                            ContentBlock::Image(img) => {
+                                let key =
+                                    format!("epub_img_{}_{}", chapter_idx, entry.block_idx);
+                                let texture =
+                                    image_cache.entry(key.clone()).or_insert_with(|| {
+                                        let decoded = match image::load_from_memory(
+                                            &img.raw_bytes,
+                                        ) {
+                                            Ok(d) => d.into_rgba8(),
+                                            Err(_) => {
+                                                return ui.ctx().load_texture(
+                                                    &key,
+                                                    egui::ColorImage::new(
+                                                        [1, 1],
+                                                        egui::Color32::RED,
+                                                    ),
+                                                    egui::TextureOptions::default(),
+                                                );
+                                            }
+                                        };
+                                        let (native_w, native_h) = decoded.dimensions();
+                                        let aspect = native_w as f32 / native_h as f32;
+                                        let display_w = (ui.available_width().min(600.0)).ceil() as u32;
+                                        let display_h = (display_w as f32 / aspect).ceil() as u32;
+                                        let resized = if display_w < native_w {
+                                            image::imageops::resize(
+                                                &decoded, display_w.max(1), display_h.max(1),
+                                                image::imageops::FilterType::Lanczos3,
+                                            )
+                                        } else {
+                                            decoded
+                                        };
+                                        let (rw, rh) = resized.dimensions();
+                                        let color_image =
+                                            egui::ColorImage::from_rgba_unmultiplied(
+                                                [rw as usize, rh as usize],
+                                                resized.as_raw(),
+                                            );
+                                        ui.ctx().load_texture(
+                                            &key,
+                                            color_image,
+                                            egui::TextureOptions::default(),
+                                        )
+                                    });
+                                let aspect = img.width as f32 / img.height as f32;
+                                let max_w = ui.available_width().min(600.0);
+                                let h = max_w / aspect;
+                                ui.add_sized(
+                                    egui::vec2(max_w, h + 8.0),
+                                    egui::Image::new((
+                                        texture.id(),
+                                        egui::vec2(max_w, h),
+                                    )),
+                                );
+                            }
                         }
-                    } else {
-                        // Off-screen page — estimate height from cached data, skip rendering
-                        let est_h = if p + 1 < reading.stream_page_y_starts.len() {
-                            (reading.stream_page_y_starts[p + 1]
-                                - reading.stream_page_y_starts[p])
-                                .max(10.0)
-                        } else if reading.stream_page_y_starts.len() > 1 {
-                            let avg = (reading.stream_page_y_starts.last().unwrap()
-                                - reading.stream_page_y_starts[0])
-                                / (reading.stream_page_y_starts.len() as f32 - 1.0);
-                            avg.max(10.0)
-                        } else {
-                            ui.available_height().max(100.0)
-                        };
-                        ui.allocate_space(egui::vec2(ui.available_width(), est_h));
                     }
                 }
 
