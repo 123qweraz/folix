@@ -213,19 +213,11 @@ pub fn render_document(
                         match &chapter.blocks[entry.block_idx] {
                             ContentBlock::Text(text) => {
                                 let char_start = entry.char_range.start;
-                                let max_char = text.chars().count();
-                                let char_end = entry.char_range.end.min(max_char);
+                                let char_end = entry.char_range.end.min(text.chars().count());
                                 let slice = if char_start < char_end {
-                                    let chars: Vec<(usize, usize)> = text
-                                        .char_indices()
-                                        .map(|(i, c)| (i, c.len_utf8()))
-                                        .collect();
-                                    let start_byte = chars[char_start].0;
-                                    let end_byte = if char_end < chars.len() {
-                                        chars[char_end].0
-                                    } else {
-                                        text.len()
-                                    };
+                                    let mut iter = text.char_indices();
+                                    let start_byte = iter.nth(char_start).map(|(i, _)| i).unwrap_or(0);
+                                    let end_byte = iter.nth(char_end - char_start - 1).map(|(i, _)| i).unwrap_or(text.len());
                                     &text[start_byte..end_byte]
                                 } else {
                                     ""
