@@ -875,12 +875,6 @@ impl FolixApp {
                         egui::Sense::click(),
                     );
                     let tab_resp = ui.interact(rect, ui.next_auto_id(), egui::Sense::click());
-                    if tab_resp.clicked() {
-                        self.state.active_tab = i;
-                    }
-                    if tab_resp.middle_clicked() {
-                        to_close = Some(i);
-                    }
                     // Paint background with active/hover/ inactive states
                     let bg = if is_active {
                         egui::Color32::WHITE
@@ -898,10 +892,11 @@ impl FolixApp {
                             egui::Stroke::new(2.0, style.visuals.selection.stroke.color),
                         );
                     }
-                    // Content: title + ×
+                    // Content: title (reserve 16px on right for ×)
                     let inner = rect.shrink2(egui::vec2(6.0, 2.0));
+                    let text_inner = egui::Rect::from_min_max(inner.min, egui::pos2(inner.right() - 16.0, inner.bottom()));
                     let mut cui = ui.new_child(egui::UiBuilder::new()
-                        .max_rect(inner)
+                        .max_rect(text_inner)
                         .layout(egui::Layout::left_to_right(egui::Align::Center)));
                     cui.add(
                         egui::Label::new(
@@ -910,16 +905,28 @@ impl FolixApp {
                         .truncate()
                         .selectable(false)
                     );
-                    let x_resp = cui.add_sized(
+
+                    // × button at the rightmost 16px
+                    let x_rect = egui::Rect::from_min_size(
+                        egui::pos2(inner.right() - 16.0, inner.top()),
                         egui::vec2(16.0, inner.height()),
-                        egui::Label::new(
-                            egui::RichText::new("×").size(13.0).color(style.visuals.text_color()),
-                        )
-                        .sense(egui::Sense::click()),
                     );
-                    if x_resp.clicked() {
+                    let x_resp = ui.interact(x_rect, ui.next_auto_id(), egui::Sense::click());
+                    if tab_resp.middle_clicked() {
                         to_close = Some(i);
                     }
+                    if x_resp.clicked() {
+                        to_close = Some(i);
+                    } else if tab_resp.clicked() {
+                        self.state.active_tab = i;
+                    }
+                    ui.painter().text(
+                        x_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "×",
+                        egui::FontId::default(),
+                        style.visuals.text_color(),
+                    );
 
                     i += 1;
                 }
