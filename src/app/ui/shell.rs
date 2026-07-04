@@ -3,7 +3,7 @@ use crate::app::core::app_state::TabContent;
 use crate::app::core::mode_system::{ViewMode, FitMode, ViewRotation, Annotation, AnnotationTool, EditState, ContentEditState, Bookmark, Vocabulary, Sentence_};
 use crate::app::config::RecentFile;
 use crate::app::core::shortcuts::{key_from_str, ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
-use crate::app::engines::edit_operations;
+use crate::app::engines::{ContentBlock, edit_operations};
 use crate::app::paginator::Paginator;
 use crate::app::platform::font_loader::FontLoader;
 use crate::app::storage::sqlite::Database;
@@ -176,6 +176,7 @@ impl FolixApp {
                         if let Ok(book_id) = db.ensure_book(&path_str, &title, format) {
                             tab.book_id = Some(book_id.clone());
                             // Load annotations from DB
+                            let is_reflow_doc = format == "epub" || format == "txt";
                             if let Ok(rows) = db.get_annotations(&book_id) {
                                 for (_, page, kind_str, rect_data, note) in rows {
                                     let kind = match kind_str.as_str() {
@@ -187,6 +188,15 @@ impl FolixApp {
                                     let rect = rect_data.as_deref()
                                         .and_then(|s| serde_json::from_str::<[f32; 4]>(s).ok())
                                         .unwrap_or([0.0; 4]);
+                                    let reflow_range = if is_reflow_doc && kind == AnnotationTool::Highlight {
+                                        let ch = rect[0] as usize;
+                                        let blk = rect[1] as usize;
+                                        let cs = rect[2] as usize;
+                                        let ce = rect[3] as usize;
+                                        Some((ch, blk, cs, ce))
+                                    } else {
+                                        None
+                                    };
                                     tab.modes.annotate.annotations.push(Annotation {
                                         id: uuid::Uuid::new_v4().to_string(),
                                         doc_id: book_id.clone(),
@@ -195,6 +205,7 @@ impl FolixApp {
                                         rect,
                                         note,
                                         color: [255, 255, 0, 120],
+                                        reflow_range,
                                     });
                                 }
                             }
@@ -333,35 +344,77 @@ impl FolixApp {
     }
 
     fn apply_highlight_selection(tab: &mut crate::app::core::app_state::OpenTab) {
-        let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
-            && tab.modes.reading.selection.page == tab.modes.page;
-        if has_sel {
-            if let Some(ref doc) = tab.document {
-                let page = tab.modes.page;
-                let words = doc.lock().as_fixed().map(|f| f.page_text_positions(page)).unwrap_or_default();
-                let indices = &tab.modes.reading.selection.selected_word_indices;
-                let mut x0 = f32::MAX; let mut y0 = f32::MAX;
-                let mut x1 = f32::MIN; let mut y1 = f32::MIN;
-                for &idx in indices {
-                    if let Some(w) = words.get(idx) {
-                        x0 = x0.min(w.x0); y0 = y0.min(w.y0);
-                        x1 = x1.max(w.x1); y1 = y1.max(w.y1);
+        if let Some(ref doc) = tab.document {
+            let is_fixed = doc.lock().is_fixed();
+            if is_fixed {
+                let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
+                    && tab.modes.reading.selection.page == tab.modes.page;
+                if has_sel {
+                    let page = tab.modes.page;
+                    let words = doc.lock().as_fixed().map(|f| f.page_text_positions(page)).unwrap_or_default();
+                    let indices = &tab.modes.reading.selection.selected_word_indices;
+                    let mut x0 = f32::MAX; let mut y0 = f32::MAX;
+                    let mut x1 = f32::MIN; let mut y1 = f32::MIN;
+                    for &idx in indices {
+                        if let Some(w) = words.get(idx) {
+                            x0 = x0.min(w.x0); y0 = y0.min(w.y0);
+                            x1 = x1.max(w.x1); y1 = y1.max(w.y1);
+                        }
+                    }
+                    if x0 != f32::MAX {
+                        tab.modes.annotate.annotations.push(Annotation {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            doc_id: String::new(),
+                            kind: AnnotationTool::Highlight,
+                            page,
+                            rect: [x0, y0, x1, y1],
+                            note: None,
+                            color: tab.modes.annotate.current_color,
+                            reflow_range: None,
+                        });
+                        tab.modes.annotate.dirty = true;
+                        tab.modes.reading.selection.selected_word_indices.clear();
+                        tab.modes.reading.selection.anchor = None;
+                        tab.modes.reading.selection.focus = None;
                     }
                 }
-                if x0 != f32::MAX {
-                    tab.modes.annotate.annotations.push(Annotation {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        doc_id: String::new(),
-                        kind: AnnotationTool::Highlight,
-                        page,
-                        rect: [x0, y0, x1, y1],
-                        note: None,
-                        color: tab.modes.annotate.current_color,
-                    });
-                    tab.modes.annotate.dirty = true;
-                    tab.modes.reading.selection.selected_word_indices.clear();
-                    tab.modes.reading.selection.anchor = None;
-                    tab.modes.reading.selection.focus = None;
+            } else {
+                // Reflow document highlight using character-based selection
+                let sel = &tab.modes.reading.selection;
+                if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
+                    let (a_ch, a_blk, a_pos) = anchor;
+                    let (f_ch, f_blk, f_pos) = focus;
+                    if a_ch == f_ch && a_blk == f_blk {
+                        let cstart = a_pos.min(f_pos);
+                        let cend = a_pos.max(f_pos);
+                        if cstart < cend {
+                            // Get the highlighted text from the document
+                            let doc_guard = doc.lock();
+                            let reflow = doc_guard.as_reflow().unwrap();
+                            let chapter = reflow.load_chapter(a_ch);
+                            let sel_text: String = chapter.blocks.get(a_blk)
+                                .and_then(|b| match b {
+                                    ContentBlock::Text(t) => Some(t.chars().skip(cstart).take(cend - cstart).collect()),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            drop(doc_guard);
+                            tab.modes.annotate.annotations.push(Annotation {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                doc_id: String::new(),
+                                kind: AnnotationTool::Highlight,
+                                page: 0,
+                                rect: [a_ch as f32, a_blk as f32, cstart as f32, cend as f32],
+                                note: Some(sel_text.clone()),
+                                color: tab.modes.annotate.current_color,
+                                reflow_range: Some((a_ch, a_blk, cstart, cend)),
+                            });
+                            tab.modes.annotate.dirty = true;
+                            tab.modes.reading.selection.char_anchor = None;
+                            tab.modes.reading.selection.char_focus = None;
+                            tab.modes.reading.selection.selected_text.clear();
+                        }
+                    }
                 }
             }
         }
@@ -1689,36 +1742,17 @@ impl FolixApp {
                             ui.separator();
 
                             // Highlight Selected button
-                            let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
-                                && tab.modes.reading.selection.page == tab.modes.page;
-                            if ui.add_enabled(has_sel, egui::Button::new(crate::app::i18n::tr(lng, "High"))).clicked() {
-                                if let Some(ref doc) = tab.document {
-                                    let page = tab.modes.page;
-                                    let words = doc.lock().as_fixed().map(|f| f.page_text_positions(page)).unwrap_or_default();
-                                    let indices = &tab.modes.reading.selection.selected_word_indices;
-                                    let mut x0 = f32::MAX; let mut y0 = f32::MAX;
-                                    let mut x1 = f32::MIN; let mut y1 = f32::MIN;
-                                    for &idx in indices {
-                                        if let Some(w) = words.get(idx) {
-                                            x0 = x0.min(w.x0); y0 = y0.min(w.y0);
-                                            x1 = x1.max(w.x1); y1 = y1.max(w.y1);
-                                        }
-                                    }
-                                    if x0 != f32::MAX {
-                                        tab.modes.annotate.annotations.push(Annotation {
-                                            id: uuid::Uuid::new_v4().to_string(),
-                                            doc_id: String::new(),
-                                            kind: AnnotationTool::Highlight,
-                                            page,
-                                            rect: [x0, y0, x1, y1],
-                                            note: None,
-                                            color: tab.modes.annotate.current_color,
-                                        });
-                                        tab.modes.annotate.dirty = true;
-                                        tab.modes.reading.selection.selected_word_indices.clear();
-                                        tab.modes.reading.selection.anchor = None;
-                                        tab.modes.reading.selection.focus = None;
-                                    }
+                            if let Some(ref doc) = tab.document {
+                                let is_fixed = doc.lock().is_fixed();
+                                let has_fixed_sel = is_fixed
+                                    && !tab.modes.reading.selection.selected_word_indices.is_empty()
+                                    && tab.modes.reading.selection.page == tab.modes.page;
+                                let has_reflow_sel = !is_fixed
+                                    && tab.modes.reading.selection.char_anchor.is_some()
+                                    && tab.modes.reading.selection.char_focus.is_some();
+                                let enabled = has_fixed_sel || has_reflow_sel;
+                                if ui.add_enabled(enabled, egui::Button::new(crate::app::i18n::tr(lng, "High"))).clicked() {
+                                    Self::apply_highlight_selection(tab);
                                 }
                             }
 

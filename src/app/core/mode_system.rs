@@ -68,9 +68,9 @@ pub struct SelectionState {
     pub focus: Option<(f32, f32)>,
     pub page: usize,
     pub selected_word_indices: Vec<usize>,
-    // Character-based selection (for EPUB/TXT plain text)
-    pub char_anchor: Option<usize>,
-    pub char_focus: Option<usize>,
+    // Character-based selection (for EPUB/TXT plain text): (chapter_idx, block_idx, char_pos)
+    pub char_anchor: Option<(usize, usize, usize)>,
+    pub char_focus: Option<(usize, usize, usize)>,
     pub selected_text: String,
     /// Pending vocabulary addition (word to add, set by context menu)
     pub pending_vocab: Option<String>,
@@ -209,6 +209,8 @@ pub struct Annotation {
     pub rect: [f32; 4],
     pub note: Option<String>,
     pub color: [u8; 4],
+    /// For reflow (txt/epub) highlights: (chapter_idx, block_idx, char_start, char_end)
+    pub reflow_range: Option<(usize, usize, usize, usize)>,
 }
 
 pub const HIGHLIGHT_COLORS: [[u8; 4]; 8] = [

@@ -168,8 +168,6 @@ pub fn render_document(
                 }
             }
 
-            ui.style_mut().interaction.multi_widget_text_select = true;
-
             let mut sa = egui::ScrollArea::vertical()
                 .id_salt("reflow_stream")
                 .auto_shrink([false; 2]);
@@ -222,14 +220,131 @@ pub fn render_document(
                                     ""
                                 };
                                 if !slice.is_empty() {
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(slice)
-                                                .size(16.0 * *scale),
-                                        )
-                                        .wrap()
-                                        .selectable(true),
-                                    );
+                                    let font_size = 16.0 * *scale;
+                                    let label = egui::Label::new(
+                                        egui::RichText::new(slice).size(font_size),
+                                    )
+                                    .wrap();
+                                    let resp = ui.add(label);
+                                    let label_rect = resp.rect;
+
+                                    // Render stored highlights for reflow docs
+                                    if let Some(ann) = annotate.as_ref() {
+                                        for h in &ann.annotations {
+                                            if h.kind != AnnotationTool::Highlight { continue; }
+                                            if let Some((h_ch, h_blk, h_cs, h_ce)) = h.reflow_range {
+                                                if h_ch == chapter_idx && h_blk == entry.block_idx {
+                                                    let h_start = h_cs.max(char_start).min(char_end);
+                                                    let h_end = h_ce.max(char_start).min(char_end);
+                                                    if h_start < h_end {
+                                                        let overlap_text: String = text.chars().skip(h_start).take(h_end - h_start).collect();
+                                                        let before_text: String = text.chars().skip(char_start).take(h_start - char_start).collect();
+                                                        let before_w = ui.fonts(|f| f.layout_no_wrap(before_text, egui::FontId::proportional(font_size), egui::Color32::WHITE)).rect.width();
+                                                        let overlap_w = ui.fonts(|f| f.layout_no_wrap(overlap_text, egui::FontId::proportional(font_size), egui::Color32::WHITE)).rect.width();
+                                                        let c = h.color;
+                                                        let hl_rect = egui::Rect::from_min_size(
+                                                            egui::pos2(label_rect.left() + before_w, label_rect.top()),
+                                                            egui::vec2(overlap_w, label_rect.height()),
+                                                        );
+                                                        ui.painter().rect_filled(
+                                                            hl_rect, 0.0,
+                                                            egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Text selection handling
+                                    let sel = &mut reading.selection;
+                                    if sel.selecting && sel.char_anchor.is_some() {
+                                        let (a_ch, a_blk, a_pos) = sel.char_anchor.unwrap();
+                                        let (f_ch, f_blk, f_pos) = sel.char_focus.unwrap_or((a_ch, a_blk, a_pos));
+                                        if a_ch == chapter_idx && a_blk == entry.block_idx
+                                            || f_ch == chapter_idx && f_blk == entry.block_idx
+                                        {
+                                            let local_start = char_start;
+                                            let local_end = char_end;
+                                            let sel_start = if a_ch == chapter_idx && a_blk == entry.block_idx { a_pos.max(local_start).min(local_end) } else { local_start };
+                                            let sel_end = if f_ch == chapter_idx && f_blk == entry.block_idx { f_pos.max(local_start).min(local_end) } else { local_end };
+                                            let s_start = sel_start.min(sel_end);
+                                            let s_end = sel_start.max(sel_end);
+                                            if s_start < s_end && s_start >= local_start && s_end <= local_end {
+                                                let before_text: String = text.chars().skip(local_start).take(s_start - local_start).collect();
+                                                let sel_text: String = text.chars().skip(s_start).take(s_end - s_start).collect();
+                                                let before_w = ui.fonts(|f| f.layout_no_wrap(before_text, egui::FontId::proportional(font_size), egui::Color32::WHITE)).rect.width();
+                                                let sel_w = ui.fonts(|f| f.layout_no_wrap(sel_text, egui::FontId::proportional(font_size), egui::Color32::WHITE)).rect.width();
+                                                let sel_rect = egui::Rect::from_min_size(
+                                                    egui::pos2(label_rect.left() + before_w, label_rect.top()),
+                                                    egui::vec2(sel_w, label_rect.height()),
+                                                );
+                                                ui.painter().rect_filled(
+                                                    sel_rect, 0.0,
+                                                    egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    if resp.clicked() {
+                                        if let Some(mouse_pos) = resp.interact_pointer_pos() {
+                                            let local_x = mouse_pos.x - label_rect.left();
+                                            let ratio = (local_x / label_rect.width().max(1.0)).clamp(0.0, 1.0);
+                                            let slice_len = slice.chars().count();
+                                            let approx_char = char_start + (ratio * slice_len as f32) as usize;
+                                            sel.char_anchor = Some((chapter_idx, entry.block_idx, approx_char));
+                                            sel.char_focus = Some((chapter_idx, entry.block_idx, approx_char));
+                                            sel.selected_text = String::new();
+                                            sel.selected_word_indices.clear();
+                                            sel.selecting = true;
+                                        }
+                                    }
+
+                                    if resp.dragged() && sel.selecting {
+                                        if let Some(mouse_pos) = resp.interact_pointer_pos() {
+                                            let local_x = mouse_pos.x - label_rect.left();
+                                            let ratio = (local_x / label_rect.width().max(1.0)).clamp(0.0, 1.0);
+                                            let slice_len = slice.chars().count();
+                                            let approx_char = char_start + (ratio * slice_len as f32) as usize;
+                                            sel.char_focus = Some((chapter_idx, entry.block_idx, approx_char));
+                                        }
+                                    }
+
+                                    if resp.drag_stopped() {
+                                        sel.selecting = false;
+                                    }
+
+                                    // Context menu for selected text
+                                    resp.context_menu(|ui| {
+                                        if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
+                                            let (a_ch, a_blk, a_pos) = anchor;
+                                            let (f_ch, f_blk, f_pos) = focus;
+                                            if a_ch == chapter_idx && a_blk == entry.block_idx
+                                                || f_ch == chapter_idx && f_blk == entry.block_idx
+                                            {
+                                                let local_a = if a_ch == chapter_idx && a_blk == entry.block_idx { a_pos } else { char_start };
+                                                let local_f = if f_ch == chapter_idx && f_blk == entry.block_idx { f_pos } else { char_start };
+                                                let s_start = local_a.min(local_f).max(char_start).min(char_end);
+                                                let s_end = local_a.max(local_f).max(char_start).min(char_end);
+                                                if s_start < s_end {
+                                                    let sel_text: String = text.chars().skip(s_start).take(s_end - s_start).collect();
+                                                    if ui.button("📋 Copy").clicked() {
+                                                        ui.ctx().copy_text(sel_text.clone());
+                                                        ui.close_menu();
+                                                    }
+                                                    if ui.button("📝 Add to Vocabulary").clicked() {
+                                                        sel.pending_vocab = Some(sel_text.clone());
+                                                        ui.close_menu();
+                                                    }
+                                                    if ui.button("💬 Save Sentence").clicked() {
+                                                        sel.pending_sentence = Some(sel_text);
+                                                        ui.close_menu();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    });
                                 }
                             }
                             ContentBlock::Image(img) => {
@@ -686,6 +801,7 @@ fn render_image_page(
                         rect: [0.0; 4],
                         note: Some(data),
                         color: ann.current_color,
+                        reflow_range: None,
                     });
                     ann.dirty = true;
                     ann.stroke_points.clear();
