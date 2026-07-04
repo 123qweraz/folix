@@ -443,8 +443,9 @@ impl eframe::App for FolixApp {
             self.open_file(path);
         }
 
-        // Tab toggles UI visibility (also available as configurable shortcut)
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
+        // Tab toggles UI visibility — only when no text widget has focus
+        let has_focus = ctx.memory(|m| m.focused().is_some());
+        if !has_focus && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
             self.state.ui_visible = !self.state.ui_visible;
         }
 
