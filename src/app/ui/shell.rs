@@ -26,7 +26,9 @@ impl FolixApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self::configure_fonts(&cc.egui_ctx);
 
-        let db = Database::open("./folix.db").ok();
+        let db_path = crate::app::config::data_dir().join("folix.db");
+        let _ = std::fs::create_dir_all(crate::app::config::data_dir());
+        let db = Database::open(db_path.to_str().unwrap_or("./folix.db")).ok();
 
         let config = crate::app::config::ConfigData::load();
         let mut state = AppState::new();

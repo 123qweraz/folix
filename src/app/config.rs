@@ -1,8 +1,30 @@
 use crate::app::core::app_state::AppSettings;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::PathBuf;
 
-const CONFIG_PATH: &str = "./folix.conf";
+fn config_path() -> PathBuf {
+    // Follows XDG Base Directory spec on Linux, standard platform conventions on macOS/Windows
+    let base = if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
+        PathBuf::from(dir)
+    } else if let Some(dir) = std::env::var_os("HOME") {
+        PathBuf::from(dir).join(".config")
+    } else {
+        PathBuf::from(".")
+    };
+    base.join("folix").join("folix.conf")
+}
+
+/// Standard data directory for folix (database, etc.)
+pub fn data_dir() -> PathBuf {
+    let base = if let Some(dir) = std::env::var_os("XDG_DATA_HOME") {
+        PathBuf::from(dir)
+    } else if let Some(dir) = std::env::var_os("HOME") {
+        PathBuf::from(dir).join(".local").join("share")
+    } else {
+        PathBuf::from(".")
+    };
+    base.join("folix")
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RecentFile {
@@ -24,10 +46,11 @@ fn default_recent_files() -> Vec<RecentFile> {
 
 impl ConfigData {
     pub fn load() -> Option<Self> {
-        if !Path::new(CONFIG_PATH).exists() {
+        let path = config_path();
+        if !path.exists() {
             return None;
         }
-        let content = std::fs::read_to_string(CONFIG_PATH).ok()?;
+        let content = std::fs::read_to_string(&path).ok()?;
         // Try new format (Vec<RecentFile>), then fall back to old Vec<String>
         if let Ok(data) = serde_json::from_str::<ConfigData>(&content) {
             return Some(data);
@@ -51,7 +74,11 @@ impl ConfigData {
 
     pub fn save(&self) {
         if let Ok(content) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(CONFIG_PATH, content);
+            let path = config_path();
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&path, content);
         }
     }
 }
