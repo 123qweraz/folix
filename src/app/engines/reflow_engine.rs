@@ -113,10 +113,37 @@ impl ReflowDocument {
         }
 
         let is_md = path.to_lowercase().ends_with(".md");
+
+        // For markdown: detect level-1 (# ) headings BEFORE stripping,
+        // so the chapter splitter can find them (after stripping, # markers are gone).
+        let md_headings: Vec<(usize, String)> = if is_md {
+            content.lines().enumerate()
+                .filter_map(|(i, line)| {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("# ") && !trimmed[2..].trim().is_empty() {
+                        Some((i, trimmed[2..].trim().to_string()))
+                    } else if trimmed == "#" {
+                        None  // bare # is not a heading
+                    } else if trimmed.starts_with('#') && !trimmed.starts_with("# ") {
+                        // higher-level headings (##, ###) — skip, let the body handle them
+                        None
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+
         let content = if is_md { Self::strip_markdown(&content) } else { content };
 
         // Split text into chapters by heading patterns or blank lines
-        let (chapters, toc) = Self::split_txt_chapters(&content);
+        let (chapters, toc) = if is_md && !md_headings.is_empty() {
+            Self::split_txt_at_lines(&content, &md_headings)
+        } else {
+            Self::split_txt_chapters(&content)
+        };
 
         // Pre-populate cache with chapter blocks
         let mut cache = HashMap::new();
@@ -133,6 +160,56 @@ impl ReflowDocument {
             chapter_cache: std::sync::Mutex::new(cache),
             image_cache: std::sync::Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Split text into chapters at known heading line positions.
+    /// Headings are prepended to each chapter body.
+    fn split_txt_at_lines(text: &str, headings: &[(usize, String)]) -> (Vec<(String, String)>, Vec<TocEntry>) {
+        let lines: Vec<&str> = text.lines().collect();
+        let mut chapters: Vec<(String, String)> = Vec::new();
+        let mut prev = 0;
+        for &(hi, ref label) in headings {
+            if hi > prev {
+                let body: String = lines[prev..hi].iter().map(|l| *l).collect::<Vec<&str>>().join("\n").trim().to_string();
+                if !body.is_empty() {
+                    chapters.push((String::new(), body));
+                }
+            }
+            chapters.push((label.clone(), String::new()));
+            prev = hi + 1;
+        }
+        if prev < lines.len() {
+            let body: String = lines[prev..].iter().map(|l| *l).collect::<Vec<&str>>().join("\n").trim().to_string();
+            if !body.is_empty() {
+                chapters.push((String::new(), body));
+            }
+        }
+
+        // Merge heading-only chapters with their body
+        let mut merged: Vec<(String, String)> = Vec::new();
+        for (label, body) in chapters {
+            if !label.is_empty() {
+                if body.is_empty() {
+                    merged.push((label, String::new()));
+                } else {
+                    merged.push((label, body));
+                }
+            } else {
+                if let Some(last) = merged.last_mut() {
+                    if last.1.is_empty() {
+                        last.1 = format!("{}\n{}", last.0, body);
+                        continue;
+                    }
+                }
+                merged.push((String::new(), body));
+            }
+        }
+        merged.retain(|(_, b)| !b.is_empty());
+
+        let toc: Vec<TocEntry> = merged.iter().enumerate()
+            .map(|(i, (label, _))| TocEntry { label: label.clone(), page_index: i })
+            .collect();
+        (merged, toc)
     }
 
     fn strip_markdown(text: &str) -> String {
