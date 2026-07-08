@@ -26,7 +26,7 @@ pub enum ViewRotation {
 }
 
 use std::collections::HashMap;
-use crate::app::paginator::Paginator;
+use crate::app::paginator::{Paginator, PageSize};
 
 #[derive(Clone)]
 pub struct SearchState {
@@ -298,6 +298,8 @@ pub struct TabModes {
     pub annotate: AnnotateState,
     pub edit: EditState,
     pub active: ModeKind,
+    pub page_size: PageSize,
+    pub reflow_font_size: f32,
 }
 
 impl Default for TabModes {
@@ -360,6 +362,8 @@ impl TabModes {
             },
             edit: EditState::Page(PageEditState),
             active: ModeKind::LightReading,
+            page_size: PageSize::A5,
+            reflow_font_size: 16.0,
         }
     }
 
