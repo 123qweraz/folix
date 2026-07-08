@@ -1365,15 +1365,14 @@ impl FolixApp {
                     let doc_count = page_count_for_tab(tab);
                     if doc_count > 0 && show_page {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let max_w = doc_count.to_string().len() as f32 * 10.0 + 20.0;
                         let mut input = tab.modes.reading.goto_page_text.clone();
                         if input.is_empty() {
                             input = (tab.modes.page + 1).to_string();
                         }
                         let resp = ui.add(egui::TextEdit::singleline(&mut input)
-                            .desired_width(max_w.max(40.0))
+                            .desired_width(50.0)
                             .font(egui::TextStyle::Monospace));
-                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && resp.has_focus() {
                             if let Ok(p) = input.trim().parse::<usize>() {
                                 let target = p.max(1).min(doc_count).saturating_sub(1);
                                 page_jump(tab, target);
@@ -1382,7 +1381,7 @@ impl FolixApp {
                         } else {
                             tab.modes.reading.goto_page_text = input;
                         }
-                        ui.label(format!("/ {}", doc_count));
+                        ui.label(format!(" / {}", doc_count));
                     });
                 }
                 } // end has_document
@@ -1729,4 +1728,5 @@ fn page_jump(tab: &mut crate::app::core::app_state::OpenTab, target: usize) {
         tab.modes.reading.stream_page_end = tab.modes.reading.stream_page_end.max(target);
     }
     tab.modes.page = target;
+    tab.modes.reading.goto_page_text.clear();
 }
