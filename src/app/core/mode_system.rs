@@ -275,9 +275,9 @@ pub enum ModeKind {
 impl ModeKind {
     pub fn name(&self, lang: &str) -> &'static str {
         let key = match self {
-            ModeKind::LightReading => "Light",
-            ModeKind::DeepReading => "Deep",
-            ModeKind::PageEdit => "Page",
+            ModeKind::LightReading => "Basic",
+            ModeKind::DeepReading => "Annotate",
+            ModeKind::PageEdit => "Page Edit",
             ModeKind::ContentEdit => "Content",
         };
         crate::app::i18n::tr(lang, key)

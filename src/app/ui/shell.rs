@@ -621,7 +621,6 @@ impl eframe::App for FolixApp {
             self.last_sync = now;
         }
 
-        self.render_menu_bar(ctx);
         if self.state.ui_visible {
             self.render_tab_bar(ctx);
         }
@@ -695,219 +694,6 @@ impl eframe::App for FolixApp {
 }
 
 impl FolixApp {
-    fn render_menu_bar(&mut self, ctx: &egui::Context) {
-        let lng_s = self.state.settings.language.clone();
-        let lng = &lng_s;
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                // ── File ──
-                ui.menu_button(crate::app::i18n::tr(lng, "File"), |ui| {
-                    if ui.button(crate::app::i18n::tr(lng, "Open...")).clicked() {
-                        self.open_dialog = true;
-                        ui.close_menu();
-                    }
-                    if ui.button(crate::app::i18n::tr(lng, "Close")).clicked() {
-                        if !self.state.tabs.is_empty() {
-                            self.state.close_tab(self.state.active_tab);
-                        }
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    if ui.button(crate::app::i18n::tr(lng, "Quit")).clicked() {
-                        std::process::exit(0);
-                    }
-                });
-
-                // ── Navigate ──
-                ui.menu_button(crate::app::i18n::tr(lng, "Navigate"), |ui| {
-                    if ui.button(crate::app::i18n::tr(lng, "Go to Page...")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() {
-                            tab.modes.reading.show_goto_dialog = true;
-                            tab.modes.reading.goto_page_text.clear();
-                        }
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    if ui.button(crate::app::i18n::tr(lng, "First Page")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() { page_jump(tab, 0); }
-                        ui.close_menu();
-                    }
-                    if ui.button(crate::app::i18n::tr(lng, "Last Page")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() {
-                            let max = page_count_for_tab(tab).saturating_sub(1);
-                            page_jump(tab, max);
-                        }
-                        ui.close_menu();
-                    }
-                    if ui.button(crate::app::i18n::tr(lng, "Prev Page")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() {
-                            let cur = tab.modes.page;
-                            if cur > 0 { page_jump(tab, cur - 1); }
-                        }
-                        ui.close_menu();
-                    }
-                    if ui.button(crate::app::i18n::tr(lng, "Next Page")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() {
-                            let cur = tab.modes.page;
-                            let max = page_count_for_tab(tab).saturating_sub(1);
-                            if cur < max { page_jump(tab, cur + 1); }
-                        }
-                        ui.close_menu();
-                    }
-                });
-
-                // ── Mode ──
-                ui.menu_button(crate::app::i18n::tr(lng, "Mode"), |ui| {
-                    let is_fixed = self.state.current_tab()
-                        .and_then(|t| t.document.as_ref())
-                        .map(|d| d.lock().is_fixed())
-                        .unwrap_or(true);
-                    let mode_kinds: &[ModeKind] = if is_fixed {
-                        &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::PageEdit]
-                    } else {
-                        &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::ContentEdit]
-                    };
-                    let current = self.state.current_tab().map(|t| t.modes.active);
-                    for &mk in mode_kinds {
-                        let selected = current == Some(mk);
-                        let label = mk.name(lng);
-                        if ui.selectable_label(selected, label).clicked() {
-                            if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                tab.modes.switch_to(mk);
-                            }
-                            ui.close_menu();
-                        }
-                    }
-
-                    // Layout toggle (available in reading modes)
-                    if current == Some(ModeKind::LightReading) || current == Some(ModeKind::DeepReading) {
-                        ui.separator();
-                        let layout = self.state.current_tab()
-                            .map(|t| t.modes.reading_layout);
-                        if let Some(layout) = layout {
-                            if ui.selectable_label(layout == ReadingLayout::Paged, crate::app::i18n::tr(lng, "Paged")).clicked() {
-                                if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                    tab.modes.reading_layout = ReadingLayout::Paged;
-                                }
-                                ui.close_menu();
-                            }
-                            if ui.selectable_label(layout == ReadingLayout::Scroll, crate::app::i18n::tr(lng, "Scroll")).clicked() {
-                                if let Some(tab) = self.state.tabs.get_mut(self.state.active_tab) {
-                                    tab.modes.reading_layout = ReadingLayout::Scroll;
-                                }
-                                ui.close_menu();
-                            }
-                        }
-                    }
-
-                    // Zoom controls
-                    ui.separator();
-                    if ui.button(crate::app::i18n::tr(lng, "Zoom In")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() {
-                            tab.modes.scale = (tab.modes.scale + 0.1).min(3.0);
-                        }
-                        ui.close_menu();
-                    }
-                    if ui.button(crate::app::i18n::tr(lng, "Zoom Out")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() {
-                            tab.modes.scale = (tab.modes.scale - 0.1).max(0.5);
-                        }
-                        ui.close_menu();
-                    }
-                });
-
-                // ── Tools ──
-                ui.menu_button(crate::app::i18n::tr(lng, "Tools"), |ui| {
-                    let current = self.state.current_tab().map(|t| t.modes.active);
-
-                    // Sidebar toggle
-                    if ui.button(crate::app::i18n::tr(lng, "Toggle Sidebar")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() {
-                            tab.modes.reading.show_sidebar = !tab.modes.reading.show_sidebar;
-                        }
-                        ui.close_menu();
-                    }
-
-                    // Add bookmark
-                    if ui.button(crate::app::i18n::tr(lng, "Add Bookmark")).clicked() {
-                        if let Some(tab) = self.state.current_tab_mut() {
-                            tab.modes.reading.bookmarks.push(Bookmark {
-                                page: tab.modes.page,
-                                label: format!("{} {}", crate::app::i18n::tr(lng, "Page"), tab.modes.page + 1),
-                            });
-                            tab.modes.reading.bookmarks_dirty = true;
-                        }
-                        ui.close_menu();
-                    }
-
-                    // Deep-reading annotation tools
-                    if current == Some(ModeKind::DeepReading) {
-                        ui.separator();
-                        let tool = self.state.current_tab().map(|t| t.modes.annotate.tool.clone());
-
-                        if ui.selectable_label(tool == Some(AnnotationTool::Highlight), crate::app::i18n::tr(lng, "Sel")).clicked() {
-                            if let Some(tab) = self.state.current_tab_mut() { tab.modes.annotate.tool = AnnotationTool::Highlight; }
-                            ui.close_menu();
-                        }
-                        if ui.selectable_label(tool == Some(AnnotationTool::Pen), crate::app::i18n::tr(lng, "Pen")).clicked() {
-                            if let Some(tab) = self.state.current_tab_mut() { tab.modes.annotate.tool = AnnotationTool::Pen; }
-                            ui.close_menu();
-                        }
-                        if ui.selectable_label(tool == Some(AnnotationTool::Eraser), crate::app::i18n::tr(lng, "Eraser")).clicked() {
-                            if let Some(tab) = self.state.current_tab_mut() { tab.modes.annotate.tool = AnnotationTool::Eraser; }
-                            ui.close_menu();
-                        }
-
-                        if ui.button(crate::app::i18n::tr(lng, "High")).clicked() {
-                            Self::apply_highlight_selection(
-                                self.state.current_tab_mut().unwrap()
-                            );
-                            ui.close_menu();
-                        }
-                        if ui.button(crate::app::i18n::tr(lng, "Undo")).clicked() {
-                            if let Some(tab) = self.state.current_tab_mut() {
-                                tab.modes.annotate.annotations.pop();
-                                tab.modes.annotate.dirty = true;
-                            }
-                            ui.close_menu();
-                        }
-                        if ui.button(crate::app::i18n::tr(lng, "Clr")).clicked() {
-                            if let Some(tab) = self.state.current_tab_mut() {
-                                tab.modes.annotate.annotations.clear();
-                                tab.modes.annotate.dirty = true;
-                            }
-                            ui.close_menu();
-                        }
-                    }
-
-                    // Light-reading auto-play
-                    if current == Some(ModeKind::LightReading) {
-                        ui.separator();
-                        let playing = self.state.current_tab().map(|t| t.modes.auto.playing).unwrap_or(false);
-                        let play_label = if playing { "⏸" } else { "▶" };
-                        if ui.button(play_label).clicked() {
-                            if let Some(tab) = self.state.current_tab_mut() {
-                                tab.modes.auto.playing = !tab.modes.auto.playing;
-                                if tab.modes.auto.playing {
-                                    tab.modes.auto.progress = 0.0;
-                                }
-                            }
-                            ui.close_menu();
-                        }
-                    }
-                });
-
-                // ── Help ──
-                ui.menu_button(crate::app::i18n::tr(lng, "Help"), |ui| {
-                    if ui.button(crate::app::i18n::tr(lng, "About Folix")).clicked() {
-                        self.show_about = true;
-                        ui.close_menu();
-                    }
-                });
-            });
-        });
-    }
-
     fn render_tab_bar(&mut self, ctx: &egui::Context) {
         let lng_s = self.state.settings.language.clone();
         let lng = &lng_s;
@@ -1556,31 +1342,50 @@ impl FolixApp {
                 if tab.is_none() { return; }
                 let tab = tab.unwrap();
 
-                let is_fixed_doc = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
-                let valid_for_fixed = matches!(tab.modes.active, ModeKind::LightReading | ModeKind::DeepReading | ModeKind::PageEdit);
-                let valid_for_reflow = matches!(tab.modes.active, ModeKind::LightReading | ModeKind::DeepReading | ModeKind::ContentEdit);
-                if (is_fixed_doc && !valid_for_fixed) || (!is_fixed_doc && !valid_for_reflow) {
-                    tab.modes.active = ModeKind::LightReading;
-                }
-                let mode_names: &[ModeKind] = if is_fixed_doc {
-                    &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::PageEdit]
-                } else {
-                    &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::ContentEdit]
-                };
-                for &mk in mode_names {
-                    let selected = tab.modes.active == mk;
-                    if ui.selectable_label(selected, mk.name(lng)).clicked() {
-                        tab.modes.switch_to(mk);
+                if tab.has_document() {
+                    let is_fixed_doc = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
+                    let valid_for_fixed = matches!(tab.modes.active, ModeKind::LightReading | ModeKind::DeepReading | ModeKind::PageEdit);
+                    let valid_for_reflow = matches!(tab.modes.active, ModeKind::LightReading | ModeKind::DeepReading | ModeKind::ContentEdit);
+                    if (is_fixed_doc && !valid_for_fixed) || (!is_fixed_doc && !valid_for_reflow) {
+                        tab.modes.active = ModeKind::LightReading;
                     }
-                }
+                    let mode_names: &[ModeKind] = if is_fixed_doc {
+                        &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::PageEdit]
+                    } else {
+                        &[ModeKind::LightReading, ModeKind::DeepReading, ModeKind::ContentEdit]
+                    };
+                    for &mk in mode_names {
+                        let selected = tab.modes.active == mk;
+                        if ui.selectable_label(selected, mk.name(lng)).clicked() {
+                            tab.modes.switch_to(mk);
+                        }
+                    }
 
-                // ── Page number (right side) ──
-                let doc_count = page_count_for_tab(tab);
-                if doc_count > 0 && show_page {
+                    // ── Page jump input (right side) ──
+                    let doc_count = page_count_for_tab(tab);
+                    if doc_count > 0 && show_page {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!("Pg {}/{}", tab.modes.page + 1, doc_count));
+                        let max_w = doc_count.to_string().len() as f32 * 10.0 + 20.0;
+                        let mut input = tab.modes.reading.goto_page_text.clone();
+                        if input.is_empty() {
+                            input = (tab.modes.page + 1).to_string();
+                        }
+                        let resp = ui.add(egui::TextEdit::singleline(&mut input)
+                            .desired_width(max_w.max(40.0))
+                            .font(egui::TextStyle::Monospace));
+                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            if let Ok(p) = input.trim().parse::<usize>() {
+                                let target = p.max(1).min(doc_count).saturating_sub(1);
+                                page_jump(tab, target);
+                            }
+                            tab.modes.reading.goto_page_text.clear();
+                        } else {
+                            tab.modes.reading.goto_page_text = input;
+                        }
+                        ui.label(format!("/ {}", doc_count));
                     });
                 }
+                } // end has_document
             });
         });
 
@@ -1677,11 +1482,9 @@ impl FolixApp {
                             tab.modes.scale = (z - 0.1).max(0.1);
                             tab.modes.fit_mode = FitMode::Free;
                         }
-                        let mut new_scale = tab.modes.scale;
-                        let slider_range = 0.1..=10.0;
-                        ui.add(egui::Slider::new(&mut new_scale, slider_range).text("×"));
-                        if (new_scale - tab.modes.scale).abs() > 0.001 {
-                            tab.modes.scale = new_scale;
+                        let pct = format!("{:.0}%", z * 100.0);
+                        if ui.button(pct).clicked() {
+                            tab.modes.scale = 1.0;
                             tab.modes.fit_mode = FitMode::Free;
                         }
                         if ui.add_enabled(z < 10.0, egui::Button::new("+")).clicked() {
@@ -1693,6 +1496,7 @@ impl FolixApp {
                 }
 
                 // ── Mode-specific controls ──
+                if !tab.has_document() { return; }
                 match tab.modes.active {
                         ModeKind::LightReading => {
                             let play_label = if tab.modes.auto.playing { "⏸" } else { "▶" };
@@ -1702,16 +1506,18 @@ impl FolixApp {
                                     tab.modes.auto.progress = 0.0;
                                 }
                             }
-                            ui.label(crate::app::i18n::tr(lng, "Speed:"));
                             let speed = &mut tab.modes.auto.speed;
                             let speeds: [f32; 7] = [0.1, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0];
-                            for &s in &speeds {
-                                let label = if s.fract() == 0.0 { format!("{}x", s as i32) } else { format!("{}x", s) };
-                                let selected = (*speed - s).abs() < 0.01;
-                                if ui.selectable_label(selected, label).clicked() {
-                                    *speed = s;
-                                }
-                            }
+                            let current_label = if speed.fract() == 0.0 { format!("{}x", *speed as i32) } else { format!("{}x", speed) };
+                            egui::ComboBox::from_id_salt("speed_selector")
+                                .selected_text(current_label)
+                                .width(60.0)
+                                .show_ui(ui, |ui| {
+                                    for &s in &speeds {
+                                        let label = if s.fract() == 0.0 { format!("{}x", s as i32) } else { format!("{}x", s) };
+                                        ui.selectable_value(speed, s, label);
+                                    }
+                                });
 
                             // 摸鱼模式 toggle (Light Reading only)
                             ui.separator();

@@ -12,9 +12,9 @@ static ZH_CN: &[(&str, &str)] = &[
     ("About Folix", "关于 Folix"),
 
     // Mode names
-    ("Light", "轻读"),
-    ("Deep", "精读"),
-    ("Page", "页面"),
+    ("Basic", "基础浏览"),
+    ("Annotate", "标注工具"),
+    ("Page Edit", "页面编辑"),
     ("Content", "内容"),
 
     // Layout
