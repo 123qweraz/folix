@@ -1365,23 +1365,21 @@ impl FolixApp {
                     let doc_count = page_count_for_tab(tab);
                     if doc_count > 0 && show_page {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut input = tab.modes.reading.goto_page_text.clone();
-                        if input.is_empty() {
-                            input = (tab.modes.page + 1).to_string();
-                        }
-                        let resp = ui.add(egui::TextEdit::singleline(&mut input)
+                        ui.label(format!("/{}", doc_count));
+                        let resp = ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_page_text)
                             .desired_width(50.0)
                             .font(egui::TextStyle::Monospace));
+                        if !resp.has_focus() {
+                            tab.modes.reading.goto_page_text = (tab.modes.page + 1).to_string();
+                        }
                         if ui.input(|i| i.key_pressed(egui::Key::Enter)) && resp.has_focus() {
-                            if let Ok(p) = input.trim().parse::<usize>() {
+                            let input = tab.modes.reading.goto_page_text.trim().to_string();
+                            if let Ok(p) = input.parse::<usize>() {
                                 let target = p.max(1).min(doc_count).saturating_sub(1);
                                 page_jump(tab, target);
                             }
                             tab.modes.reading.goto_page_text.clear();
-                        } else {
-                            tab.modes.reading.goto_page_text = input;
                         }
-                        ui.label(format!(" / {}", doc_count));
                     });
                 }
                 } // end has_document
