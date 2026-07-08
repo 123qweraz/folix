@@ -389,9 +389,10 @@ impl Paginator {
                                 rows_fit = 1;
                             }
 
-                            // Count characters in the rows that fit.
+                            // Count characters in the rows that fit (including newlines,
+                            // so the total matches the original text character positions).
                             let chars_in_rows: usize = galley_rows[..rows_fit].iter()
-                                .map(|r| r.char_count_excluding_newline().max(1))
+                                .map(|r| r.char_count_including_newline())
                                 .sum();
 
                             // Push this slice as a page entry.
