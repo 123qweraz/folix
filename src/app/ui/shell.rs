@@ -294,7 +294,7 @@ impl FolixApp {
                         (ch.title, ch.blocks)
                     }).collect()
                 };
-                tab.modes.paginator = Some(Paginator::new(chapters, 800.0, 1000.0, tab.modes.reflow_font_size));
+                tab.modes.paginator = Some(Paginator::new(chapters, 600.0, 850.0, tab.modes.reflow_font_size));
                 tab.modes.reading.chapter_cache.clear();
             }
         }
