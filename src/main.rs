@@ -13,7 +13,7 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 800.0])
+            .with_inner_size([600.0, 850.0])
             .with_title(folix::app::i18n::tr(&lang, "Folix")),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()

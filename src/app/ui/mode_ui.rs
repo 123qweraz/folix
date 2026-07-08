@@ -141,20 +141,6 @@ pub fn render_document(
     } else {
         drop(doc);
         if let Some(pag) = paginator {
-            // Repaginate with fonts on first render or when page size/font changes.
-            if pag.needs_repaginate() {
-                let avail_w = ui.available_width().max(100.0);
-                let ratio = pag.page_size_height_pt() / pag.page_size_width_pt().max(1.0);
-                let avail_h = avail_w * ratio;
-                ui.fonts(|f| {
-                    if pag.repaginate_with_fonts(f, avail_w, avail_h) {
-                        reading.chapter_cache.clear();
-                        reading.stream_page_y_starts.clear();
-                        reading.stream_page_end = 0;
-                    }
-                });
-            }
-
             let total_pages = pag.page_count();
             if total_pages == 0 {
                 return;
