@@ -1,4 +1,4 @@
-use crate::app::engines::ContentBlock;
+use crate::app::engines::BlockInfo;
 use std::ops::Range;
 
 /// A page entry describes which part of which chapter block is on this page.
@@ -21,7 +21,7 @@ pub struct Paginator {
 #[derive(Clone)]
 struct ChapterContent {
     title: String,
-    blocks: Vec<ContentBlock>,
+    blocks: Vec<BlockInfo>,
     char_count: usize,
 }
 
@@ -35,7 +35,7 @@ struct PageLayout {
 
 impl Paginator {
     pub fn new(
-        chapters: Vec<(String, Vec<ContentBlock>)>,
+        chapters: Vec<(String, Vec<BlockInfo>)>,
         viewport_width: f32,
         viewport_height: f32,
         font_size: f32,
@@ -45,10 +45,7 @@ impl Paginator {
             .map(|(title, blocks)| {
                 let char_count: usize = blocks
                     .iter()
-                    .map(|b| match b {
-                        ContentBlock::Text(t) => t.chars().count(),
-                        ContentBlock::Image(_) => 1,
-                    })
+                    .map(|b| if b.is_image { 1 } else { b.char_count })
                     .sum();
                 ChapterContent {
                     title,
@@ -180,58 +177,9 @@ impl Paginator {
 
             current_chapter_idx = ci;
 
-            for (bi, block) in chapter.blocks.iter().enumerate() {
-                match block {
-                    ContentBlock::Text(t) => {
-                        let total = t.chars().count();
-                        if total == 0 {
-                            continue;
-                        }
-                        let mut offset: usize = 0;
-                        while offset < total {
-                            let page_remain = chars_per_page.saturating_sub(page_char_count);
-                            if page_remain == 0 {
-                                // Flush full page
-                                self.pages.push(PageLayout {
-                                    chapter_idx: current_chapter_idx,
-                                    char_start: page_char_start,
-                                    char_end: page_char_start + page_char_count,
-                                    entries: std::mem::take(&mut current_entries),
-                                });
-                                page_char_count = 0;
-                                continue;
-                            }
-                            let take = page_remain.min(total - offset);
-                            if current_entries.is_empty() {
-                                page_char_start = global_char;
-                            }
-                            current_entries.push(PageEntry {
-                                block_idx: bi,
-                                char_range: offset..offset + take,
-                            });
-                            page_char_count += take;
-                            global_char += take;
-                            offset += take;
-                        }
-                    }
-                    ContentBlock::Image(_) => {
-                        if !current_entries.is_empty() {
-                            self.pages.push(PageLayout {
-                                chapter_idx: current_chapter_idx,
-                                char_start: page_char_start,
-                                char_end: page_char_start + page_char_count,
-                                entries: std::mem::take(&mut current_entries),
-                            });
-                            page_char_count = 0;
-                        }
-                        page_char_start = global_char;
-                        current_entries.push(PageEntry {
-                            block_idx: bi,
-                            char_range: 0..1,
-                        });
-                        page_char_count += 1;
-                        global_char += 1;
-                        // Image always gets its own page
+            for (bi, info) in chapter.blocks.iter().enumerate() {
+                if info.is_image {
+                    if !current_entries.is_empty() {
                         self.pages.push(PageLayout {
                             chapter_idx: current_chapter_idx,
                             char_start: page_char_start,
@@ -239,6 +187,52 @@ impl Paginator {
                             entries: std::mem::take(&mut current_entries),
                         });
                         page_char_count = 0;
+                    }
+                    page_char_start = global_char;
+                    current_entries.push(PageEntry {
+                        block_idx: bi,
+                        char_range: 0..1,
+                    });
+                    page_char_count += 1;
+                    global_char += 1;
+                    // Image always gets its own page
+                    self.pages.push(PageLayout {
+                        chapter_idx: current_chapter_idx,
+                        char_start: page_char_start,
+                        char_end: page_char_start + page_char_count,
+                        entries: std::mem::take(&mut current_entries),
+                    });
+                    page_char_count = 0;
+                } else {
+                    let total = info.char_count;
+                    if total == 0 {
+                        continue;
+                    }
+                    let mut offset: usize = 0;
+                    while offset < total {
+                        let page_remain = chars_per_page.saturating_sub(page_char_count);
+                        if page_remain == 0 {
+                            // Flush full page
+                            self.pages.push(PageLayout {
+                                chapter_idx: current_chapter_idx,
+                                char_start: page_char_start,
+                                char_end: page_char_start + page_char_count,
+                                entries: std::mem::take(&mut current_entries),
+                            });
+                            page_char_count = 0;
+                            continue;
+                        }
+                        let take = page_remain.min(total - offset);
+                        if current_entries.is_empty() {
+                            page_char_start = global_char;
+                        }
+                        current_entries.push(PageEntry {
+                            block_idx: bi,
+                            char_range: offset..offset + take,
+                        });
+                        page_char_count += take;
+                        global_char += take;
+                        offset += take;
                     }
                 }
             }
@@ -265,7 +259,7 @@ mod tests {
     fn test_small_block_one_page() {
         let chapters = vec![(
             "Ch1".to_string(),
-            vec![ContentBlock::Text("Hello World".to_string())],
+            vec![BlockInfo { is_image: false, char_count: 11 }],
         )];
         let p = Paginator::new(chapters, 800.0, 1000.0, 16.0);
         assert_eq!(p.page_count(), 1);
@@ -277,10 +271,9 @@ mod tests {
     #[test]
     fn test_large_block_split_across_pages() {
         // 4000 chars, chars_per_page=1950 → 1950+1950+100 = 3 pages
-        let text = "A".repeat(4000);
         let chapters = vec![(
             "Ch1".to_string(),
-            vec![ContentBlock::Text(text)],
+            vec![BlockInfo { is_image: false, char_count: 4000 }],
         )];
         let p = Paginator::new(chapters, 800.0, 1000.0, 16.0);
         assert_eq!(p.page_count(), 3);
@@ -294,11 +287,11 @@ mod tests {
         let chapters = vec![
             (
                 "Ch1".to_string(),
-                vec![ContentBlock::Text("Hello".to_string())],
+                vec![BlockInfo { is_image: false, char_count: 5 }],
             ),
             (
                 "Ch2".to_string(),
-                vec![ContentBlock::Text("World".to_string())],
+                vec![BlockInfo { is_image: false, char_count: 5 }],
             ),
         ];
         let p = Paginator::new(chapters, 800.0, 1000.0, 16.0);
@@ -309,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_empty_chapters() {
-        let chapters: Vec<(String, Vec<ContentBlock>)> = vec![];
+        let chapters: Vec<(String, Vec<BlockInfo>)> = vec![];
         let p = Paginator::new(chapters, 800.0, 1000.0, 16.0);
         assert_eq!(p.page_count(), 0);
     }
@@ -323,18 +316,12 @@ mod tests {
 
     #[test]
     fn test_image_gets_own_page() {
-        use crate::app::engines::StoredImage;
-        let img = ContentBlock::Image(StoredImage {
-            width: 100,
-            height: 100,
-            raw_bytes: vec![],
-        });
         let chapters = vec![(
             "Ch1".to_string(),
             vec![
-                ContentBlock::Text("Hello".to_string()),
-                img,
-                ContentBlock::Text("World".to_string()),
+                BlockInfo { is_image: false, char_count: 5 },
+                BlockInfo { is_image: true, char_count: 1 },
+                BlockInfo { is_image: false, char_count: 5 },
             ],
         )];
         let p = Paginator::new(chapters, 800.0, 1000.0, 16.0);

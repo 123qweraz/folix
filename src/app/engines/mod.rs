@@ -59,10 +59,26 @@ pub trait FixedLayout: Document {
     fn set_texture_handle(&self, page: usize, scale: f32, handle: TextureHandle);
 }
 
+/// Lightweight block metadata used for pagination (no text or image payload).
+#[derive(Clone, Debug)]
+pub struct BlockInfo {
+    pub is_image: bool,
+    pub char_count: usize,
+}
+
+/// Lightweight chapter metadata for pagination.
+#[derive(Clone, Debug)]
+pub struct ChapterInfo {
+    pub title: String,
+    pub blocks: Vec<BlockInfo>,
+}
+
 pub trait ReflowLayout: Document {
     fn chapter_count(&self) -> usize;
     fn chapter_text(&self, idx: usize) -> String;
     fn load_chapter(&self, idx: usize) -> Chapter;
+    /// Fast path – returns only block types and character counts, no image loading.
+    fn chapter_info(&self, idx: usize) -> ChapterInfo;
 }
 
 #[derive(Clone)]

@@ -285,16 +285,16 @@ impl FolixApp {
         if let Some(ref doc) = tab.document {
             let is_reflow = doc.lock().is_reflow();
             if is_reflow {
-                let chapters: Vec<(String, Vec<crate::app::engines::ContentBlock>)> = {
+                let chapter_infos: Vec<(String, Vec<crate::app::engines::BlockInfo>)> = {
                     let handle = doc.lock();
                     let reflow = handle.as_reflow().unwrap();
                     let count = reflow.chapter_count();
                     (0..count).map(|i| {
-                        let ch = reflow.load_chapter(i);
-                        (ch.title, ch.blocks)
+                        let info = reflow.chapter_info(i);
+                        (info.title, info.blocks)
                     }).collect()
                 };
-                tab.modes.paginator = Some(Paginator::new(chapters, 600.0, 850.0, tab.modes.reflow_font_size));
+                tab.modes.paginator = Some(Paginator::new(chapter_infos, 600.0, 850.0, tab.modes.reflow_font_size));
                 tab.modes.reading.chapter_cache.clear();
             }
         }
