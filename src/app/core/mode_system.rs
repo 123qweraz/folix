@@ -26,7 +26,6 @@ pub enum ViewRotation {
 }
 
 use std::collections::HashMap;
-use crate::app::paginator::Paginator;
 
 #[derive(Clone)]
 pub struct SearchState {
@@ -151,6 +150,8 @@ pub struct ReadingState {
     /// Sentence collection (句子收藏) for the current book.
     pub sentences: Vec<Sentence_>,
     pub sentences_dirty: bool,
+    /// Show line numbers for reflow documents.
+    pub show_line_numbers: bool,
 }
 
 #[derive(Clone)]
@@ -291,7 +292,7 @@ pub struct TabModes {
     pub reading_layout: ReadingLayout,
     pub fit_mode: FitMode,
     pub view_rotation: ViewRotation,
-    pub paginator: Option<Paginator>,
+
     pub reading: ReadingState,
     pub auto: AutoState,
     pub mo_yu: MoYuState,
@@ -315,7 +316,6 @@ impl TabModes {
             reading_layout: ReadingLayout::Scroll,
             fit_mode: FitMode::Free,
             view_rotation: ViewRotation::Deg0,
-            paginator: None,
             reading: ReadingState {
                 view_mode: ViewMode::Text,
                 show_sidebar: false,
@@ -339,6 +339,7 @@ impl TabModes {
                 vocab_dirty: false,
                 sentences: vec![],
                 sentences_dirty: false,
+                show_line_numbers: false,
             },
             auto: AutoState {
                 playing: false,

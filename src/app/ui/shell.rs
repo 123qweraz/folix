@@ -4,7 +4,6 @@ use crate::app::core::mode_system::{ViewMode, FitMode, ViewRotation, Annotation,
 use crate::app::config::RecentFile;
 use crate::app::core::shortcuts::{key_from_str, ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::{ContentBlock, edit_operations};
-use crate::app::paginator::Paginator;
 use crate::app::platform::font_loader::FontLoader;
 use crate::app::storage::sqlite::Database;
 use super::{mode_ui, pdf_toolbox};
@@ -260,11 +259,8 @@ impl FolixApp {
                 }
             }
 
-            // Ensure paginator for reflowable documents
+            // Handle pending jump for reflow documents
             if let Some(tab) = self.state.current_tab_mut() {
-                Self::ensure_paginator(tab);
-                // If there's a pending jump (set before paginator existed), ensure
-                // enough pages are loaded so the stream jump works first frame.
                 if let Some(target) = tab.modes.reading.stream_jump_to {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     tab.modes.reading.stream_page_end = target.min(max);
@@ -278,39 +274,14 @@ impl FolixApp {
         }
     }
 
-    fn ensure_paginator(tab: &mut crate::app::core::app_state::OpenTab) {
-        if tab.modes.paginator.is_some() {
-            return;
-        }
-        if let Some(ref doc) = tab.document {
-            let is_reflow = doc.lock().is_reflow();
-            if is_reflow {
-                let chapter_infos: Vec<(String, Vec<crate::app::engines::BlockInfo>)> = {
-                    let handle = doc.lock();
-                    let reflow = handle.as_reflow().unwrap();
-                    let count = reflow.chapter_count();
-                    (0..count).map(|i| {
-                        let info = reflow.chapter_info(i);
-                        (info.title, info.blocks)
-                    }).collect()
-                };
-                tab.modes.paginator = Some(Paginator::new(chapter_infos, 600.0, 850.0, tab.modes.reflow_font_size));
-                tab.modes.reading.chapter_cache.clear();
-            }
-        }
-    }
-
     fn reload_document(&mut self, path: &str) {
         let lng_s = self.state.settings.language.clone();
         let lng = &lng_s;
         if let Some(doc) = DocumentManager::open(path) {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.document = Some(doc);
-                // Recreate paginator for reflow docs
-                Self::ensure_paginator(tab);
                 if let Some(d) = &tab.document {
                     let count = d.lock().as_fixed().map(|f| f.page_count())
-                        .or_else(|| tab.modes.paginator.as_ref().map(|p| p.page_count()))
                         .unwrap_or(0);
                     let max = count.saturating_sub(1);
                     tab.modes.page = tab.modes.page.min(max);
@@ -640,7 +611,7 @@ impl eframe::App for FolixApp {
                     if let Some(tab) = self.state.current_tab_mut() {
                         let active = tab.modes.active;
                         if active == ModeKind::LightReading || active == ModeKind::DeepReading {
-                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.paginator, &mut tab.modes.reading, lng);
+                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.reading, lng);
                         }
                     }
                 });
@@ -1156,8 +1127,6 @@ impl FolixApp {
         let is_light = tab.modes.active == ModeKind::LightReading;
         let is_deep = tab.modes.active == ModeKind::DeepReading;
         let dark_mode = self.state.settings.dark_mode;
-        // Ensure paginator exists for reflow docs
-        Self::ensure_paginator(tab);
         mode_ui::render_document(
             ui, &document,
             &mut tab.modes.page,
@@ -1165,7 +1134,6 @@ impl FolixApp {
             &mut tab.modes.reading_layout,
             &mut tab.modes.fit_mode,
             &mut tab.modes.view_rotation,
-            &mut tab.modes.paginator,
             &mut tab.modes.reading,
             if is_light { Some(&mut tab.modes.auto) } else { None },
             if is_deep { Some(&mut tab.modes.annotate) } else { None },
@@ -1488,6 +1456,13 @@ impl FolixApp {
                             tab.modes.scale = (z + 0.1).min(10.0);
                             tab.modes.fit_mode = FitMode::Free;
                         }
+
+                        if !is_fixed_doc {
+                            let show_ln = tab.modes.reading.show_line_numbers;
+                            if ui.selectable_label(show_ln, crate::app::i18n::tr(lng, "Line Numbers")).clicked() {
+                                tab.modes.reading.show_line_numbers = !show_ln;
+                            }
+                        }
                         ui.separator();
                     }
                 }
@@ -1694,10 +1669,8 @@ fn page_count_for_tab(tab: &crate::app::core::app_state::OpenTab) -> usize {
         let handle = doc.lock();
         if let Some(fixed) = handle.as_fixed() {
             fixed.page_count()
-        } else if let Some(ref pag) = tab.modes.paginator {
-            pag.page_count()
         } else {
-            0
+            1
         }
     } else {
         0
@@ -1720,11 +1693,9 @@ fn show_in_folder(path: &str) {
 fn page_jump(tab: &mut crate::app::core::app_state::OpenTab, target: usize) {
     let max = page_count_for_tab(tab).saturating_sub(1);
     let target = target.min(max);
-    if tab.modes.paginator.is_some() {
-        // For reflow: set stream jump target + ensure enough pages loaded
-        tab.modes.reading.stream_jump_to = Some(target);
-        tab.modes.reading.stream_page_end = tab.modes.reading.stream_page_end.max(target);
-    }
+    // For reflow: set stream jump target + ensure enough pages loaded
+    tab.modes.reading.stream_jump_to = Some(target);
+    tab.modes.reading.stream_page_end = tab.modes.reading.stream_page_end.max(target);
     tab.modes.page = target;
     tab.modes.reading.goto_page_text.clear();
 }

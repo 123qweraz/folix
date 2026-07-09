@@ -202,6 +202,8 @@ static ZH_CN: &[(&str, &str)] = &[
     ("Page number:", "页码："),
     ("Go", "跳转"),
     ("Tools", "工具"),
+    // Tools
+    ("Line Numbers", "行号"),
 ];
 
 pub fn tr(lang: &str, text: &'static str) -> &'static str {
