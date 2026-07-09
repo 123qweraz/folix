@@ -162,7 +162,25 @@ pub fn render_document(
 
         let font_size = 16.0 * *scale;
 
-        let output = sa.show(ui, |ui| {
+        let output;
+        if reading.show_line_numbers {
+            // ---- Virtual scrolling with per-source-line rendering ----
+            let avail_w = ui.available_width().max(1.0);
+            let gutter_w = 65.0;
+            let text_avail_w = (avail_w - gutter_w).max(1.0);
+            let cpl = (text_avail_w / (font_size * 0.55)).floor().max(1.0) as usize;
+            let line_h = font_size * 1.4;
+
+            struct LR {
+                line_no: usize,
+                ci: usize,
+                bi: usize,
+                it: u8, // 0=sep, 1=text, 2=image
+                text: String,
+                height: f32,
+            }
+
+            let mut rows: Vec<LR> = Vec::new();
             let mut global_line: usize = 0;
 
             for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
@@ -170,32 +188,172 @@ pub fn render_document(
                     Some(ch) => ch,
                     None => continue,
                 };
-
                 if ci > 0 {
-                    ui.separator();
+                    rows.push(LR { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0 });
                 }
-
                 for (bi, block) in chapter.blocks.iter().enumerate() {
                     match block {
                         ContentBlock::Text(text) => {
-                            if reading.show_line_numbers {
-                                for (li, source_line) in text.split('\n').enumerate() {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new(format!("{:>6}│ ", global_line + li + 1))
-                                                .size(font_size)
-                                                .color(egui::Color32::GRAY),
-                                        );
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(source_line).size(font_size),
-                                            )
-                                            .wrap(),
-                                        );
-                                    });
-                                }
-                                global_line += text.split('\n').count();
-                            } else {
+                            for src_line in text.split('\n') {
+                                let lno = global_line + 1;
+                                let nc = src_line.chars().count().max(1) as f32;
+                                let vlines = (nc / cpl as f32).ceil().max(1.0);
+                                rows.push(LR {
+                                    line_no: lno, ci, bi,
+                                    it: 1,
+                                    text: src_line.to_string(),
+                                    height: vlines * line_h,
+                                });
+                                global_line += 1;
+                            }
+                        }
+                        ContentBlock::Image(img) => {
+                            let max_w = avail_w.min(600.0);
+                            let aspect = img.width as f32 / img.height as f32;
+                            let h = max_w / aspect;
+                            rows.push(LR {
+                                line_no: global_line + 1, ci, bi,
+                                it: 2,
+                                text: String::new(),
+                                height: h + 8.0,
+                            });
+                            global_line += 1;
+                        }
+                    }
+                }
+            }
+
+            reading.total_height = rows.iter().map(|r| r.height).sum();
+            let rows_ref = &rows;
+            let chapter_cache_ref = &reading.chapter_cache;
+
+            let text_color = ui.style().visuals.text_color();
+
+            output = sa.show_viewport(ui, |ui, viewport| {
+                let mut y_cursor = 0.0;
+
+                for row in rows_ref {
+                    let row_end = y_cursor + row.height;
+
+                    if row_end > viewport.top() && y_cursor < viewport.bottom() {
+                        match row.it {
+                            0 => {
+                                ui.separator();
+                            }
+                            1 => {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{:>6}│ ", row.line_no))
+                                            .size(font_size)
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&row.text).size(font_size).color(text_color),
+                                        ).wrap(),
+                                    );
+                                });
+                            }
+                            _ => {
+                                let key = format!("epub_img_{}_{}", row.ci, row.bi);
+                                let texture = image_cache.entry(key.clone()).or_insert_with(|| {
+                                    let ch = chapter_cache_ref[row.ci].as_ref().unwrap();
+                                    let img = match &ch.blocks[row.bi] {
+                                        ContentBlock::Image(img) => img,
+                                        _ => unreachable!(),
+                                    };
+                                    let decoded = match image::load_from_memory(&img.raw_bytes) {
+                                        Ok(d) => d.into_rgba8(),
+                                        Err(_) => {
+                                            return ui.ctx().load_texture(
+                                                &key,
+                                                egui::ColorImage::new([1, 1], egui::Color32::RED),
+                                                egui::TextureOptions::default(),
+                                            );
+                                        }
+                                    };
+                                    let (native_w, native_h) = decoded.dimensions();
+                                    let aspect = native_w as f32 / native_h as f32;
+                                    let display_w = (ui.available_width().min(600.0)).ceil() as u32;
+                                    let display_h = (display_w as f32 / aspect).ceil() as u32;
+                                    let resized = if display_w < native_w {
+                                        image::imageops::resize(
+                                            &decoded,
+                                            display_w.max(1),
+                                            display_h.max(1),
+                                            image::imageops::FilterType::Lanczos3,
+                                        )
+                                    } else {
+                                        decoded
+                                    };
+                                    let (rw, rh) = resized.dimensions();
+                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                        [rw as usize, rh as usize],
+                                        resized.as_raw(),
+                                    );
+                                    ui.ctx().load_texture(&key, color_image, egui::TextureOptions::default())
+                                });
+                                let max_w = avail_w.min(600.0);
+                                let ch = chapter_cache_ref[row.ci].as_ref().unwrap();
+                                let img = match &ch.blocks[row.bi] {
+                                    ContentBlock::Image(img) => img,
+                                    _ => unreachable!(),
+                                };
+                                let aspect = img.width as f32 / img.height as f32;
+                                let h = max_w / aspect;
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{:>6}│ ", row.line_no))
+                                            .size(font_size)
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                    ui.add_sized(
+                                        egui::vec2(max_w, h + 8.0),
+                                        egui::Image::new((texture.id(), egui::vec2(max_w, h))),
+                                    );
+                                });
+                            }
+                        }
+                    } else {
+                        ui.allocate_space(egui::vec2(ui.available_width(), row.height));
+                    }
+
+                    y_cursor = row_end;
+                }
+            });
+        } else {
+            // Original block-level rendering (no line numbers)
+            output = sa.show(ui, |ui| {
+                let mut job_text = String::new();
+                let mut job_sections: Vec<egui::text::LayoutSection> = Vec::new();
+
+                let flush_job = |ui: &mut egui::Ui, jt: &mut String, js: &mut Vec<egui::text::LayoutSection>| {
+                    if !jt.is_empty() {
+                        let job = egui::text::LayoutJob {
+                            text: std::mem::take(jt),
+                            sections: std::mem::take(js),
+                            break_on_newline: true,
+                            ..Default::default()
+                        };
+                        ui.add(egui::Label::new(job));
+                    }
+                };
+
+                for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
+                    let chapter = match chapter_opt.as_ref() {
+                        Some(ch) => ch,
+                        None => continue,
+                    };
+
+                    if ci > 0 {
+                        flush_job(ui, &mut job_text, &mut job_sections);
+                        ui.separator();
+                    }
+
+                    for (bi, block) in chapter.blocks.iter().enumerate() {
+                        match block {
+                            ContentBlock::Text(text) => {
+                                flush_job(ui, &mut job_text, &mut job_sections);
                                 let text_len = text.chars().count();
                                 if text_len > 0 {
                                     let label = egui::Label::new(
@@ -409,71 +567,54 @@ pub fn render_document(
                                     });
                                 }
                             }
-                        }
-                        ContentBlock::Image(img) => {
-                            let key = format!("epub_img_{}_{}", ci, bi);
-                            let texture = image_cache.entry(key.clone()).or_insert_with(|| {
-                                let decoded = match image::load_from_memory(&img.raw_bytes)
-                                {
-                                    Ok(d) => d.into_rgba8(),
-                                    Err(_) => {
-                                        return ui.ctx().load_texture(
-                                            &key,
-                                            egui::ColorImage::new(
-                                                [1, 1],
-                                                egui::Color32::RED,
-                                            ),
-                                            egui::TextureOptions::default(),
+                            ContentBlock::Image(img) => {
+                                flush_job(ui, &mut job_text, &mut job_sections);
+                                let key = format!("epub_img_{}_{}", ci, bi);
+                                let texture = image_cache.entry(key.clone()).or_insert_with(|| {
+                                    let decoded = match image::load_from_memory(&img.raw_bytes)
+                                    {
+                                        Ok(d) => d.into_rgba8(),
+                                        Err(_) => {
+                                            return ui.ctx().load_texture(
+                                                &key,
+                                                egui::ColorImage::new(
+                                                    [1, 1],
+                                                    egui::Color32::RED,
+                                                ),
+                                                egui::TextureOptions::default(),
+                                            );
+                                        }
+                                    };
+                                    let (native_w, native_h) = decoded.dimensions();
+                                    let aspect = native_w as f32 / native_h as f32;
+                                    let display_w =
+                                        (ui.available_width().min(600.0)).ceil() as u32;
+                                    let display_h = (display_w as f32 / aspect).ceil() as u32;
+                                    let resized = if display_w < native_w {
+                                        image::imageops::resize(
+                                            &decoded,
+                                            display_w.max(1),
+                                            display_h.max(1),
+                                            image::imageops::FilterType::Lanczos3,
+                                        )
+                                    } else {
+                                        decoded
+                                    };
+                                    let (rw, rh) = resized.dimensions();
+                                    let color_image =
+                                        egui::ColorImage::from_rgba_unmultiplied(
+                                            [rw as usize, rh as usize],
+                                            resized.as_raw(),
                                         );
-                                    }
-                                };
-                                let (native_w, native_h) = decoded.dimensions();
-                                let aspect = native_w as f32 / native_h as f32;
-                                let display_w =
-                                    (ui.available_width().min(600.0)).ceil() as u32;
-                                let display_h = (display_w as f32 / aspect).ceil() as u32;
-                                let resized = if display_w < native_w {
-                                    image::imageops::resize(
-                                        &decoded,
-                                        display_w.max(1),
-                                        display_h.max(1),
-                                        image::imageops::FilterType::Lanczos3,
+                                    ui.ctx().load_texture(
+                                        &key,
+                                        color_image,
+                                        egui::TextureOptions::default(),
                                     )
-                                } else {
-                                    decoded
-                                };
-                                let (rw, rh) = resized.dimensions();
-                                let color_image =
-                                    egui::ColorImage::from_rgba_unmultiplied(
-                                        [rw as usize, rh as usize],
-                                        resized.as_raw(),
-                                    );
-                                ui.ctx().load_texture(
-                                    &key,
-                                    color_image,
-                                    egui::TextureOptions::default(),
-                                )
-                            });
-                            let aspect = img.width as f32 / img.height as f32;
-                            let max_w = ui.available_width().min(600.0);
-                            let h = max_w / aspect;
-                            if reading.show_line_numbers {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("{:>6}│ ", global_line + 1))
-                                            .size(font_size)
-                                            .color(egui::Color32::GRAY),
-                                    );
-                                    ui.add_sized(
-                                        egui::vec2(max_w, h + 8.0),
-                                        egui::Image::new((
-                                            texture.id(),
-                                            egui::vec2(max_w, h),
-                                        )),
-                                    );
                                 });
-                                global_line += 1;
-                            } else {
+                                let aspect = img.width as f32 / img.height as f32;
+                                let max_w = ui.available_width().min(600.0);
+                                let h = max_w / aspect;
                                 ui.add_sized(
                                     egui::vec2(max_w, h + 8.0),
                                     egui::Image::new((
@@ -485,8 +626,9 @@ pub fn render_document(
                         }
                     }
                 }
-            }
-        });
+                flush_job(ui, &mut job_text, &mut job_sections);
+            });
+        }
 
         if reading.scroll_velocity == 0.0 {
             reading.scroll_offset_y = output.state.offset.y;
