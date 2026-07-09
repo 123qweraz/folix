@@ -223,19 +223,36 @@ pub fn render_document(
                 }
             }
 
-            reading.total_height = rows.iter().map(|r| r.height).sum();
+            // Pre-compute row start Y positions for binary-search culling
+            let mut row_starts = Vec::with_capacity(rows.len());
+            let mut acc_y = 0.0;
+            for r in &rows {
+                row_starts.push(acc_y);
+                acc_y += r.height;
+            }
+            let total_height = acc_y;
+            reading.total_height = total_height;
             let rows_ref = &rows;
+            let row_starts_ref = &row_starts;
             let chapter_cache_ref = &reading.chapter_cache;
 
             let text_color = ui.style().visuals.text_color();
 
             output = sa.show_viewport(ui, |ui, viewport| {
-                let mut y_cursor = 0.0;
+                ui.set_height(total_height);
 
-                for row in rows_ref {
-                    let row_end = y_cursor + row.height;
+                let first = row_starts_ref.partition_point(|&y| y < viewport.top());
+                let last = row_starts_ref.partition_point(|&y| y < viewport.bottom());
+                let last = last.min(rows_ref.len());
 
-                    if row_end > viewport.top() && y_cursor < viewport.bottom() {
+                for i in first..last {
+                    let row = &rows_ref[i];
+                    let y = row_starts_ref[i];
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(0.0, y),
+                        egui::vec2(ui.available_width(), row.height),
+                    );
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
                         match row.it {
                             0 => {
                                 ui.separator();
@@ -314,11 +331,7 @@ pub fn render_document(
                                 });
                             }
                         }
-                    } else {
-                        ui.allocate_space(egui::vec2(ui.available_width(), row.height));
-                    }
-
-                    y_cursor = row_end;
+                    });
                 }
             });
         } else {
