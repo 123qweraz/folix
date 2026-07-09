@@ -61,6 +61,16 @@ pub struct Bookmark {
 }
 
 #[derive(Clone)]
+pub struct LayoutRow {
+    pub line_no: usize,
+    pub ci: usize,
+    pub bi: usize,
+    pub it: u8,
+    pub text: String,
+    pub height: f32,
+}
+
+#[derive(Clone)]
 pub struct SelectionState {
     pub selecting: bool,
     pub anchor: Option<(f32, f32)>,
@@ -152,6 +162,11 @@ pub struct ReadingState {
     pub sentences_dirty: bool,
     /// Show line numbers for reflow documents.
     pub show_line_numbers: bool,
+    /// Layout cache for per-source-line rendering.
+    pub layout_cache_rows: Vec<LayoutRow>,
+    pub layout_cache_starts: Vec<f32>,
+    pub layout_cache_font_size: f32,
+    pub layout_cache_avail_w: f32,
 }
 
 #[derive(Clone)]
@@ -340,6 +355,10 @@ impl TabModes {
                 sentences: vec![],
                 sentences_dirty: false,
                 show_line_numbers: false,
+                layout_cache_rows: vec![],
+                layout_cache_starts: vec![],
+                layout_cache_font_size: 0.0,
+                layout_cache_avail_w: 0.0,
             },
             auto: AutoState {
                 playing: false,

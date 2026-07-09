@@ -1,5 +1,5 @@
 use crate::app::engines::{DocumentHandle, ContentBlock, TextWordPosition};
-use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool, Vocabulary, SidebarSection, MoYuState};
+use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool, Vocabulary, SidebarSection, MoYuState, LayoutRow};
 use std::sync::Arc;
 use std::collections::HashMap;
 use parking_lot::Mutex;
@@ -164,118 +164,126 @@ pub fn render_document(
 
         let output;
         if reading.show_line_numbers {
-            // ---- Virtual scrolling with per-source-line rendering ----
+            // ---- Per-source-line rendering + allocate_space for every row ----
             let avail_w = ui.available_width().max(1.0);
             let gutter_w = 65.0;
             let text_avail_w = (avail_w - gutter_w).max(1.0);
             let cpl = (text_avail_w / (font_size * 0.55)).floor().max(1.0) as usize;
             let line_h = font_size * 1.4;
 
-            struct LR {
-                line_no: usize,
-                ci: usize,
-                bi: usize,
-                it: u8, // 0=sep, 1=text, 2=image
-                text: String,
-                height: f32,
-            }
+            // Use cached layout if font_size and available_width haven't changed
+            let rows: &[LayoutRow];
+            let row_starts: &[f32];
 
-            let mut rows: Vec<LR> = Vec::new();
-            let mut global_line: usize = 0;
+            if reading.layout_cache_font_size == font_size && reading.layout_cache_avail_w == avail_w
+                && !reading.layout_cache_rows.is_empty()
+            {
+                rows = &reading.layout_cache_rows;
+                row_starts = &reading.layout_cache_starts;
+            } else {
+                let mut new_rows: Vec<LayoutRow> = Vec::new();
+                let mut global_line: usize = 0;
 
-            for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
-                let chapter = match chapter_opt.as_ref() {
-                    Some(ch) => ch,
-                    None => continue,
-                };
-                if ci > 0 {
-                    rows.push(LR { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0 });
-                }
-                for (bi, block) in chapter.blocks.iter().enumerate() {
-                    match block {
-                        ContentBlock::Text(text) => {
-                            for src_line in text.split('\n') {
-                                let lno = global_line + 1;
-                                let nc = src_line.chars().count().max(1) as f32;
-                                let vlines = (nc / cpl as f32).ceil().max(1.0);
-                                rows.push(LR {
-                                    line_no: lno, ci, bi,
-                                    it: 1,
-                                    text: src_line.to_string(),
-                                    height: vlines * line_h,
+                for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
+                    let chapter = match chapter_opt.as_ref() {
+                        Some(ch) => ch,
+                        None => continue,
+                    };
+                    if ci > 0 {
+                        new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0 });
+                    }
+                    for (bi, block) in chapter.blocks.iter().enumerate() {
+                        match block {
+                            ContentBlock::Text(text) => {
+                                for src_line in text.split('\n') {
+                                    let lno = global_line + 1;
+                                    let nc = src_line.chars().count().max(1) as f32;
+                                    let vlines = (nc / cpl as f32).ceil().max(1.0);
+                                    new_rows.push(LayoutRow {
+                                        line_no: lno, ci, bi,
+                                        it: 1,
+                                        text: src_line.to_string(),
+                                        height: vlines * line_h,
+                                    });
+                                    global_line += 1;
+                                }
+                            }
+                            ContentBlock::Image(img) => {
+                                let max_w = avail_w.min(600.0);
+                                let aspect = img.width as f32 / img.height as f32;
+                                let h = max_w / aspect;
+                                new_rows.push(LayoutRow {
+                                    line_no: global_line + 1, ci, bi,
+                                    it: 2,
+                                    text: String::new(),
+                                    height: h + 8.0,
                                 });
                                 global_line += 1;
                             }
                         }
-                        ContentBlock::Image(img) => {
-                            let max_w = avail_w.min(600.0);
-                            let aspect = img.width as f32 / img.height as f32;
-                            let h = max_w / aspect;
-                            rows.push(LR {
-                                line_no: global_line + 1, ci, bi,
-                                it: 2,
-                                text: String::new(),
-                                height: h + 8.0,
-                            });
-                            global_line += 1;
-                        }
                     }
                 }
+
+                // Pre-compute row starts
+                let mut new_starts = Vec::with_capacity(new_rows.len());
+                let mut acc_y = 0.0;
+                for r in &new_rows {
+                    new_starts.push(acc_y);
+                    acc_y += r.height;
+                }
+
+                reading.layout_cache_rows = new_rows;
+                reading.layout_cache_starts = new_starts;
+                reading.layout_cache_font_size = font_size;
+                reading.layout_cache_avail_w = avail_w;
+
+                rows = &reading.layout_cache_rows;
+                row_starts = &reading.layout_cache_starts;
             }
 
-            // Pre-compute row start Y positions for binary-search culling
-            let mut row_starts = Vec::with_capacity(rows.len());
-            let mut acc_y = 0.0;
-            for r in &rows {
-                row_starts.push(acc_y);
-                acc_y += r.height;
-            }
-            let total_height = acc_y;
-            reading.total_height = total_height;
-            let rows_ref = &rows;
-            let row_starts_ref = &row_starts;
+            reading.total_height = row_starts.last().map_or(0.0, |&last| last) +
+                rows.last().map_or(0.0, |r| r.height);
             let chapter_cache_ref = &reading.chapter_cache;
-
             let text_color = ui.style().visuals.text_color();
 
-            output = sa.show_viewport(ui, |ui, viewport| {
-                ui.set_height(total_height);
+            // Culling range based on last frame's scroll offset
+            let scroll_top = reading.scroll_offset_y;
+            let view_h = ui.available_height();
+            let margin = view_h * 0.3;
+            let cull_min = (scroll_top - margin).max(0.0);
+            let cull_max = scroll_top + view_h + margin;
 
-                let first = row_starts_ref.partition_point(|&y| y < viewport.top());
-                let last = row_starts_ref.partition_point(|&y| y < viewport.bottom());
-                let last = last.min(rows_ref.len());
+            output = sa.show(ui, |ui| {
+                let mut y_cursor = 0.0;
 
-                for i in first..last {
-                    let row = &rows_ref[i];
-                    let y = row_starts_ref[i];
-                    let rect = egui::Rect::from_min_size(
-                        egui::pos2(0.0, y),
-                        egui::vec2(ui.available_width(), row.height),
-                    );
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
-                        match row.it {
+                for i in 0..rows.len() {
+                    let h = rows[i].height;
+                    let row_end = y_cursor + h;
+
+                    if row_end > cull_min && y_cursor < cull_max {
+                        match rows[i].it {
                             0 => {
                                 ui.separator();
                             }
                             1 => {
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        egui::RichText::new(format!("{:>6}│ ", row.line_no))
+                                        egui::RichText::new(format!("{:>6}│ ", rows[i].line_no))
                                             .size(font_size)
                                             .color(egui::Color32::GRAY),
                                     );
                                     ui.add(
                                         egui::Label::new(
-                                            egui::RichText::new(&row.text).size(font_size).color(text_color),
+                                            egui::RichText::new(&rows[i].text).size(font_size).color(text_color),
                                         ).wrap(),
                                     );
                                 });
                             }
                             _ => {
-                                let key = format!("epub_img_{}_{}", row.ci, row.bi);
+                                let key = format!("epub_img_{}_{}", rows[i].ci, rows[i].bi);
                                 let texture = image_cache.entry(key.clone()).or_insert_with(|| {
-                                    let ch = chapter_cache_ref[row.ci].as_ref().unwrap();
-                                    let img = match &ch.blocks[row.bi] {
+                                    let ch = chapter_cache_ref[rows[i].ci].as_ref().unwrap();
+                                    let img = match &ch.blocks[rows[i].bi] {
                                         ContentBlock::Image(img) => img,
                                         _ => unreachable!(),
                                     };
@@ -311,8 +319,8 @@ pub fn render_document(
                                     ui.ctx().load_texture(&key, color_image, egui::TextureOptions::default())
                                 });
                                 let max_w = avail_w.min(600.0);
-                                let ch = chapter_cache_ref[row.ci].as_ref().unwrap();
-                                let img = match &ch.blocks[row.bi] {
+                                let ch = chapter_cache_ref[rows[i].ci].as_ref().unwrap();
+                                let img = match &ch.blocks[rows[i].bi] {
                                     ContentBlock::Image(img) => img,
                                     _ => unreachable!(),
                                 };
@@ -320,7 +328,7 @@ pub fn render_document(
                                 let h = max_w / aspect;
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        egui::RichText::new(format!("{:>6}│ ", row.line_no))
+                                        egui::RichText::new(format!("{:>6}│ ", rows[i].line_no))
                                             .size(font_size)
                                             .color(egui::Color32::GRAY),
                                     );
@@ -331,7 +339,11 @@ pub fn render_document(
                                 });
                             }
                         }
-                    });
+                    } else {
+                        ui.allocate_space(egui::vec2(ui.available_width(), h));
+                    }
+
+                    y_cursor = row_end;
                 }
             });
         } else {
