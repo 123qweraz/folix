@@ -157,8 +157,8 @@ pub fn render_document(
             let dt = ui.input(|i| i.unstable_dt);
             reading.scroll_offset_y =
                 (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
-            sa = sa.vertical_scroll_offset(reading.scroll_offset_y);
         }
+        sa = sa.vertical_scroll_offset(reading.scroll_offset_y);
 
         let font_size = 16.0 * *scale;
 
@@ -390,12 +390,7 @@ pub fn render_document(
 
             // Update current line / total lines for toolbar display
             if !rows.is_empty() {
-                let scroll_y = if reading.scroll_velocity == 0.0 {
-                    output.state.offset.y
-                } else {
-                    reading.scroll_offset_y
-                };
-                let idx = row_starts.partition_point(|&y| y <= scroll_y);
+                let idx = row_starts.partition_point(|&y| y <= output.state.offset.y);
                 reading.current_line = if idx > 0 && idx <= rows.len() {
                     rows[idx - 1].line_no
                 } else if !rows.is_empty() {
@@ -714,9 +709,7 @@ pub fn render_document(
             });
         }
 
-        if reading.scroll_velocity == 0.0 {
-            reading.scroll_offset_y = output.state.offset.y;
-        }
+        reading.scroll_offset_y = output.state.offset.y;
         reading.scroll_velocity = 0.0;
     }
 }

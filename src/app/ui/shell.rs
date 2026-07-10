@@ -1329,9 +1329,9 @@ impl FolixApp {
                         }
                     }
 
-                    // ── Page jump input (right side) ──
+                    // ── Page jump input (right side, fixed docs only) ──
                     let doc_count = page_count_for_tab(tab);
-                    if doc_count > 0 && show_page {
+                    if is_fixed_doc && doc_count > 0 && show_page {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(format!("/{}", doc_count));
                         let resp = ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_page_text)
