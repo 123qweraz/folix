@@ -145,6 +145,24 @@ pub fn render_document(
             }
         }
 
+        // Batch upgrade: load full image data for up to 3 chapters per frame.
+        {
+            let doc_guard = document.lock();
+            if let Some(reflow) = doc_guard.as_reflow() {
+                let mut upgraded = 0;
+                while reading.next_upgrade_ci < reading.chapter_cache.len() && upgraded < 3 {
+                    let ci = reading.next_upgrade_ci;
+                    reading.next_upgrade_ci += 1;
+                    if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
+                        if ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty())) {
+                            reading.chapter_cache[ci] = Some(reflow.load_chapter(ci));
+                            upgraded += 1;
+                        }
+                    }
+                }
+            }
+        }
+
         let mut sa = egui::ScrollArea::vertical()
             .id_salt("reflow_stream")
             .auto_shrink([false; 2]);
@@ -239,31 +257,6 @@ pub fn render_document(
 
             reading.total_height = row_starts.last().map_or(0.0, |&last| last) +
                 rows.last().map_or(0.0, |r| r.height);
-
-            // Ensure visible chapters have full image data loaded
-            let viewport_top = reading.scroll_offset_y;
-            let viewport_bot = (viewport_top + ui.available_height().max(200.0)).min(reading.total_height);
-            let first_vis = row_starts.partition_point(|&y| y < viewport_top);
-            let last_vis = row_starts.partition_point(|&y| y < viewport_bot);
-            {
-                let doc_guard = document.lock();
-                if let Some(reflow) = doc_guard.as_reflow() {
-                    for &ci in &{
-                        let mut chapters: Vec<usize> = rows[first_vis..last_vis.min(rows.len())].iter()
-                            .map(|r| r.ci).collect();
-                        chapters.sort();
-                        chapters.dedup();
-                        chapters
-                    } {
-                        if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
-                            if ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty())) {
-                                reading.chapter_cache[ci] = Some(reflow.load_chapter(ci));
-                                reading.layout_cache_font_size = 0.0;
-                            }
-                        }
-                    }
-                }
-            }
 
             let chapter_cache_ref = &reading.chapter_cache;
             let text_color = ui.style().visuals.text_color();
@@ -453,19 +446,6 @@ pub fn render_document(
             }
         } else {
             // Original block-level rendering (no line numbers)
-            // Ensure the first few chapters have full image data
-            {
-                let doc_guard = document.lock();
-                if let Some(reflow) = doc_guard.as_reflow() {
-                    for ci in 0..reading.chapter_cache.len().min(2) {
-                        if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
-                            if ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty())) {
-                                reading.chapter_cache[ci] = Some(reflow.load_chapter(ci));
-                            }
-                        }
-                    }
-                }
-            }
             output = sa.show(ui, |ui| {
                 let mut job_text = String::new();
                 let mut job_sections: Vec<egui::text::LayoutSection> = Vec::new();
