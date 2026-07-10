@@ -173,8 +173,6 @@ pub struct ReadingState {
     pub total_lines: usize,
     /// Input buffer for jump-to-line.
     pub goto_line_text: String,
-    /// Pending line jump flag — consumed on next render frame.
-    pub pending_line_scroll: bool,
 }
 
 #[derive(Clone)]
@@ -370,7 +368,6 @@ impl TabModes {
                 current_line: 0,
                 total_lines: 0,
                 goto_line_text: String::new(),
-                pending_line_scroll: false,
             },
             auto: AutoState {
                 playing: false,

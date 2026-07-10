@@ -149,17 +149,6 @@ pub fn render_document(
             }
         }
 
-        // Apply any pending line/page jump by writing directly to the
-        // ScrollArea's persisted state, bypassing the builder chain.
-        if reading.pending_line_scroll {
-            reading.pending_line_scroll = false;
-            let id = ui.make_persistent_id("reflow_stream");
-            if let Some(mut state) = egui::containers::scroll_area::State::load(ui.ctx(), id) {
-                state.offset.y = reading.scroll_offset_y;
-                state.store(ui.ctx(), id);
-            }
-        }
-
         let mut sa = egui::ScrollArea::vertical()
             .id_salt("reflow_stream")
             .auto_shrink([false; 2]);
@@ -168,8 +157,8 @@ pub fn render_document(
             let dt = ui.input(|i| i.unstable_dt);
             reading.scroll_offset_y =
                 (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
-            sa = sa.vertical_scroll_offset(reading.scroll_offset_y);
         }
+        sa = sa.vertical_scroll_offset(reading.scroll_offset_y);
 
         let font_size = 16.0 * *scale;
 
@@ -732,7 +721,6 @@ pub fn jump_to_line(reading: &mut ReadingState, target: usize) {
     for (i, row) in reading.layout_cache_rows.iter().enumerate() {
         if row.line_no >= target {
             reading.scroll_offset_y = reading.layout_cache_starts.get(i).copied().unwrap_or(0.0);
-            reading.pending_line_scroll = true;
             return;
         }
     }
