@@ -665,6 +665,30 @@ impl ReflowDocument {
         blocks
     }
 
+    /// Read image dimensions from EPUB archive without storing raw_bytes.
+    fn read_image_dimensions(
+        epub: &Option<std::sync::Mutex<rbook::Epub>>,
+        hrefs: &HashSet<String>,
+    ) -> HashMap<String, (u32, u32)> {
+        let mut dims = HashMap::new();
+        let epub_guard = match epub.as_ref().map(|m| m.lock().unwrap()) {
+            Some(g) => g,
+            None => return dims,
+        };
+        for href in hrefs {
+            let path = if href.starts_with('/') { href.clone() } else { format!("/{}", href) };
+            if let Ok(bytes) = epub_guard.read_resource_bytes(&path) {
+                let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                    .with_guessed_format()
+                    .ok()
+                    .and_then(|r| r.into_dimensions().ok())
+                    .unwrap_or((0, 0));
+                dims.insert(href.clone(), (w, h));
+            }
+        }
+        dims
+    }
+
     fn extract_raw_blocks(
         html: &str,
         chapter_href: &str,
@@ -839,6 +863,32 @@ impl ReflowLayout for ReflowDocument {
             })
             .collect();
         ChapterInfo { title, blocks }
+    }
+
+    fn load_chapter_text_only(&self, idx: usize) -> Chapter {
+        let title = self.toc.get(idx).map(|t| t.label.clone()).unwrap_or_default();
+        if self.spine_items.is_empty() {
+            return Chapter { title, blocks: vec![] };
+        }
+        let (raw_blocks, referenced) = self.parse_chapter_raw_blocks(idx);
+        let dims = Self::read_image_dimensions(&self.epub, &referenced);
+        let blocks: Vec<ContentBlock> = raw_blocks.into_iter()
+            .filter_map(|rb| match rb {
+                RawBlock::Text(t) => {
+                    let trimmed = t.trim().to_string();
+                    if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
+                }
+                RawBlock::ImageRef(href) => {
+                    let (w, h) = dims.get(&href).copied().unwrap_or((600, 800));
+                    Some(ContentBlock::Image(StoredImage {
+                        raw_bytes: Vec::new(),
+                        width: w,
+                        height: h,
+                    }))
+                }
+            })
+            .collect();
+        Chapter { title, blocks }
     }
 }
 

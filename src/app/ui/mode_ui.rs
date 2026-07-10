@@ -140,7 +140,7 @@ pub fn render_document(
             let doc_handle = document.lock();
             if let Some(reflow) = doc_handle.as_reflow() {
                 for ci in 0..reflow.chapter_count() {
-                    reading.chapter_cache.push(Some(reflow.load_chapter(ci)));
+                    reading.chapter_cache.push(Some(reflow.load_chapter_text_only(ci)));
                 }
             }
         }
@@ -239,6 +239,32 @@ pub fn render_document(
 
             reading.total_height = row_starts.last().map_or(0.0, |&last| last) +
                 rows.last().map_or(0.0, |r| r.height);
+
+            // Ensure visible chapters have full image data loaded
+            let viewport_top = reading.scroll_offset_y;
+            let viewport_bot = (viewport_top + ui.available_height().max(200.0)).min(reading.total_height);
+            let first_vis = row_starts.partition_point(|&y| y < viewport_top);
+            let last_vis = row_starts.partition_point(|&y| y < viewport_bot);
+            {
+                let doc_guard = document.lock();
+                if let Some(reflow) = doc_guard.as_reflow() {
+                    for &ci in &{
+                        let mut chapters: Vec<usize> = rows[first_vis..last_vis.min(rows.len())].iter()
+                            .map(|r| r.ci).collect();
+                        chapters.sort();
+                        chapters.dedup();
+                        chapters
+                    } {
+                        if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
+                            if ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty())) {
+                                reading.chapter_cache[ci] = Some(reflow.load_chapter(ci));
+                                reading.layout_cache_font_size = 0.0;
+                            }
+                        }
+                    }
+                }
+            }
+
             let chapter_cache_ref = &reading.chapter_cache;
             let text_color = ui.style().visuals.text_color();
 
@@ -314,6 +340,35 @@ pub fn render_document(
                             }
                         }
                         _ => {
+                            // If image raw_bytes not loaded yet, draw a placeholder
+                            let img_data = chapter_cache_ref[rows[i].ci].as_ref()
+                                .and_then(|ch| {
+                                    if let ContentBlock::Image(img) = &ch.blocks[rows[i].bi] { Some(img) } else { None }
+                                });
+                            if img_data.map_or(true, |img| img.raw_bytes.is_empty()) {
+                                let aspect = img_data.map_or(1.0, |img| {
+                                    if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 }
+                                });
+                                let max_w = alloc_w.min(600.0);
+                                let p_h = max_w / aspect.max(0.01);
+                                painter.text(
+                                    egui::pos2(rect.left() + 4.0, rect.top()),
+                                    egui::Align2::LEFT_TOP,
+                                    format!("{:>6}│ ", rows[i].line_no),
+                                    egui::FontId::proportional(font_size),
+                                    egui::Color32::GRAY,
+                                );
+                                painter.rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
+                                        egui::vec2(max_w, p_h),
+                                    ),
+                                    4.0,
+                                    egui::Color32::from_gray(230),
+                                );
+                                continue;
+                            }
+
                             let key = format!("epub_img_{}_{}", rows[i].ci, rows[i].bi);
                             let texture = image_cache.entry(key.clone()).or_insert_with(|| {
                                 let ch = chapter_cache_ref[rows[i].ci].as_ref().unwrap();
@@ -398,6 +453,19 @@ pub fn render_document(
             }
         } else {
             // Original block-level rendering (no line numbers)
+            // Ensure the first few chapters have full image data
+            {
+                let doc_guard = document.lock();
+                if let Some(reflow) = doc_guard.as_reflow() {
+                    for ci in 0..reading.chapter_cache.len().min(2) {
+                        if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
+                            if ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty())) {
+                                reading.chapter_cache[ci] = Some(reflow.load_chapter(ci));
+                            }
+                        }
+                    }
+                }
+            }
             output = sa.show(ui, |ui| {
                 let mut job_text = String::new();
                 let mut job_sections: Vec<egui::text::LayoutSection> = Vec::new();
@@ -644,6 +712,13 @@ pub fn render_document(
                             }
                             ContentBlock::Image(img) => {
                                 flush_job(ui, &mut job_text, &mut job_sections);
+                                if img.raw_bytes.is_empty() {
+                                    let max_w = ui.available_width().min(600.0);
+                                    let aspect = if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 };
+                                    let h = max_w / aspect.max(0.01);
+                                    ui.allocate_exact_size(egui::vec2(max_w, h), egui::Sense::hover());
+                                    continue;
+                                }
                                 let key = format!("epub_img_{}_{}", ci, bi);
                                 let texture = image_cache.entry(key.clone()).or_insert_with(|| {
                                     let decoded = match image::load_from_memory(&img.raw_bytes)
