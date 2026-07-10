@@ -129,11 +129,7 @@ pub fn render_document(
                     reading.scroll_offset_y =
                         (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
                 }
-                let target = reading.scroll_offset_y;
                 render_scroll(ui, document, page, *scale, *view_rotation, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
-                if reading.scroll_velocity != 0.0 {
-                    reading.scroll_offset_y = target;
-                }
                 reading.scroll_velocity = 0.0;
             }
         }
@@ -824,18 +820,10 @@ fn render_scroll(
         HashMap::new()
     };
 
-    // Pre-seed the ScrollArea state for page jumps
-    {
-        let ctx = ui.ctx();
-        if let Some(mut state) = egui::containers::scroll_area::State::load(ctx, ui.make_persistent_id(id)) {
-            state.offset.y = scroll_target;
-            state.store(ctx, ui.make_persistent_id(id));
-        }
-    }
-
-    let sa = egui::ScrollArea::vertical()
+    let mut sa = egui::ScrollArea::vertical()
         .id_salt(id)
         .auto_shrink([false; 2]);
+    sa = sa.vertical_scroll_offset(scroll_target);
 
     let output = sa.show(ui, |ui| {
         let approx_bottom = scroll_target + approx_vph;
