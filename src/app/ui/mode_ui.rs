@@ -20,6 +20,8 @@ pub fn render_document(
     dark_mode: bool,
     image_cache: &mut HashMap<String, egui::TextureHandle>,
 ) {
+    let _frame_timer = std::time::Instant::now();
+
     let is_fixed = document.lock().is_fixed();
 
     // Calculate fit scale for fixed layouts
@@ -137,12 +139,15 @@ pub fn render_document(
         drop(doc);
 
         if reading.chapter_cache.is_empty() {
+            let t0 = std::time::Instant::now();
             let doc_handle = document.lock();
             if let Some(reflow) = doc_handle.as_reflow() {
                 for ci in 0..reflow.chapter_count() {
                     reading.chapter_cache.push(Some(reflow.load_chapter(ci, false)));
                 }
             }
+            let t1 = std::time::Instant::now();
+            eprintln!("[perf] initial text load: {:?}", t1 - t0);
             reading.next_upgrade_ci = 0;
         }
 
@@ -157,7 +162,10 @@ pub fn render_document(
                     if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
                         let needs_upgrade = ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty()));
                         if needs_upgrade {
+                            let t0 = std::time::Instant::now();
                             reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, true));
+                            let t1 = std::time::Instant::now();
+                            eprintln!("[perf] upgraded ch{}: {:?}", ci, t1 - t0);
                             upgraded += 1;
                         }
                     }
@@ -759,6 +767,7 @@ pub fn render_document(
         reading.scroll_offset_y = output.state.offset.y;
         reading.scroll_velocity = 0.0;
     }
+    eprintln!("[perf] frame: {:?}", _frame_timer.elapsed());
 }
 
 pub fn jump_to_line(reading: &mut ReadingState, target: usize) {

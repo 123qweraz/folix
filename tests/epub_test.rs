@@ -23,7 +23,7 @@ fn test_open_epub_books() {
         let mut img_count = 0;
         let mut total_text_len = 0;
         for c in 0..doc.chapter_count() {
-            let ch = doc.load_chapter(c);
+            let ch = doc.load_chapter(c, false);
             total_blocks += ch.blocks.len();
             for b in &ch.blocks {
                 match b {
@@ -56,10 +56,10 @@ fn test_open_chinese_epub_fast() {
     assert!(doc.chapter_count() > 0, "No chapters");
 
     // Sum images across all chapters
-    let mut total_images = 0;
-    for c in 0..doc.chapter_count() {
-        let ch = doc.load_chapter(c);
-        total_images += ch.blocks.iter().filter(|b| matches!(b, ContentBlock::Image(_))).count();
+        let mut total_images = 0;
+        for c in 0..doc.chapter_count() {
+            let ch = doc.load_chapter(c, false);
+            total_images += ch.blocks.iter().filter(|b| matches!(b, ContentBlock::Image(_))).count();
     }
     assert!(total_images >= 10, "Expected >=10 image blocks, got {}", total_images);
     println!("Images found: {}", total_images);
@@ -70,7 +70,7 @@ fn test_image_dimensions_valid() {
     let path = "testsdoc/如何学习 (本尼迪克特·凯里,Benedict Carey,玉冰) (z-library.sk, 1lib.sk, z-lib.sk).epub";
     let doc = ReflowDocument::open(path).expect("Failed to open");
     for c in 0..doc.chapter_count() {
-        let ch = doc.load_chapter(c);
+        let ch = doc.load_chapter(c, true);
         for (i, block) in ch.blocks.iter().enumerate() {
             if let ContentBlock::Image(img) = block {
                 assert!(img.width > 0 && img.height > 0,
