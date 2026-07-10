@@ -79,9 +79,6 @@ pub trait ReflowLayout: Document {
     fn load_chapter(&self, idx: usize) -> Chapter;
     /// Fast path – returns only block types and character counts, no image loading.
     fn chapter_info(&self, idx: usize) -> ChapterInfo;
-    /// Load chapter with text content + image dimensions, but NO image raw_bytes.
-    /// Used for fast initial loading — full images are loaded on demand when visible.
-    fn load_chapter_text_only(&self, idx: usize) -> Chapter;
 }
 
 #[derive(Clone)]
