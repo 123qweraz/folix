@@ -468,34 +468,36 @@ pub fn render_document(
                     };
 
                     if ci > 0 {
-                        let sep_h = 12.0;
-                        if content_y < view_bot && content_y + sep_h > view_top {
-                            ui.separator();
+                        if content_y < view_bot && content_y + 12.0 > view_top {
+                            content_y += ui.separator().rect.height();
+                        } else {
+                            content_y += 12.0;
                         }
-                        content_y += sep_h;
                     }
 
                     for (bi, block) in chapter.blocks.iter().enumerate() {
-                        let (block_h, is_image) = match block {
+                        let est_h = match block {
                             ContentBlock::Text(t) => {
                                 let nc = t.chars().count().max(1) as f32;
                                 let vlines = (nc / block_cpl as f32).ceil().max(1.0);
-                                (vlines * block_line_h, false)
+                                vlines * block_line_h
                             }
                             ContentBlock::Image(img) => {
                                 let max_w = block_avail_w.min(600.0);
                                 let aspect = img.width as f32 / img.height.max(1) as f32;
-                                (max_w / aspect + 8.0, true)
+                                max_w / aspect + 8.0
                             }
                         };
 
-                        let visible = content_y < view_bot && content_y + block_h > view_top;
+                        let visible = content_y < view_bot && content_y + est_h > view_top;
 
-                        if visible {
+                        let actual_h = if visible {
                             match block {
                                 ContentBlock::Text(text) => {
                                     let text_len = text.chars().count();
-                                    if text_len > 0 {
+                                    if text_len == 0 {
+                                        ui.allocate_exact_size(egui::vec2(block_avail_w, est_h), egui::Sense::hover()).1.rect.height()
+                                    } else {
                                         let label = egui::Label::new(
                                             egui::RichText::new(text.as_str()).size(font_size),
                                         ).wrap();
@@ -591,6 +593,8 @@ pub fn render_document(
                                                 }
                                             }
                                         });
+
+                                        resp.rect.height()
                                     }
                                 }
                                 ContentBlock::Image(img) => {
@@ -598,7 +602,7 @@ pub fn render_document(
                                         let max_w = block_avail_w.min(600.0);
                                         let aspect = if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 };
                                         let h = max_w / aspect.max(0.01);
-                                        ui.allocate_exact_size(egui::vec2(max_w, h), egui::Sense::hover());
+                                        ui.allocate_exact_size(egui::vec2(max_w, h), egui::Sense::hover()).1.rect.height()
                                     } else {
                                         let key = format!("epub_img_{}_{}", ci, bi);
                                         let texture = image_cache.entry(key.clone()).or_insert_with(|| {
@@ -618,20 +622,15 @@ pub fn render_document(
                                         let aspect = img.width as f32 / img.height as f32;
                                         let max_w = block_avail_w.min(600.0);
                                         let h = max_w / aspect;
-                                        ui.add_sized(egui::vec2(max_w, h + 8.0), egui::Image::new((texture.id(), egui::vec2(max_w, h))));
+                                        ui.add_sized(egui::vec2(max_w, h + 8.0), egui::Image::new((texture.id(), egui::vec2(max_w, h)))).rect.height()
                                     }
                                 }
                             }
-                        } else if is_image {
-                            // Off-screen image: allocate space for scroll height
-                            let max_w = block_avail_w.min(600.0);
-                            ui.allocate_exact_size(egui::vec2(max_w, block_h), egui::Sense::hover());
                         } else {
-                            // Off-screen text: allocate space for scroll height
-                            ui.allocate_exact_size(egui::vec2(block_avail_w, block_h), egui::Sense::hover());
-                        }
+                            ui.allocate_exact_size(egui::vec2(block_avail_w, est_h), egui::Sense::hover()).1.rect.height()
+                        };
 
-                        content_y += block_h;
+                        content_y += actual_h;
                     }
                 }
             });
