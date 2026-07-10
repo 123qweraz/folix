@@ -602,9 +602,12 @@ impl ReflowDocument {
         (raw_blocks, referenced)
     }
 
-    /// Load and parse a single chapter's full blocks (text + images). Result is cached.
-    fn load_chapter_blocks(&self, chapter_idx: usize) -> Vec<ContentBlock> {
-        {
+    /// Load and parse a single chapter's blocks.
+    /// When `load_images=true`: loads full image data from archive, result cached in engine.
+    /// When `load_images=false`: text only, placeholder images with default 600x800, no engine caching.
+    fn load_chapter_blocks(&self, chapter_idx: usize, load_images: bool) -> Vec<ContentBlock> {
+        // Cache is only populated for full-load (load_images=true) chapters
+        if load_images {
             let cache = self.chapter_cache.lock().unwrap();
             if let Some(blocks) = cache.get(&chapter_idx) {
                 return blocks.clone();
@@ -613,56 +616,77 @@ impl ReflowDocument {
 
         let (raw_blocks, referenced) = self.parse_chapter_raw_blocks(chapter_idx);
 
-        // Load image bytes for referenced images
-        let epub_guard = self.epub.as_ref().map(|m| m.lock().unwrap());
-        {
-            let mut image_cache = self.image_cache.lock().unwrap();
-            if let Some(ref epub) = epub_guard {
-                for img_href in &referenced {
-                    if image_cache.contains_key(img_href) {
-                        continue;
-                    }
-                    let epub_img_path = if img_href.starts_with('/') {
-                        img_href.clone()
-                    } else {
-                        format!("/{}", img_href)
-                    };
-                    if let Ok(bytes) = epub.read_resource_bytes(epub_img_path.as_str()) {
-                        let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
-                            .with_guessed_format()
-                            .ok()
-                            .and_then(|r| r.into_dimensions().ok())
-                            .unwrap_or((0, 0));
-                        image_cache.insert(img_href.clone(), StoredImage {
-                            raw_bytes: bytes,
-                            width: w,
-                            height: h,
-                        });
+        if load_images {
+            // Load image bytes for referenced images
+            let epub_guard = self.epub.as_ref().map(|m| m.lock().unwrap());
+            {
+                let mut image_cache = self.image_cache.lock().unwrap();
+                if let Some(ref epub) = epub_guard {
+                    for img_href in &referenced {
+                        if image_cache.contains_key(img_href) {
+                            continue;
+                        }
+                        let epub_img_path = if img_href.starts_with('/') {
+                            img_href.clone()
+                        } else {
+                            format!("/{}", img_href)
+                        };
+                        if let Ok(bytes) = epub.read_resource_bytes(epub_img_path.as_str()) {
+                            let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                                .with_guessed_format()
+                                .ok()
+                                .and_then(|r| r.into_dimensions().ok())
+                                .unwrap_or((0, 0));
+                            image_cache.insert(img_href.clone(), StoredImage {
+                                raw_bytes: bytes,
+                                width: w,
+                                height: h,
+                            });
+                        }
                     }
                 }
             }
+
+            // Convert RawBlocks → ContentBlocks with real images
+            let image_cache = self.image_cache.lock().unwrap();
+            let blocks: Vec<ContentBlock> = raw_blocks.into_iter()
+                .filter_map(|rb| match rb {
+                    RawBlock::Text(t) => {
+                        let trimmed = t.trim().to_string();
+                        if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
+                    }
+                    RawBlock::ImageRef(href) => {
+                        image_cache.get(&href).map(|img| ContentBlock::Image(img.clone()))
+                    }
+                })
+                .collect();
+
+            {
+                let mut cache = self.chapter_cache.lock().unwrap();
+                cache.insert(chapter_idx, blocks.clone());
+            }
+
+            blocks
+        } else {
+            // Text-only: no image I/O, placeholder images with default dimensions
+            let blocks: Vec<ContentBlock> = raw_blocks.into_iter()
+                .filter_map(|rb| match rb {
+                    RawBlock::Text(t) => {
+                        let trimmed = t.trim().to_string();
+                        if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
+                    }
+                    RawBlock::ImageRef(_) => {
+                        Some(ContentBlock::Image(StoredImage {
+                            raw_bytes: Vec::new(),
+                            width: 600,
+                            height: 800,
+                        }))
+                    }
+                })
+                .collect();
+
+            blocks
         }
-
-        // Convert RawBlocks → ContentBlocks
-        let image_cache = self.image_cache.lock().unwrap();
-        let blocks: Vec<ContentBlock> = raw_blocks.into_iter()
-            .filter_map(|rb| match rb {
-                RawBlock::Text(t) => {
-                    let trimmed = t.trim().to_string();
-                    if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
-                }
-                RawBlock::ImageRef(href) => {
-                    image_cache.get(&href).map(|img| ContentBlock::Image(img.clone()))
-                }
-            })
-            .collect();
-
-        {
-            let mut cache = self.chapter_cache.lock().unwrap();
-            cache.insert(chapter_idx, blocks.clone());
-        }
-
-        blocks
     }
 
     fn extract_raw_blocks(
@@ -786,7 +810,7 @@ impl ReflowLayout for ReflowDocument {
     }
 
     fn chapter_text(&self, idx: usize) -> String {
-        let ch = self.load_chapter(idx);
+        let ch = self.load_chapter(idx, false);
         ch.blocks.iter()
             .map(|b| match b {
                 ContentBlock::Text(t) => t.as_str(),
@@ -796,7 +820,7 @@ impl ReflowLayout for ReflowDocument {
             .join("\n")
     }
 
-    fn load_chapter(&self, idx: usize) -> Chapter {
+    fn load_chapter(&self, idx: usize, load_images: bool) -> Chapter {
         if self.spine_items.is_empty() {
             let cache = self.chapter_cache.lock().unwrap();
             return cache.get(&idx).cloned().map(|blocks| Chapter {
@@ -807,7 +831,7 @@ impl ReflowLayout for ReflowDocument {
                 blocks: vec![],
             });
         }
-        let blocks = self.load_chapter_blocks(idx);
+        let blocks = self.load_chapter_blocks(idx, load_images);
         let title = self.toc.get(idx).map(|t| t.label.clone()).unwrap_or_default();
         Chapter { title, blocks }
     }

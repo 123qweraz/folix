@@ -76,7 +76,7 @@ pub struct ChapterInfo {
 pub trait ReflowLayout: Document {
     fn chapter_count(&self) -> usize;
     fn chapter_text(&self, idx: usize) -> String;
-    fn load_chapter(&self, idx: usize) -> Chapter;
+    fn load_chapter(&self, idx: usize, load_images: bool) -> Chapter;
     /// Fast path – returns only block types and character counts, no image loading.
     fn chapter_info(&self, idx: usize) -> ChapterInfo;
 }

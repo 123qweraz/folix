@@ -364,7 +364,7 @@ impl FolixApp {
                             // Get the highlighted text from the document
                             let doc_guard = doc.lock();
                             let reflow = doc_guard.as_reflow().unwrap();
-                            let chapter = reflow.load_chapter(a_ch);
+                            let chapter = reflow.load_chapter(a_ch, false);
                             let sel_text: String = chapter.blocks.get(a_blk)
                                 .and_then(|b| match b {
                                     ContentBlock::Text(t) => Some(t.chars().skip(cstart).take(cend - cstart).collect()),

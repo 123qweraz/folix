@@ -140,7 +140,27 @@ pub fn render_document(
             let doc_handle = document.lock();
             if let Some(reflow) = doc_handle.as_reflow() {
                 for ci in 0..reflow.chapter_count() {
-                    reading.chapter_cache.push(Some(reflow.load_chapter(ci)));
+                    reading.chapter_cache.push(Some(reflow.load_chapter(ci, false)));
+                }
+            }
+            reading.next_upgrade_ci = 0;
+        }
+
+        // Background upgrade: load images for up to 3 chapters per frame
+        {
+            let doc_guard = document.lock();
+            if let Some(reflow) = doc_guard.as_reflow() {
+                let mut upgraded = 0;
+                while reading.next_upgrade_ci < reading.chapter_cache.len() && upgraded < 3 {
+                    let ci = reading.next_upgrade_ci;
+                    reading.next_upgrade_ci += 1;
+                    if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
+                        let needs_upgrade = ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty()));
+                        if needs_upgrade {
+                            reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, true));
+                            upgraded += 1;
+                        }
+                    }
                 }
             }
         }
@@ -314,13 +334,37 @@ pub fn render_document(
                             }
                         }
                         _ => {
+                            // If image raw_bytes not loaded yet, draw a placeholder
+                            let ch = &chapter_cache_ref[rows[i].ci];
+                            let img_data = ch.as_ref().and_then(|ch| {
+                                if let ContentBlock::Image(img) = &ch.blocks[rows[i].bi] { Some(img) } else { None }
+                            });
+                            if img_data.map_or(true, |img| img.raw_bytes.is_empty()) {
+                                let aspect = img_data.map_or(1.0, |img| {
+                                    if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 }
+                                });
+                                let p_h = alloc_w.min(600.0) / aspect.max(0.01);
+                                painter.text(
+                                    egui::pos2(rect.left() + 4.0, rect.top()),
+                                    egui::Align2::LEFT_TOP,
+                                    format!("{:>6}│ ", rows[i].line_no),
+                                    egui::FontId::proportional(font_size),
+                                    egui::Color32::GRAY,
+                                );
+                                painter.rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
+                                        egui::vec2(alloc_w.min(600.0), p_h),
+                                    ),
+                                    4.0,
+                                    egui::Color32::from_gray(230),
+                                );
+                                continue;
+                            }
+
                             let key = format!("epub_img_{}_{}", rows[i].ci, rows[i].bi);
                             let texture = image_cache.entry(key.clone()).or_insert_with(|| {
-                                let ch = chapter_cache_ref[rows[i].ci].as_ref().unwrap();
-                                let img = match &ch.blocks[rows[i].bi] {
-                                    ContentBlock::Image(img) => img,
-                                    _ => unreachable!(),
-                                };
+                                let img = img_data.unwrap();
                                 let decoded = match image::load_from_memory(&img.raw_bytes) {
                                     Ok(d) => d.into_rgba8(),
                                     Err(_) => {
@@ -644,6 +688,13 @@ pub fn render_document(
                             }
                             ContentBlock::Image(img) => {
                                 flush_job(ui, &mut job_text, &mut job_sections);
+                                if img.raw_bytes.is_empty() {
+                                    let max_w = ui.available_width().min(600.0);
+                                    let aspect = if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 };
+                                    let h = max_w / aspect.max(0.01);
+                                    ui.allocate_exact_size(egui::vec2(max_w, h), egui::Sense::hover());
+                                    continue;
+                                }
                                 let key = format!("epub_img_{}_{}", ci, bi);
                                 let texture = image_cache.entry(key.clone()).or_insert_with(|| {
                                     let decoded = match image::load_from_memory(&img.raw_bytes)
