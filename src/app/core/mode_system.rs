@@ -167,6 +167,12 @@ pub struct ReadingState {
     pub layout_cache_starts: Vec<f32>,
     pub layout_cache_font_size: f32,
     pub layout_cache_avail_w: f32,
+    /// Current line at the top of the viewport (updated every frame).
+    pub current_line: usize,
+    /// Total number of source lines in the document.
+    pub total_lines: usize,
+    /// Input buffer for jump-to-line.
+    pub goto_line_text: String,
 }
 
 #[derive(Clone)]
@@ -359,6 +365,9 @@ impl TabModes {
                 layout_cache_starts: vec![],
                 layout_cache_font_size: 0.0,
                 layout_cache_avail_w: 0.0,
+                current_line: 0,
+                total_lines: 0,
+                goto_line_text: String::new(),
             },
             auto: AutoState {
                 playing: false,

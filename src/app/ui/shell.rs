@@ -1350,6 +1350,29 @@ impl FolixApp {
                         }
                     });
                 }
+
+                    // ── Line jump input (right side, reflow + line numbers) ──
+                    if !is_fixed_doc && tab.modes.reading.show_line_numbers {
+                        let total = tab.modes.reading.total_lines;
+                        if total > 0 && show_page {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(format!("/{}", total));
+                            let resp = ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_line_text)
+                                .desired_width(50.0)
+                                .font(egui::TextStyle::Monospace));
+                            if !resp.has_focus() {
+                                tab.modes.reading.goto_line_text = tab.modes.reading.current_line.to_string();
+                            }
+                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) && resp.has_focus() {
+                                let input = tab.modes.reading.goto_line_text.trim().to_string();
+                                if let Ok(line) = input.parse::<usize>() {
+                                    mode_ui::jump_to_line(&mut tab.modes.reading, line.max(1));
+                                }
+                                tab.modes.reading.goto_line_text.clear();
+                            }
+                        });
+                    }
+                }
                 } // end has_document
             });
         });

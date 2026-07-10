@@ -387,6 +387,24 @@ pub fn render_document(
                     }
                 }
             });
+
+            // Update current line / total lines for toolbar display
+            if !rows.is_empty() {
+                let scroll_y = if reading.scroll_velocity == 0.0 {
+                    output.state.offset.y
+                } else {
+                    reading.scroll_offset_y
+                };
+                let idx = row_starts.partition_point(|&y| y <= scroll_y);
+                reading.current_line = if idx > 0 && idx <= rows.len() {
+                    rows[idx - 1].line_no
+                } else if !rows.is_empty() {
+                    rows[0].line_no
+                } else {
+                    0
+                };
+                reading.total_lines = rows.last().map_or(0, |r| r.line_no);
+            }
         } else {
             // Original block-level rendering (no line numbers)
             output = sa.show(ui, |ui| {
@@ -700,6 +718,18 @@ pub fn render_document(
             reading.scroll_offset_y = output.state.offset.y;
         }
         reading.scroll_velocity = 0.0;
+    }
+}
+
+pub fn jump_to_line(reading: &mut ReadingState, target: usize) {
+    if target == 0 || reading.layout_cache_rows.is_empty() {
+        return;
+    }
+    for (i, row) in reading.layout_cache_rows.iter().enumerate() {
+        if row.line_no >= target {
+            reading.scroll_offset_y = reading.layout_cache_starts.get(i).copied().unwrap_or(0.0);
+            return;
+        }
     }
 }
 
