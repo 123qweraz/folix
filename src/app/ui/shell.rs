@@ -1329,46 +1329,46 @@ impl FolixApp {
                         }
                     }
 
-                    // ── Page jump input (right side, fixed docs only) ──
+                    // ── Page display + jump (fixed docs only) ──
                     let doc_count = page_count_for_tab(tab);
                     if is_fixed_doc && doc_count > 0 && show_page {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!("/{}", doc_count));
-                        let resp = ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_page_text)
+                        ui.label(format!("{}/{}", tab.modes.page + 1, doc_count));
+                        ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_page_text)
                             .desired_width(50.0)
-                            .font(egui::TextStyle::Monospace));
-                        if !resp.has_focus() {
-                            tab.modes.reading.goto_page_text = (tab.modes.page + 1).to_string();
-                        }
-                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && resp.has_focus() {
-                            let input = tab.modes.reading.goto_page_text.trim().to_string();
-                            if let Ok(p) = input.parse::<usize>() {
+                            .font(egui::TextStyle::Monospace)
+                            .hint_text("跳转"));
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            && tab.modes.reading.goto_page_text.len() > 0
+                        {
+                            let input = tab.modes.reading.goto_page_text.clone();
+                            tab.modes.reading.goto_page_text.clear();
+                            if let Ok(p) = input.trim().parse::<usize>() {
                                 let target = p.max(1).min(doc_count).saturating_sub(1);
                                 page_jump(tab, target);
                             }
-                            tab.modes.reading.goto_page_text.clear();
                         }
                     });
                 }
 
-                    // ── Line jump input (right side, reflow + line numbers) ──
+                    // ── Line display + jump (reflow + line numbers) ──
                     if !is_fixed_doc && tab.modes.reading.show_line_numbers {
                         let total = tab.modes.reading.total_lines;
                         if total > 0 && show_page {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(format!("/{}", total));
-                            let resp = ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_line_text)
+                            ui.label(format!("{}/{}", tab.modes.reading.current_line, total));
+                            ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_line_text)
                                 .desired_width(50.0)
-                                .font(egui::TextStyle::Monospace));
-                            if !resp.has_focus() {
-                                tab.modes.reading.goto_line_text = tab.modes.reading.current_line.to_string();
-                            }
-                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) && resp.has_focus() {
-                                let input = tab.modes.reading.goto_line_text.trim().to_string();
-                                if let Ok(line) = input.parse::<usize>() {
+                                .font(egui::TextStyle::Monospace)
+                                .hint_text("跳转"));
+                            if ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                && tab.modes.reading.goto_line_text.len() > 0
+                            {
+                                let input = tab.modes.reading.goto_line_text.clone();
+                                tab.modes.reading.goto_line_text.clear();
+                                if let Ok(line) = input.trim().parse::<usize>() {
                                     mode_ui::jump_to_line(&mut tab.modes.reading, line.max(1));
                                 }
-                                tab.modes.reading.goto_line_text.clear();
                             }
                         });
                     }
@@ -1716,9 +1716,9 @@ fn show_in_folder(path: &str) {
 fn page_jump(tab: &mut crate::app::core::app_state::OpenTab, target: usize) {
     let max = page_count_for_tab(tab).saturating_sub(1);
     let target = target.min(max);
-    // For reflow: set stream jump target + ensure enough pages loaded
     tab.modes.reading.stream_jump_to = Some(target);
     tab.modes.reading.stream_page_end = tab.modes.reading.stream_page_end.max(target);
     tab.modes.page = target;
     tab.modes.reading.goto_page_text.clear();
+    tab.modes.reading.scroll_offset_y = 0.0;
 }
