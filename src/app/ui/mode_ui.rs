@@ -246,25 +246,76 @@ pub fn render_document(
             let chapter_cache_ref = &reading.chapter_cache;
             let text_color = ui.style().visuals.text_color();
 
+            let cpl_text = (avail_w - gutter_w).max(1.0) as f32 / (font_size * 0.55);
+
             output = sa.show(ui, |ui| {
-                for i in 0..rows.len() {
+                let total_h = reading.total_height;
+                let (response, painter) = ui.allocate_painter(
+                    egui::vec2(ui.available_width(), total_h.max(0.0)),
+                    egui::Sense::empty(),
+                );
+
+                // Virtual scrolling: only paint rows in the visible region + margin
+                let clip = ui.clip_rect();
+                let content_origin = response.rect.top();
+                let visible_top = (clip.top() - content_origin).max(0.0);
+                let visible_bottom = (clip.bottom() - content_origin).min(total_h);
+                let margin = (visible_bottom - visible_top) * 0.5;
+                let cull_min = (visible_top - margin).max(0.0);
+                let cull_max = (visible_bottom + margin).min(total_h);
+
+                let first = row_starts.partition_point(|&y| y < cull_min);
+                let last = row_starts.partition_point(|&y| y < cull_max);
+
+                let base_x = response.rect.left();
+                let base_y = content_origin;
+                let alloc_w = response.rect.width();
+
+                for i in first..last.min(rows.len()) {
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(base_x, base_y + row_starts[i]),
+                        egui::vec2(alloc_w, rows[i].height),
+                    );
+
                     match rows[i].it {
                         0 => {
-                            ui.separator();
+                            let sep_y = rect.center().y;
+                            painter.line_segment(
+                                [egui::pos2(rect.left(), sep_y), egui::pos2(rect.right(), sep_y)],
+                                ui.visuals().widgets.noninteractive.bg_stroke,
+                            );
                         }
                         1 => {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(format!("{:>6}│ ", rows[i].line_no))
-                                        .size(font_size)
-                                        .color(egui::Color32::GRAY),
-                                );
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&rows[i].text).size(font_size).color(text_color),
-                                    ).wrap(),
-                                );
-                            });
+                            painter.text(
+                                egui::pos2(rect.left() + 4.0, rect.top()),
+                                egui::Align2::LEFT_TOP,
+                                format!("{:>6}│ ", rows[i].line_no),
+                                egui::FontId::proportional(font_size),
+                                egui::Color32::GRAY,
+                            );
+
+                            let text = &rows[i].text;
+                            if !text.is_empty() {
+                                let text_x = rect.left() + gutter_w;
+                                let actual_cpl = cpl_text.floor().max(1.0) as usize;
+                                let chars: Vec<char> = text.chars().collect();
+                                let total = chars.len();
+                                let mut pos = 0;
+                                let mut vline = 0;
+                                while pos < total {
+                                    let end = (pos + actual_cpl).min(total);
+                                    let segment: String = chars[pos..end].iter().collect();
+                                    painter.text(
+                                        egui::pos2(text_x, rect.top() + vline as f32 * line_h),
+                                        egui::Align2::LEFT_TOP,
+                                        segment,
+                                        egui::FontId::proportional(font_size),
+                                        text_color,
+                                    );
+                                    pos = end;
+                                    vline += 1;
+                                }
+                            }
                         }
                         _ => {
                             let key = format!("epub_img_{}_{}", rows[i].ci, rows[i].bi);
@@ -286,7 +337,7 @@ pub fn render_document(
                                 };
                                 let (native_w, native_h) = decoded.dimensions();
                                 let aspect = native_w as f32 / native_h as f32;
-                                let display_w = (ui.available_width().min(600.0)).ceil() as u32;
+                                let display_w = (alloc_w.min(600.0)).ceil() as u32;
                                 let display_h = (display_w as f32 / aspect).ceil() as u32;
                                 let resized = if display_w < native_w {
                                     image::imageops::resize(
@@ -305,25 +356,33 @@ pub fn render_document(
                                 );
                                 ui.ctx().load_texture(&key, color_image, egui::TextureOptions::default())
                             });
-                            let max_w = avail_w.min(600.0);
+
+                            painter.text(
+                                egui::pos2(rect.left() + 4.0, rect.top()),
+                                egui::Align2::LEFT_TOP,
+                                format!("{:>6}│ ", rows[i].line_no),
+                                egui::FontId::proportional(font_size),
+                                egui::Color32::GRAY,
+                            );
+
                             let ch = chapter_cache_ref[rows[i].ci].as_ref().unwrap();
                             let img = match &ch.blocks[rows[i].bi] {
                                 ContentBlock::Image(img) => img,
                                 _ => unreachable!(),
                             };
                             let aspect = img.width as f32 / img.height as f32;
-                            let h = max_w / aspect;
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(format!("{:>6}│ ", rows[i].line_no))
-                                        .size(font_size)
-                                        .color(egui::Color32::GRAY),
-                                );
-                                ui.add_sized(
-                                    egui::vec2(max_w, h + 8.0),
-                                    egui::Image::new((texture.id(), egui::vec2(max_w, h))),
-                                );
-                            });
+                            let max_w = alloc_w.min(600.0);
+                            let img_w = max_w;
+                            let img_h = max_w / aspect;
+                            painter.image(
+                                texture.id(),
+                                egui::Rect::from_min_size(
+                                    egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
+                                    egui::vec2(img_w, img_h),
+                                ),
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                egui::Color32::WHITE,
+                            );
                         }
                     }
                 }
