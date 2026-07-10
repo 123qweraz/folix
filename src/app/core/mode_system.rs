@@ -173,8 +173,6 @@ pub struct ReadingState {
     pub total_lines: usize,
     /// Input buffer for jump-to-line.
     pub goto_line_text: String,
-    /// Next chapter index to upgrade with full image data.
-    pub next_upgrade_ci: usize,
 }
 
 #[derive(Clone)]
@@ -370,7 +368,6 @@ impl TabModes {
                 current_line: 0,
                 total_lines: 0,
                 goto_line_text: String::new(),
-                next_upgrade_ci: 0,
             },
             auto: AutoState {
                 playing: false,
