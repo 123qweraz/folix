@@ -600,26 +600,67 @@ impl eframe::App for FolixApp {
         let sidebar = self.state.current_tab().is_some_and(|t| {
             t.has_document() && (t.modes.active == ModeKind::LightReading || t.modes.active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
         });
-        if sidebar {
-            let doc = self.state.current_tab()
-                .and_then(|t| t.document.clone())
-                .unwrap();
-            egui::SidePanel::left("reading_sidebar")
-                .resizable(true)
-                .default_width(260.0)
-                .show(ctx, |ui| {
-                    if let Some(tab) = self.state.current_tab_mut() {
-                        let active = tab.modes.active;
-                        if active == ModeKind::LightReading || active == ModeKind::DeepReading {
-                            mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.reading, lng);
-                        }
-                    }
-                });
-        }
 
         let panel_resp = egui::CentralPanel::default().show(ctx, |ui| {
             self.render_document_view(ui);
         });
+
+        // Floating sidebar overlay (not affecting CentralPanel width)
+        if sidebar {
+            let doc = self.state.current_tab()
+                .and_then(|t| t.document.clone());
+            if let Some(doc) = doc {
+                let sidebar_y = ctx.available_rect().top();
+                egui::Area::new("reading_sidebar_overlay".into())
+                    .anchor(egui::Align2::LEFT_TOP, [0.0, sidebar_y])
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        if let Some(tab) = self.state.current_tab_mut() {
+                            let active = tab.modes.active;
+                            if active == ModeKind::LightReading || active == ModeKind::DeepReading {
+                                let sw = tab.modes.reading.sidebar_width;
+                                let frame_resp = egui::Frame::default()
+                                    .fill(ui.style().visuals.panel_fill)
+                                    .shadow(egui::epaint::Shadow {
+                                        offset: [3, 3],
+                                        blur: 6,
+                                        spread: 0,
+                                        color: egui::Color32::from_black_alpha(80),
+                                    })
+                                    .show(ui, |ui| {
+                                        ui.set_max_width(sw);
+                                        ui.set_min_width(sw);
+                                        mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.reading, lng);
+                                    });
+                                let r = frame_resp.response.rect;
+                                // Resize handle on right edge
+                                let handle_rect = egui::Rect::from_min_max(
+                                    egui::pos2(r.right() - 3.0, r.top()),
+                                    egui::pos2(r.right() + 3.0, r.bottom()),
+                                );
+                                let handle = ui.interact(
+                                    handle_rect,
+                                    egui::Id::new("sidebar_resize_handle"),
+                                    egui::Sense::click_and_drag(),
+                                );
+                                if handle.dragged() {
+                                    tab.modes.reading.sidebar_width =
+                                        (tab.modes.reading.sidebar_width + handle.drag_delta().x)
+                                            .clamp(150.0, 500.0);
+                                }
+                                if handle.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                                }
+                                ui.painter().vline(
+                                    r.right(),
+                                    r.top()..=r.bottom(),
+                                    egui::Stroke::new(1.0, egui::Color32::GRAY),
+                                );
+                            }
+                        }
+                    });
+            }
+        }
 
         // Left-click on the document panel toggles UI visibility
         if panel_resp.response.clicked() {
