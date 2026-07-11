@@ -601,19 +601,26 @@ impl eframe::App for FolixApp {
             t.has_document() && (t.modes.active == ModeKind::LightReading || t.modes.active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
         });
 
-        // Compute sidebar dimensions before CentralPanel (available_rect is still valid)
-        let sidebar_y = ctx.available_rect().top();
-        let sidebar_h = ctx.screen_rect().height() - sidebar_y;
-
         let panel_resp = egui::CentralPanel::default().show(ctx, |ui| {
             self.render_document_view(ui);
         });
 
-        // Floating sidebar overlay (not affecting CentralPanel width)
+        // Left-click on the document panel toggles UI visibility
+        if panel_resp.response.clicked() {
+            self.state.ui_visible = !self.state.ui_visible;
+        }
+
+        if self.state.ui_visible {
+            self.render_toolbars(ctx);
+        }
+
+        // Floating sidebar overlay (after all panels, so available_rect excludes toolbars)
         if sidebar {
             let doc = self.state.current_tab()
                 .and_then(|t| t.document.clone());
             if let Some(doc) = doc {
+                let sidebar_y = ctx.available_rect().top();
+                let sidebar_h = ctx.available_rect().height().max(0.0);
                 egui::Area::new("reading_sidebar_overlay".into())
                     .anchor(egui::Align2::LEFT_TOP, [0.0, sidebar_y])
                     .order(egui::Order::Foreground)
@@ -670,15 +677,6 @@ impl eframe::App for FolixApp {
                         }
                     });
             }
-        }
-
-        // Left-click on the document panel toggles UI visibility
-        if panel_resp.response.clicked() {
-            self.state.ui_visible = !self.state.ui_visible;
-        }
-
-        if self.state.ui_visible {
-            self.render_toolbars(ctx);
         }
         self.handle_open_dialog(ctx);
         self.render_about(ctx);
