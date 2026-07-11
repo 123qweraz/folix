@@ -197,14 +197,58 @@ pub fn render_document(
         let font_id = egui::FontId::proportional(font_size);
         let line_h = font_size * 1.4;
 
-        // Use cached layout if font_size, avail_w, and show_line_numbers haven't changed
+        // ---- Layout cache management with partial rebuild + resize throttle ----
         let rows: &[LayoutRow];
         let row_starts: &[f32];
 
-        if reading.layout_cache_font_size == font_size && reading.layout_cache_avail_w == avail_w
+        // Helper: compute cpl-based height estimate for non-visible text rows
+        let cpl_heuristic = |text: &str, ta_w: f32, fs: f32, lh: f32| -> f32 {
+            let cpl = (ta_w / (fs * 0.55)).floor().max(1.0) as usize;
+            let nc = text.chars().count().max(1);
+            let vlines = (nc as f32 / cpl as f32).ceil().max(1.0);
+            vlines * lh
+        };
+
+        // Lazy update: recompute galley for rows that scrolled into view
+        // (runs BEFORE rows/row_starts borrow; fixes rows whose galley is None
+        //  because they were outside the visible range during the last partial build)
+        if reading.layout_cache_gen > 0 {
+            let gen = reading.layout_cache_gen;
+            let cull_min = (reading.scroll_offset_y - ui.available_height() * 0.5).max(0.0);
+            let cull_max = reading.scroll_offset_y + ui.available_height() * 1.5;
+            let first = reading.layout_cache_starts.partition_point(|&y| y < cull_min);
+            let last = reading.layout_cache_starts.partition_point(|&y| y < cull_max)
+                .min(reading.layout_cache_rows.len());
+            let mut any_change = false;
+            for i in first..last {
+                let row = &mut reading.layout_cache_rows[i];
+                if row.it == 1 && !row.text.is_empty() && row.galley.is_none() && row.layout_gen == gen {
+                    let g = ui.fonts(|f| f.layout_delayed_color(
+                        row.text.clone(),
+                        font_id.clone(),
+                        text_avail_w));
+                    row.height = g.rect.height().max(1.0);
+                    row.galley = Some(g.into());
+                    any_change = true;
+                }
+            }
+            if any_change {
+                let mut acc_y = if first > 0 { reading.layout_cache_starts[first] } else { 0.0 };
+                for i in first..reading.layout_cache_rows.len() {
+                    reading.layout_cache_starts[i] = acc_y;
+                    acc_y += reading.layout_cache_rows[i].height;
+                }
+                reading.total_height = acc_y;
+            }
+        }
+
+        // ---- Cache selection ----
+        let cache_hit = reading.layout_cache_font_size == font_size
+            && reading.layout_cache_avail_w == avail_w
             && reading.layout_cache_show_ln == reading.show_line_numbers
-            && !reading.layout_cache_rows.is_empty()
-        {
+            && !reading.layout_cache_rows.is_empty();
+
+        if cache_hit {
             rows = &reading.layout_cache_rows;
             row_starts = &reading.layout_cache_starts;
         } else if reading.layout_cache_font_size == font_size
@@ -212,22 +256,27 @@ pub fn render_document(
             && !reading.layout_cache_rows.is_empty()
             && reading.layout_cache_pending_avail_w != avail_w
         {
-            // Resize throttle: use old cache during active drag to avoid per-frame rebuild
+            // Resize throttle: skip rebuild during active drag
             reading.layout_cache_pending_avail_w = avail_w;
             rows = &reading.layout_cache_rows;
             row_starts = &reading.layout_cache_starts;
-        } else {
+        } else if reading.layout_cache_font_size != font_size
+            || reading.layout_cache_show_ln != reading.show_line_numbers
+            || reading.layout_cache_rows.is_empty()
+        {
+            // Full rebuild (font_size / show_ln changed, or first load)
             reading.layout_cache_pending_avail_w = 0.0;
+            reading.layout_cache_gen = reading.layout_cache_gen.wrapping_add(1);
+            let gen = reading.layout_cache_gen;
             let mut new_rows: Vec<LayoutRow> = Vec::new();
             let mut global_line: usize = 0;
-
             for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
                 let chapter = match chapter_opt.as_ref() {
                     Some(ch) => ch,
                     None => continue,
                 };
                 if ci > 0 {
-                    new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None });
+                    new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen });
                 }
                 for (bi, block) in chapter.blocks.iter().enumerate() {
                     match block {
@@ -243,6 +292,7 @@ pub fn render_document(
                                         height: line_h,
                                         char_offset,
                                         galley: None,
+                                        layout_gen: gen,
                                     });
                                 } else {
                                     let galley = ui.fonts(|f| f.layout_delayed_color(
@@ -256,11 +306,12 @@ pub fn render_document(
                                         height: h,
                                         char_offset,
                                         galley: Some(galley.into()),
+                                        layout_gen: gen,
                                     });
                                 }
                                 char_offset += src_line.chars().count();
                                 if li < lines.len() - 1 {
-                                    char_offset += 1; // account for '\n' between lines
+                                    char_offset += 1;
                                 }
                                 global_line += 1;
                             }
@@ -275,26 +326,90 @@ pub fn render_document(
                                 height: h + 8.0,
                                 char_offset: 0,
                                 galley: None,
+                                layout_gen: gen,
                             });
                             global_line += 1;
                         }
                     }
                 }
             }
-
-            // Pre-compute row starts
             let mut new_starts = Vec::with_capacity(new_rows.len());
             let mut acc_y = 0.0;
             for r in &new_rows {
                 new_starts.push(acc_y);
                 acc_y += r.height;
             }
-
             reading.layout_cache_rows = new_rows;
             reading.layout_cache_starts = new_starts;
             reading.layout_cache_font_size = font_size;
             reading.layout_cache_avail_w = avail_w;
             reading.layout_cache_show_ln = reading.show_line_numbers;
+            rows = &reading.layout_cache_rows;
+            row_starts = &reading.layout_cache_starts;
+        } else {
+            // Partial rebuild (resize stopped — avail_w changed, others same)
+            reading.layout_cache_pending_avail_w = 0.0;
+            reading.layout_cache_gen = reading.layout_cache_gen.wrapping_add(1);
+            reading.layout_cache_avail_w = avail_w;
+            let gen = reading.layout_cache_gen;
+
+            // Save top row index before mutation
+            let top_idx = reading.layout_cache_starts
+                .partition_point(|&y| y <= reading.scroll_offset_y)
+                .min(reading.layout_cache_rows.len().saturating_sub(1));
+
+            // Estimate visible range using old row_starts (close enough)
+            let approx_vh = ui.available_height();
+            let margin = approx_vh * 0.5;
+            let cull_min = (reading.scroll_offset_y - margin).max(0.0);
+            let cull_max = reading.scroll_offset_y + approx_vh + margin;
+            let vis_first = reading.layout_cache_starts.partition_point(|&y| y < cull_min);
+            let vis_last = reading.layout_cache_starts.partition_point(|&y| y < cull_max)
+                .min(reading.layout_cache_rows.len());
+
+            // Update heights for ALL rows (cpl fast path for non-visible, exact for visible)
+            for i in 0..reading.layout_cache_rows.len() {
+                let row = &mut reading.layout_cache_rows[i];
+                row.layout_gen = gen;
+                match row.it {
+                    1 => {
+                        if row.text.is_empty() {
+                            row.height = line_h;
+                            row.galley = None;
+                        } else if i >= vis_first && i < vis_last {
+                            let g = ui.fonts(|f| f.layout_delayed_color(
+                                row.text.clone(),
+                                font_id.clone(),
+                                text_avail_w));
+                            row.height = g.rect.height().max(1.0);
+                            row.galley = Some(g.into());
+                        } else {
+                            row.height = cpl_heuristic(&row.text, text_avail_w, font_size, line_h);
+                            row.galley = None;
+                        }
+                    }
+                    2 => {
+                        if let Some(Some(ch)) = reading.chapter_cache.get(row.ci) {
+                            if let Some(ContentBlock::Image(img)) = ch.blocks.get(row.bi) {
+                                let max_w = avail_w.min(600.0);
+                                let aspect = img.width as f32 / img.height.max(1) as f32;
+                                row.height = max_w / aspect + 8.0;
+                            }
+                        }
+                        row.galley = None;
+                    }
+                    _ => { row.height = 12.0; row.galley = None; }
+                }
+            }
+
+            // Recompute row_starts from scratch, fix scroll_offset_y
+            let mut acc_y = 0.0;
+            for i in 0..reading.layout_cache_rows.len() {
+                reading.layout_cache_starts[i] = acc_y;
+                acc_y += reading.layout_cache_rows[i].height;
+            }
+            reading.scroll_offset_y = reading.layout_cache_starts[top_idx];
+            reading.total_height = acc_y;
 
             rows = &reading.layout_cache_rows;
             row_starts = &reading.layout_cache_starts;
@@ -302,6 +417,7 @@ pub fn render_document(
 
         reading.total_height = row_starts.last().map_or(0.0, |&last| last)
             + rows.last().map_or(0.0, |r| r.height);
+
         let chapter_cache_ref = &reading.chapter_cache;
         let text_color = ui.style().visuals.text_color();
         let img_max_w = (avail_w - gutter_w).min(600.0);

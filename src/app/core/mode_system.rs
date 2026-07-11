@@ -72,6 +72,8 @@ pub struct LayoutRow {
     pub char_offset: usize,
     /// Cached text galley from Fonts::layout_delayed_color (avoid per-frame layout).
     pub galley: Option<std::sync::Arc<egui::Galley>>,
+    /// Generation counter: matched against ReadingState::layout_cache_gen to detect staleness.
+    pub layout_gen: u64,
 }
 
 #[derive(Clone)]
@@ -176,6 +178,8 @@ pub struct ReadingState {
     pub layout_cache_show_ln: bool,
     /// Debounce: set to avail_w when a resize is detected, cleared on rebuild.
     pub layout_cache_pending_avail_w: f32,
+    /// Generation counter incremented on every cache rebuild / partial update.
+    pub layout_cache_gen: u64,
     /// Current line at the top of the viewport (updated every frame).
     pub current_line: usize,
     /// Total number of source lines in the document.
@@ -379,6 +383,7 @@ impl TabModes {
                 layout_cache_avail_w: 0.0,
                 layout_cache_show_ln: false,
                 layout_cache_pending_avail_w: 0.0,
+                layout_cache_gen: 0,
                 current_line: 0,
                 total_lines: 0,
                 goto_line_text: String::new(),
