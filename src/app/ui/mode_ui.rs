@@ -260,11 +260,8 @@ pub fn render_document(
             reading.layout_cache_pending_avail_w = avail_w;
             rows = &reading.layout_cache_rows;
             row_starts = &reading.layout_cache_starts;
-        } else if reading.layout_cache_font_size != font_size
-            || reading.layout_cache_show_ln != reading.show_line_numbers
-            || reading.layout_cache_rows.is_empty()
-        {
-            // Full rebuild (font_size / show_ln changed, or first load)
+        } else if reading.layout_cache_rows.is_empty() {
+            // First load: full rebuild (all rows with exact layout_delayed_color)
             reading.layout_cache_pending_avail_w = 0.0;
             reading.layout_cache_gen = reading.layout_cache_gen.wrapping_add(1);
             let gen = reading.layout_cache_gen;
@@ -347,18 +344,23 @@ pub fn render_document(
             rows = &reading.layout_cache_rows;
             row_starts = &reading.layout_cache_starts;
         } else {
-            // Partial rebuild (resize stopped — avail_w changed, others same)
+            // Partial rebuild (font_size / show_ln / avail_w changed, but not first load)
             reading.layout_cache_pending_avail_w = 0.0;
             reading.layout_cache_gen = reading.layout_cache_gen.wrapping_add(1);
+            reading.layout_cache_font_size = font_size;
             reading.layout_cache_avail_w = avail_w;
+            reading.layout_cache_show_ln = reading.show_line_numbers;
             let gen = reading.layout_cache_gen;
+            let gutter_w = if reading.show_line_numbers { 65.0 } else { 0.0 };
+            let text_avail_w = (avail_w - gutter_w).max(1.0);
 
-            // Save top row index before mutation
+            // Save top row index (correct row whose start <= scroll_y)
             let top_idx = reading.layout_cache_starts
                 .partition_point(|&y| y <= reading.scroll_offset_y)
+                .saturating_sub(1)
                 .min(reading.layout_cache_rows.len().saturating_sub(1));
 
-            // Estimate visible range using old row_starts (close enough)
+            // Estimate visible range
             let approx_vh = ui.available_height();
             let margin = approx_vh * 0.5;
             let cull_min = (reading.scroll_offset_y - margin).max(0.0);
