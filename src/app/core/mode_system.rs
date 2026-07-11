@@ -367,7 +367,7 @@ impl TabModes {
                 vocab_dirty: false,
                 sentences: vec![],
                 sentences_dirty: false,
-                max_text_width: 0.0,
+                max_text_width: 720.0,
                 show_line_numbers: false,
                 layout_cache_rows: vec![],
                 layout_cache_starts: vec![],

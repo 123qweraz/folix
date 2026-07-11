@@ -194,9 +194,8 @@ pub fn render_document(
         let x_off = ((full_w - avail_w) * 0.5).max(0.0);
         let gutter_w = if reading.show_line_numbers { 65.0 } else { 0.0 };
         let text_avail_w = (avail_w - gutter_w).max(1.0);
-        let cpl = (text_avail_w / (font_size * 0.55)).floor().max(1.0) as usize;
-        let line_h = font_size * 1.4;
         let font_id = egui::FontId::proportional(font_size);
+        let line_h = font_size * 1.4;
 
         // Use cached layout if font_size, avail_w, and show_line_numbers haven't changed
         let rows: &[LayoutRow];
@@ -227,12 +226,19 @@ pub fn render_document(
                             let mut char_offset = 0;
                             for (li, src_line) in lines.iter().enumerate() {
                                 let lno = global_line + 1;
-                                let nc = src_line.chars().count().max(1) as f32;
-                                let vlines = (nc / cpl as f32).ceil().max(1.0);
+                                let h = if src_line.is_empty() {
+                                    line_h
+                                } else {
+                                    ui.fonts(|f| f.layout_delayed_color(
+                                        src_line.to_string(),
+                                        font_id.clone(),
+                                        text_avail_w))
+                                        .rect.height().max(1.0)
+                                };
                                 new_rows.push(LayoutRow {
                                     line_no: lno, ci, bi, it: 1,
                                     text: src_line.to_string(),
-                                    height: vlines * line_h,
+                                    height: h,
                                     char_offset,
                                 });
                                 char_offset += src_line.chars().count();
@@ -342,14 +348,9 @@ pub fn render_document(
                                 text_avail_w));
                             painter.add(egui::Shape::galley(
                                 egui::pos2(text_x, rect.top()),
-                                galley.clone(),
-                                text_color,
-                            ));
-                            painter.galley(
-                                egui::pos2(text_x, rect.top()),
                                 galley,
                                 text_color,
-                            );
+                            ));
                         }
                     }
                     _ => {
