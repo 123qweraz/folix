@@ -68,6 +68,8 @@ pub struct LayoutRow {
     pub it: u8,
     pub text: String,
     pub height: f32,
+    /// Character offset of this row within its block (including newlines).
+    pub char_offset: usize,
 }
 
 #[derive(Clone)]
@@ -167,6 +169,7 @@ pub struct ReadingState {
     pub layout_cache_starts: Vec<f32>,
     pub layout_cache_font_size: f32,
     pub layout_cache_avail_w: f32,
+    pub layout_cache_show_ln: bool,
     /// Current line at the top of the viewport (updated every frame).
     pub current_line: usize,
     /// Total number of source lines in the document.
@@ -367,6 +370,7 @@ impl TabModes {
                 layout_cache_starts: vec![],
                 layout_cache_font_size: 0.0,
                 layout_cache_avail_w: 0.0,
+                layout_cache_show_ln: false,
                 current_line: 0,
                 total_lines: 0,
                 goto_line_text: String::new(),

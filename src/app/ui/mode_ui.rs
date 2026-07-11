@@ -187,453 +187,405 @@ pub fn render_document(
         let font_size = 16.0 * *scale;
 
         let output;
-        if reading.show_line_numbers {
-            // ---- Per-source-line rendering + allocate_space for every row ----
-            let avail_w = ui.available_width().max(1.0);
-            let gutter_w = 65.0;
-            let text_avail_w = (avail_w - gutter_w).max(1.0);
-            let cpl = (text_avail_w / (font_size * 0.55)).floor().max(1.0) as usize;
-            let line_h = font_size * 1.4;
+        // ---- Unified virtual scrolling (layout cache + painter + interaction) ----
+        let avail_w = ui.available_width().max(1.0);
+        let gutter_w = if reading.show_line_numbers { 65.0 } else { 0.0 };
+        let text_avail_w = (avail_w - gutter_w).max(1.0);
+        let cpl = (text_avail_w / (font_size * 0.55)).floor().max(1.0) as usize;
+        let line_h = font_size * 1.4;
 
-            // Use cached layout if font_size and available_width haven't changed
-            let rows: &[LayoutRow];
-            let row_starts: &[f32];
+        // Use cached layout if font_size, avail_w, and show_line_numbers haven't changed
+        let rows: &[LayoutRow];
+        let row_starts: &[f32];
 
-            if reading.layout_cache_font_size == font_size && reading.layout_cache_avail_w == avail_w
-                && !reading.layout_cache_rows.is_empty()
-            {
-                rows = &reading.layout_cache_rows;
-                row_starts = &reading.layout_cache_starts;
-            } else {
-                let mut new_rows: Vec<LayoutRow> = Vec::new();
-                let mut global_line: usize = 0;
+        if reading.layout_cache_font_size == font_size && reading.layout_cache_avail_w == avail_w
+            && reading.layout_cache_show_ln == reading.show_line_numbers
+            && !reading.layout_cache_rows.is_empty()
+        {
+            rows = &reading.layout_cache_rows;
+            row_starts = &reading.layout_cache_starts;
+        } else {
+            let mut new_rows: Vec<LayoutRow> = Vec::new();
+            let mut global_line: usize = 0;
 
-                for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
-                    let chapter = match chapter_opt.as_ref() {
-                        Some(ch) => ch,
-                        None => continue,
-                    };
-                    if ci > 0 {
-                        new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0 });
-                    }
-                    for (bi, block) in chapter.blocks.iter().enumerate() {
-                        match block {
-                            ContentBlock::Text(text) => {
-                                for src_line in text.split('\n') {
-                                    let lno = global_line + 1;
-                                    let nc = src_line.chars().count().max(1) as f32;
-                                    let vlines = (nc / cpl as f32).ceil().max(1.0);
-                                    new_rows.push(LayoutRow {
-                                        line_no: lno, ci, bi,
-                                        it: 1,
-                                        text: src_line.to_string(),
-                                        height: vlines * line_h,
-                                    });
-                                    global_line += 1;
-                                }
-                            }
-                            ContentBlock::Image(img) => {
-                                let max_w = avail_w.min(600.0);
-                                let aspect = img.width as f32 / img.height as f32;
-                                let h = max_w / aspect;
+            for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
+                let chapter = match chapter_opt.as_ref() {
+                    Some(ch) => ch,
+                    None => continue,
+                };
+                if ci > 0 {
+                    new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0 });
+                }
+                for (bi, block) in chapter.blocks.iter().enumerate() {
+                    match block {
+                        ContentBlock::Text(text) => {
+                            let lines: Vec<&str> = text.split('\n').collect();
+                            let mut char_offset = 0;
+                            for (li, src_line) in lines.iter().enumerate() {
+                                let lno = global_line + 1;
+                                let nc = src_line.chars().count().max(1) as f32;
+                                let vlines = (nc / cpl as f32).ceil().max(1.0);
                                 new_rows.push(LayoutRow {
-                                    line_no: global_line + 1, ci, bi,
-                                    it: 2,
-                                    text: String::new(),
-                                    height: h + 8.0,
+                                    line_no: lno, ci, bi, it: 1,
+                                    text: src_line.to_string(),
+                                    height: vlines * line_h,
+                                    char_offset,
                                 });
+                                char_offset += src_line.chars().count();
+                                if li < lines.len() - 1 {
+                                    char_offset += 1; // account for '\n' between lines
+                                }
                                 global_line += 1;
                             }
                         }
+                        ContentBlock::Image(img) => {
+                            let max_w = avail_w.min(600.0);
+                            let aspect = img.width as f32 / img.height.max(1) as f32;
+                            let h = max_w / aspect;
+                            new_rows.push(LayoutRow {
+                                line_no: global_line + 1, ci, bi, it: 2,
+                                text: String::new(),
+                                height: h + 8.0,
+                                char_offset: 0,
+                            });
+                            global_line += 1;
+                        }
                     }
                 }
-
-                // Pre-compute row starts
-                let mut new_starts = Vec::with_capacity(new_rows.len());
-                let mut acc_y = 0.0;
-                for r in &new_rows {
-                    new_starts.push(acc_y);
-                    acc_y += r.height;
-                }
-
-                reading.layout_cache_rows = new_rows;
-                reading.layout_cache_starts = new_starts;
-                reading.layout_cache_font_size = font_size;
-                reading.layout_cache_avail_w = avail_w;
-
-                rows = &reading.layout_cache_rows;
-                row_starts = &reading.layout_cache_starts;
             }
 
-            reading.total_height = row_starts.last().map_or(0.0, |&last| last) +
-                rows.last().map_or(0.0, |r| r.height);
-            let chapter_cache_ref = &reading.chapter_cache;
-            let text_color = ui.style().visuals.text_color();
+            // Pre-compute row starts
+            let mut new_starts = Vec::with_capacity(new_rows.len());
+            let mut acc_y = 0.0;
+            for r in &new_rows {
+                new_starts.push(acc_y);
+                acc_y += r.height;
+            }
 
-            let cpl_text = (avail_w - gutter_w).max(1.0) as f32 / (font_size * 0.55);
+            reading.layout_cache_rows = new_rows;
+            reading.layout_cache_starts = new_starts;
+            reading.layout_cache_font_size = font_size;
+            reading.layout_cache_avail_w = avail_w;
+            reading.layout_cache_show_ln = reading.show_line_numbers;
 
-            output = sa.show(ui, |ui| {
-                let total_h = reading.total_height;
-                let (response, painter) = ui.allocate_painter(
-                    egui::vec2(ui.available_width(), total_h.max(0.0)),
-                    egui::Sense::empty(),
+            rows = &reading.layout_cache_rows;
+            row_starts = &reading.layout_cache_starts;
+        }
+
+        reading.total_height = row_starts.last().map_or(0.0, |&last| last)
+            + rows.last().map_or(0.0, |r| r.height);
+        let chapter_cache_ref = &reading.chapter_cache;
+        let text_color = ui.style().visuals.text_color();
+        let cpl_text = text_avail_w / (font_size * 0.55);
+        let font_id = egui::FontId::proportional(font_size);
+
+        output = sa.show(ui, |ui| {
+            let total_h = reading.total_height;
+            let (response, painter) = ui.allocate_painter(
+                egui::vec2(ui.available_width(), total_h.max(0.0)),
+                egui::Sense::empty(),
+            );
+
+            // Virtual scrolling: only paint rows in the visible region + margin
+            let clip = ui.clip_rect();
+            let content_origin = response.rect.top();
+            let visible_top = (clip.top() - content_origin).max(0.0);
+            let visible_bottom = (clip.bottom() - content_origin).min(total_h);
+            let margin = (visible_bottom - visible_top) * 0.5;
+            let cull_min = (visible_top - margin).max(0.0);
+            let cull_max = (visible_bottom + margin).min(total_h);
+
+            let first = row_starts.partition_point(|&y| y < cull_min);
+            let last = row_starts.partition_point(|&y| y < cull_max);
+
+            let base_x = response.rect.left();
+            let base_y = content_origin;
+            let alloc_w = response.rect.width();
+            let ann_ref = annotate.as_ref();
+
+            // Paint pass
+            for i in first..last.min(rows.len()) {
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(base_x, base_y + row_starts[i]),
+                    egui::vec2(alloc_w, rows[i].height),
                 );
 
-                // Virtual scrolling: only paint rows in the visible region + margin
-                let clip = ui.clip_rect();
-                let content_origin = response.rect.top();
-                let visible_top = (clip.top() - content_origin).max(0.0);
-                let visible_bottom = (clip.bottom() - content_origin).min(total_h);
-                let margin = (visible_bottom - visible_top) * 0.5;
-                let cull_min = (visible_top - margin).max(0.0);
-                let cull_max = (visible_bottom + margin).min(total_h);
-
-                let first = row_starts.partition_point(|&y| y < cull_min);
-                let last = row_starts.partition_point(|&y| y < cull_max);
-
-                let base_x = response.rect.left();
-                let base_y = content_origin;
-                let alloc_w = response.rect.width();
-
-                for i in first..last.min(rows.len()) {
-                    let rect = egui::Rect::from_min_size(
-                        egui::pos2(base_x, base_y + row_starts[i]),
-                        egui::vec2(alloc_w, rows[i].height),
-                    );
-
-                    match rows[i].it {
-                        0 => {
-                            let sep_y = rect.center().y;
-                            painter.line_segment(
-                                [egui::pos2(rect.left(), sep_y), egui::pos2(rect.right(), sep_y)],
-                                ui.visuals().widgets.noninteractive.bg_stroke,
-                            );
-                        }
-                        1 => {
+                match rows[i].it {
+                    0 => {
+                        let sep_y = rect.center().y;
+                        painter.line_segment(
+                            [egui::pos2(rect.left(), sep_y), egui::pos2(rect.right(), sep_y)],
+                            ui.visuals().widgets.noninteractive.bg_stroke,
+                        );
+                    }
+                    1 => {
+                        if reading.show_line_numbers {
                             painter.text(
                                 egui::pos2(rect.left() + 4.0, rect.top()),
                                 egui::Align2::LEFT_TOP,
                                 format!("{:>6}│ ", rows[i].line_no),
-                                egui::FontId::proportional(font_size),
+                                font_id.clone(),
                                 egui::Color32::GRAY,
                             );
+                        }
 
-                            let text = &rows[i].text;
-                            if !text.is_empty() {
-                                let text_x = rect.left() + gutter_w;
-                                let actual_cpl = cpl_text.floor().max(1.0) as usize;
-                                let chars: Vec<char> = text.chars().collect();
-                                let total = chars.len();
-                                let mut pos = 0;
-                                let mut vline = 0;
-                                while pos < total {
-                                    let end = (pos + actual_cpl).min(total);
-                                    let segment: String = chars[pos..end].iter().collect();
-                                    painter.text(
-                                        egui::pos2(text_x, rect.top() + vline as f32 * line_h),
-                                        egui::Align2::LEFT_TOP,
-                                        segment,
-                                        egui::FontId::proportional(font_size),
-                                        text_color,
-                                    );
-                                    pos = end;
-                                    vline += 1;
-                                }
+                        let text = &rows[i].text;
+                        if !text.is_empty() {
+                            let text_x = rect.left() + gutter_w;
+                            let actual_cpl = cpl_text.floor().max(1.0) as usize;
+                            let chars: Vec<char> = text.chars().collect();
+                            let total = chars.len();
+                            let mut pos = 0;
+                            let mut vline = 0;
+                            while pos < total {
+                                let end = (pos + actual_cpl).min(total);
+                                let segment: String = chars[pos..end].iter().collect();
+                                painter.text(
+                                    egui::pos2(text_x, rect.top() + vline as f32 * line_h),
+                                    egui::Align2::LEFT_TOP,
+                                    segment,
+                                    font_id.clone(),
+                                    text_color,
+                                );
+                                pos = end;
+                                vline += 1;
                             }
                         }
-                        _ => {
-                            // If image raw_bytes not loaded yet, draw a placeholder
-                            let ch = &chapter_cache_ref[rows[i].ci];
-                            let img_data = ch.as_ref().and_then(|ch| {
-                                if let ContentBlock::Image(img) = &ch.blocks[rows[i].bi] { Some(img) } else { None }
+                    }
+                    _ => {
+                        // If image raw_bytes not loaded yet, draw a placeholder
+                        let ch = &chapter_cache_ref[rows[i].ci];
+                        let img_data = ch.as_ref().and_then(|ch| {
+                            if let ContentBlock::Image(img) = &ch.blocks[rows[i].bi] { Some(img) } else { None }
+                        });
+                        if img_data.map_or(true, |img| img.raw_bytes.is_empty()) {
+                            let aspect = img_data.map_or(1.0, |img| {
+                                if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 }
                             });
-                            if img_data.map_or(true, |img| img.raw_bytes.is_empty()) {
-                                let aspect = img_data.map_or(1.0, |img| {
-                                    if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 }
-                                });
-                                let p_h = alloc_w.min(600.0) / aspect.max(0.01);
+                            let p_h = alloc_w.min(600.0) / aspect.max(0.01);
+                            if reading.show_line_numbers {
                                 painter.text(
                                     egui::pos2(rect.left() + 4.0, rect.top()),
                                     egui::Align2::LEFT_TOP,
                                     format!("{:>6}│ ", rows[i].line_no),
-                                    egui::FontId::proportional(font_size),
+                                    font_id.clone(),
                                     egui::Color32::GRAY,
                                 );
-                                painter.rect_filled(
-                                    egui::Rect::from_min_size(
-                                        egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
-                                        egui::vec2(alloc_w.min(600.0), p_h),
-                                    ),
-                                    4.0,
-                                    egui::Color32::from_gray(230),
-                                );
-                                continue;
                             }
+                            painter.rect_filled(
+                                egui::Rect::from_min_size(
+                                    egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
+                                    egui::vec2(alloc_w.min(600.0), p_h),
+                                ),
+                                4.0,
+                                egui::Color32::from_gray(230),
+                            );
+                            continue;
+                        }
 
-                            let key = format!("epub_img_{}_{}", rows[i].ci, rows[i].bi);
-                            let texture = image_cache.entry(key.clone()).or_insert_with(|| {
-                                let img = img_data.unwrap();
-                                let decoded = match image::load_from_memory(&img.raw_bytes) {
-                                    Ok(d) => d.into_rgba8(),
-                                    Err(_) => {
-                                        return ui.ctx().load_texture(
-                                            &key,
-                                            egui::ColorImage::new([1, 1], egui::Color32::RED),
-                                            egui::TextureOptions::default(),
-                                        );
-                                    }
-                                };
-                                let (native_w, native_h) = decoded.dimensions();
-                                let aspect = native_w as f32 / native_h as f32;
-                                let display_w = (alloc_w.min(600.0)).ceil() as u32;
-                                let display_h = (display_w as f32 / aspect).ceil() as u32;
-                                let resized = if display_w < native_w {
-                                    image::imageops::resize(
-                                        &decoded,
-                                        display_w.max(1),
-                                        display_h.max(1),
-                                        image::imageops::FilterType::Lanczos3,
-                                    )
-                                } else {
-                                    decoded
-                                };
-                                let (rw, rh) = resized.dimensions();
-                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                    [rw as usize, rh as usize],
-                                    resized.as_raw(),
-                                );
-                                ui.ctx().load_texture(&key, color_image, egui::TextureOptions::default())
-                            });
+                        let key = format!("epub_img_{}_{}", rows[i].ci, rows[i].bi);
+                        let texture = image_cache.entry(key.clone()).or_insert_with(|| {
+                            let img = img_data.unwrap();
+                            let decoded = match image::load_from_memory(&img.raw_bytes) {
+                                Ok(d) => d.into_rgba8(),
+                                Err(_) => {
+                                    return ui.ctx().load_texture(
+                                        &key,
+                                        egui::ColorImage::new([1, 1], egui::Color32::RED),
+                                        egui::TextureOptions::default(),
+                                    );
+                                }
+                            };
+                            let (native_w, native_h) = decoded.dimensions();
+                            let aspect = native_w as f32 / native_h as f32;
+                            let display_w = (alloc_w.min(600.0)).ceil() as u32;
+                            let display_h = (display_w as f32 / aspect).ceil() as u32;
+                            let resized = if display_w < native_w {
+                                image::imageops::resize(
+                                    &decoded,
+                                    display_w.max(1),
+                                    display_h.max(1),
+                                    image::imageops::FilterType::Lanczos3,
+                                )
+                            } else {
+                                decoded
+                            };
+                            let (rw, rh) = resized.dimensions();
+                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                [rw as usize, rh as usize],
+                                resized.as_raw(),
+                            );
+                            ui.ctx().load_texture(&key, color_image, egui::TextureOptions::default())
+                        });
 
+                        if reading.show_line_numbers {
                             painter.text(
                                 egui::pos2(rect.left() + 4.0, rect.top()),
                                 egui::Align2::LEFT_TOP,
                                 format!("{:>6}│ ", rows[i].line_no),
-                                egui::FontId::proportional(font_size),
+                                font_id.clone(),
                                 egui::Color32::GRAY,
                             );
-
-                            let ch = chapter_cache_ref[rows[i].ci].as_ref().unwrap();
-                            let img = match &ch.blocks[rows[i].bi] {
-                                ContentBlock::Image(img) => img,
-                                _ => unreachable!(),
-                            };
-                            let aspect = img.width as f32 / img.height as f32;
-                            let max_w = alloc_w.min(600.0);
-                            let img_w = max_w;
-                            let img_h = max_w / aspect;
-                            painter.image(
-                                texture.id(),
-                                egui::Rect::from_min_size(
-                                    egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
-                                    egui::vec2(img_w, img_h),
-                                ),
-                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                egui::Color32::WHITE,
-                            );
                         }
+
+                        let ch = chapter_cache_ref[rows[i].ci].as_ref().unwrap();
+                        let img = match &ch.blocks[rows[i].bi] {
+                            ContentBlock::Image(img) => img,
+                            _ => unreachable!(),
+                        };
+                        let aspect = img.width as f32 / img.height as f32;
+                        let max_w = alloc_w.min(600.0);
+                        let img_w = max_w;
+                        let img_h = max_w / aspect;
+                        painter.image(
+                            texture.id(),
+                            egui::Rect::from_min_size(
+                                egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
+                                egui::vec2(img_w, img_h),
+                            ),
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
                     }
                 }
-            });
-
-            // Update current line / total lines for toolbar display
-            if !rows.is_empty() {
-                let idx = row_starts.partition_point(|&y| y <= output.state.offset.y);
-                reading.current_line = if idx > 0 && idx <= rows.len() {
-                    rows[idx - 1].line_no
-                } else if !rows.is_empty() {
-                    rows[0].line_no
-                } else {
-                    0
-                };
-                reading.total_lines = rows.last().map_or(0, |r| r.line_no);
             }
-        } else {
-            // Block-level rendering with virtual scrolling
-            let block_avail_w = ui.available_width().max(1.0);
-            let block_line_h = font_size * 1.2;
-            let block_cpl = (block_avail_w / (font_size * 0.55)).floor().max(1.0) as usize;
 
-            output = sa.show(ui, |ui| {
-                let clip = ui.clip_rect();
-                let margin = clip.height() * 0.5;
-                let view_top = clip.top() - margin;
-                let view_bot = clip.bottom() + margin;
-                let mut content_y = ui.cursor().top();
+            // Interaction layer (only for non-line-number mode)
+            if !reading.show_line_numbers {
+                let sel = &mut reading.selection;
+                for i in first..last.min(rows.len()) {
+                    if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(base_x, base_y + row_starts[i]),
+                        egui::vec2(alloc_w, rows[i].height),
+                    );
+                    let text_rect = egui::Rect::from_min_size(
+                        egui::pos2(rect.left() + gutter_w, rect.top()),
+                        egui::vec2((rect.width() - gutter_w).max(1.0), rect.height()),
+                    );
+                    let resp = ui.interact(text_rect, egui::Id::new(("row", i)), egui::Sense::click_and_drag());
 
-                for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
-                    let chapter = match chapter_opt.as_ref() {
-                        Some(ch) => ch,
-                        None => continue,
-                    };
-
-                    if ci > 0 {
-                        if content_y < view_bot && content_y + 12.0 > view_top {
-                            content_y += ui.separator().rect.height();
-                        } else {
-                            content_y += 12.0;
+                    // Highlight rendering
+                    if let Some(ann) = ann_ref {
+                        for h in &ann.annotations {
+                            if h.kind != AnnotationTool::Highlight { continue; }
+                            if let Some((h_ch, h_blk, h_cs, h_ce)) = h.reflow_range {
+                                if h_ch == rows[i].ci && h_blk == rows[i].bi {
+                                    let row_start = rows[i].char_offset;
+                                    let text_len = rows[i].text.chars().count();
+                                    let row_end = row_start + text_len;
+                                    let h_start = h_cs.max(row_start).min(row_end);
+                                    let h_end = h_ce.max(row_start).min(row_end);
+                                    if h_start < h_end {
+                                        let local_s = h_start - row_start;
+                                        let local_e = h_end - row_start;
+                                        let before: String = rows[i].text.chars().take(local_s).collect();
+                                        let overlap: String = rows[i].text.chars().skip(local_s).take(local_e - local_s).collect();
+                                        let before_w = ui.fonts(|f| f.layout_no_wrap(before, font_id.clone(), egui::Color32::WHITE).rect.width());
+                                        let overlap_w = ui.fonts(|f| f.layout_no_wrap(overlap, font_id.clone(), egui::Color32::WHITE).rect.width());
+                                        let c = h.color;
+                                        let hl_rect = egui::Rect::from_min_size(
+                                            egui::pos2(text_rect.left() + before_w, text_rect.top()),
+                                            egui::vec2(overlap_w, text_rect.height()),
+                                        );
+                                        ui.painter().rect_filled(hl_rect, 0.0, egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]));
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    for (bi, block) in chapter.blocks.iter().enumerate() {
-                        let est_h = match block {
-                            ContentBlock::Text(t) => {
-                                let nc = t.chars().count().max(1) as f32;
-                                let vlines = (nc / block_cpl as f32).ceil().max(1.0);
-                                vlines * block_line_h
+                    // Selection rendering
+                    if sel.selecting && sel.char_anchor.is_some() {
+                        let (a_ch, a_blk, a_pos) = sel.char_anchor.unwrap();
+                        let (f_ch, f_blk, f_pos) = sel.char_focus.unwrap_or((a_ch, a_blk, a_pos));
+                        if (a_ch == rows[i].ci && a_blk == rows[i].bi) || (f_ch == rows[i].ci && f_blk == rows[i].bi) {
+                            let row_start = rows[i].char_offset;
+                            let text_len = rows[i].text.chars().count();
+                            let row_end = row_start + text_len;
+                            let s_start = (if a_ch == rows[i].ci && a_blk == rows[i].bi { a_pos } else { 0 }).max(row_start).min(row_end);
+                            let s_end = (if f_ch == rows[i].ci && f_blk == rows[i].bi { f_pos } else { row_end }).max(row_start).min(row_end);
+                            let s_low = s_start.min(s_end);
+                            let s_high = s_start.max(s_end);
+                            if s_low < s_high {
+                                let local_s = s_low - row_start;
+                                let local_e = s_high - row_start;
+                                let before_text: String = rows[i].text.chars().take(local_s).collect();
+                                let sel_text: String = rows[i].text.chars().skip(local_s).take(local_e - local_s).collect();
+                                let before_w = ui.fonts(|f| f.layout_no_wrap(before_text, font_id.clone(), egui::Color32::WHITE).rect.width());
+                                let sel_w = ui.fonts(|f| f.layout_no_wrap(sel_text, font_id.clone(), egui::Color32::WHITE).rect.width());
+                                let sel_rect = egui::Rect::from_min_size(
+                                    egui::pos2(text_rect.left() + before_w, text_rect.top()),
+                                    egui::vec2(sel_w, text_rect.height()),
+                                );
+                                ui.painter().rect_filled(sel_rect, 0.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 100));
                             }
-                            ContentBlock::Image(img) => {
-                                let max_w = block_avail_w.min(600.0);
-                                let aspect = img.width as f32 / img.height.max(1) as f32;
-                                max_w / aspect + 8.0
-                            }
-                        };
-
-                        let visible = content_y < view_bot && content_y + est_h > view_top;
-
-                        let actual_h = if visible {
-                            match block {
-                                ContentBlock::Text(text) => {
-                                    let text_len = text.chars().count();
-                                    if text_len == 0 {
-                                        ui.allocate_exact_size(egui::vec2(block_avail_w, est_h), egui::Sense::hover()).1.rect.height()
-                                    } else {
-                                        let label = egui::Label::new(
-                                            egui::RichText::new(text.as_str()).size(font_size),
-                                        ).wrap();
-                                        let resp = ui.add(label);
-                                        let label_rect = resp.rect;
-
-                                        if let Some(ann) = annotate.as_ref() {
-                                            for h in &ann.annotations {
-                                                if h.kind != AnnotationTool::Highlight { continue; }
-                                                if let Some((h_ch, h_blk, h_cs, h_ce)) = h.reflow_range {
-                                                    if h_ch == ci && h_blk == bi {
-                                                        let h_start = h_cs.max(0).min(text_len);
-                                                        let h_end = h_ce.max(0).min(text_len);
-                                                        if h_start < h_end {
-                                                            let overlap_text: String = text.chars().skip(h_start).take(h_end - h_start).collect();
-                                                            let before_text: String = text.chars().skip(0).take(h_start).collect();
-                                                            let before_w = ui.fonts(|f| f.layout_no_wrap(before_text, egui::FontId::proportional(font_size), egui::Color32::WHITE).rect.width());
-                                                            let overlap_w = ui.fonts(|f| f.layout_no_wrap(overlap_text, egui::FontId::proportional(font_size), egui::Color32::WHITE).rect.width());
-                                                            let c = h.color;
-                                                            let hl_rect = egui::Rect::from_min_size(
-                                                                egui::pos2(label_rect.left() + before_w, label_rect.top()),
-                                                                egui::vec2(overlap_w, label_rect.height()),
-                                                            );
-                                                            ui.painter().rect_filled(hl_rect, 0.0, egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        let sel = &mut reading.selection;
-                                        if sel.selecting && sel.char_anchor.is_some() {
-                                            let (a_ch, a_blk, a_pos) = sel.char_anchor.unwrap();
-                                            let (f_ch, f_blk, f_pos) = sel.char_focus.unwrap_or((a_ch, a_blk, a_pos));
-                                            if a_ch == ci && a_blk == bi || f_ch == ci && f_blk == bi {
-                                                let s_start = (if a_ch == ci && a_blk == bi { a_pos } else { 0 }).max(0).min(text_len);
-                                                let s_end = (if f_ch == ci && f_blk == bi { f_pos } else { text_len }).max(0).min(text_len);
-                                                let s_low = s_start.min(s_end);
-                                                let s_high = s_start.max(s_end);
-                                                if s_low < s_high {
-                                                    let before_text: String = text.chars().skip(0).take(s_low).collect();
-                                                    let sel_text: String = text.chars().skip(s_low).take(s_high - s_low).collect();
-                                                    let before_w = ui.fonts(|f| f.layout_no_wrap(before_text, egui::FontId::proportional(font_size), egui::Color32::WHITE).rect.width());
-                                                    let sel_w = ui.fonts(|f| f.layout_no_wrap(sel_text, egui::FontId::proportional(font_size), egui::Color32::WHITE).rect.width());
-                                                    let sel_rect = egui::Rect::from_min_size(
-                                                        egui::pos2(label_rect.left() + before_w, label_rect.top()),
-                                                        egui::vec2(sel_w, label_rect.height()),
-                                                    );
-                                                    ui.painter().rect_filled(sel_rect, 0.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 100));
-                                                }
-                                            }
-                                        }
-
-                                        if resp.clicked() {
-                                            if let Some(mouse_pos) = resp.interact_pointer_pos() {
-                                                let local_x = mouse_pos.x - label_rect.left();
-                                                let ratio = (local_x / label_rect.width().max(1.0)).clamp(0.0, 1.0);
-                                                let approx_char = (ratio * text_len as f32) as usize;
-                                                sel.char_anchor = Some((ci, bi, approx_char));
-                                                sel.char_focus = Some((ci, bi, approx_char));
-                                                sel.selected_text = String::new();
-                                                sel.selected_word_indices.clear();
-                                                sel.selecting = true;
-                                            }
-                                        }
-
-                                        if resp.dragged() && sel.selecting {
-                                            if let Some(mouse_pos) = resp.interact_pointer_pos() {
-                                                let local_x = mouse_pos.x - label_rect.left();
-                                                let ratio = (local_x / label_rect.width().max(1.0)).clamp(0.0, 1.0);
-                                                let approx_char = (ratio * text_len as f32) as usize;
-                                                sel.char_focus = Some((ci, bi, approx_char));
-                                            }
-                                        }
-
-                                        if resp.drag_stopped() { sel.selecting = false; }
-
-                                        resp.context_menu(|ui| {
-                                            if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
-                                                let (a_ch, a_blk, a_pos) = anchor;
-                                                let (f_ch, f_blk, f_pos) = focus;
-                                                if a_ch == ci && a_blk == bi || f_ch == ci && f_blk == bi {
-                                                    let local_a = if a_ch == ci && a_blk == bi { a_pos } else { 0 };
-                                                    let local_f = if f_ch == ci && f_blk == bi { f_pos } else { text_len };
-                                                    let s_start = local_a.min(local_f).max(0).min(text_len);
-                                                    let s_end = local_a.max(local_f).max(0).min(text_len);
-                                                    if s_start < s_end {
-                                                        let sel_text: String = text.chars().skip(s_start).take(s_end - s_start).collect();
-                                                        if ui.button("Copy").clicked() { ui.ctx().copy_text(sel_text.clone()); ui.close_menu(); }
-                                                        if ui.button("Add to Vocabulary").clicked() { sel.pending_vocab = Some(sel_text.clone()); ui.close_menu(); }
-                                                        if ui.button("Save Sentence").clicked() { sel.pending_sentence = Some(sel_text); ui.close_menu(); }
-                                                    }
-                                                }
-                                            }
-                                        });
-
-                                        resp.rect.height()
-                                    }
-                                }
-                                ContentBlock::Image(img) => {
-                                    if img.raw_bytes.is_empty() {
-                                        let max_w = block_avail_w.min(600.0);
-                                        let aspect = if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 };
-                                        let h = max_w / aspect.max(0.01);
-                                        ui.allocate_exact_size(egui::vec2(max_w, h), egui::Sense::hover()).1.rect.height()
-                                    } else {
-                                        let key = format!("epub_img_{}_{}", ci, bi);
-                                        let texture = image_cache.entry(key.clone()).or_insert_with(|| {
-                                            let decoded = match image::load_from_memory(&img.raw_bytes) {
-                                                Ok(d) => d.into_rgba8(),
-                                                Err(_) => return ui.ctx().load_texture(&key, egui::ColorImage::new([1, 1], egui::Color32::RED), egui::TextureOptions::default()),
-                                            };
-                                            let (native_w, native_h) = decoded.dimensions();
-                                            let aspect = native_w as f32 / native_h as f32;
-                                            let display_w = (block_avail_w.min(600.0)).ceil() as u32;
-                                            let display_h = (display_w as f32 / aspect).ceil() as u32;
-                                            let resized = if display_w < native_w { image::imageops::resize(&decoded, display_w.max(1), display_h.max(1), image::imageops::FilterType::Lanczos3) } else { decoded };
-                                            let (rw, rh) = resized.dimensions();
-                                            let color_image = egui::ColorImage::from_rgba_unmultiplied([rw as usize, rh as usize], resized.as_raw());
-                                            ui.ctx().load_texture(&key, color_image, egui::TextureOptions::default())
-                                        });
-                                        let aspect = img.width as f32 / img.height as f32;
-                                        let max_w = block_avail_w.min(600.0);
-                                        let h = max_w / aspect;
-                                        ui.add_sized(egui::vec2(max_w, h + 8.0), egui::Image::new((texture.id(), egui::vec2(max_w, h)))).rect.height()
-                                    }
-                                }
-                            }
-                        } else {
-                            ui.allocate_exact_size(egui::vec2(block_avail_w, est_h), egui::Sense::hover()).1.rect.height()
-                        };
-
-                        content_y += actual_h;
+                        }
                     }
+
+                    // Click/drag/context menu
+                    if resp.clicked() {
+                        if let Some(mouse_pos) = resp.interact_pointer_pos() {
+                            let local_x = mouse_pos.x - text_rect.left();
+                            let ratio = (local_x / text_rect.width().max(1.0)).clamp(0.0, 1.0);
+                            let approx_char = (ratio * rows[i].text.chars().count() as f32) as usize;
+                            let abs_char = rows[i].char_offset + approx_char;
+                            sel.char_anchor = Some((rows[i].ci, rows[i].bi, abs_char));
+                            sel.char_focus = Some((rows[i].ci, rows[i].bi, abs_char));
+                            sel.selected_text = String::new();
+                            sel.selected_word_indices.clear();
+                            sel.selecting = true;
+                        }
+                    }
+
+                    if resp.dragged() && sel.selecting {
+                        if let Some(mouse_pos) = resp.interact_pointer_pos() {
+                            let local_x = mouse_pos.x - text_rect.left();
+                            let ratio = (local_x / text_rect.width().max(1.0)).clamp(0.0, 1.0);
+                            let approx_char = (ratio * rows[i].text.chars().count() as f32) as usize;
+                            let abs_char = rows[i].char_offset + approx_char;
+                            sel.char_focus = Some((rows[i].ci, rows[i].bi, abs_char));
+                        }
+                    }
+
+                    if resp.drag_stopped() { sel.selecting = false; }
+
+                    resp.context_menu(|ui| {
+                        if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
+                            let (a_ch, a_blk, a_pos) = anchor;
+                            let (f_ch, f_blk, f_pos) = focus;
+                            let block_text = chapter_cache_ref[rows[i].ci].as_ref()
+                                .and_then(|ch| ch.blocks.get(rows[i].bi))
+                                .and_then(|b| if let ContentBlock::Text(t) = b { Some(t.as_str()) } else { None })
+                                .unwrap_or("");
+                            let block_len = block_text.chars().count();
+                            let local_a = if a_ch == rows[i].ci && a_blk == rows[i].bi { a_pos } else { 0 };
+                            let local_f = if f_ch == rows[i].ci && f_blk == rows[i].bi { f_pos } else { block_len };
+                            let s_start = local_a.min(local_f).max(0).min(block_len);
+                            let s_end = local_a.max(local_f).max(0).min(block_len);
+                            if s_start < s_end {
+                                let sel_text: String = block_text.chars().skip(s_start).take(s_end - s_start).collect();
+                                if ui.button("Copy").clicked() { ui.ctx().copy_text(sel_text.clone()); ui.close_menu(); }
+                                if ui.button("Add to Vocabulary").clicked() { sel.pending_vocab = Some(sel_text.clone()); ui.close_menu(); }
+                                if ui.button("Save Sentence").clicked() { sel.pending_sentence = Some(sel_text); ui.close_menu(); }
+                            }
+                        }
+                    });
                 }
-            });
+            }
+        });
+
+        // Update current line / total lines for toolbar display
+        if !rows.is_empty() {
+            let idx = row_starts.partition_point(|&y| y <= output.state.offset.y);
+            reading.current_line = if idx > 0 && idx <= rows.len() {
+                rows[idx - 1].line_no
+            } else if !rows.is_empty() {
+                rows[0].line_no
+            } else {
+                0
+            };
+            reading.total_lines = rows.last().map_or(0, |r| r.line_no);
         }
 
         reading.scroll_offset_y = output.state.offset.y;
