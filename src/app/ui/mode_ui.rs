@@ -1850,4 +1850,7 @@ pub fn render_sidebar(
             rs.add_vocab_text.clear();
         }
     }
+
+    // Fill remaining vertical space so sidebar background covers the full panel height
+    ui.allocate_space(egui::vec2(0.0, ui.available_height().max(0.0)));
 }
