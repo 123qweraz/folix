@@ -207,7 +207,17 @@ pub fn render_document(
         {
             rows = &reading.layout_cache_rows;
             row_starts = &reading.layout_cache_starts;
+        } else if reading.layout_cache_font_size == font_size
+            && reading.layout_cache_show_ln == reading.show_line_numbers
+            && !reading.layout_cache_rows.is_empty()
+            && reading.layout_cache_pending_avail_w != avail_w
+        {
+            // Resize throttle: use old cache during active drag to avoid per-frame rebuild
+            reading.layout_cache_pending_avail_w = avail_w;
+            rows = &reading.layout_cache_rows;
+            row_starts = &reading.layout_cache_starts;
         } else {
+            reading.layout_cache_pending_avail_w = 0.0;
             let mut new_rows: Vec<LayoutRow> = Vec::new();
             let mut global_line: usize = 0;
 
@@ -217,7 +227,7 @@ pub fn render_document(
                     None => continue,
                 };
                 if ci > 0 {
-                    new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0 });
+                    new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None });
                 }
                 for (bi, block) in chapter.blocks.iter().enumerate() {
                     match block {
@@ -226,21 +236,28 @@ pub fn render_document(
                             let mut char_offset = 0;
                             for (li, src_line) in lines.iter().enumerate() {
                                 let lno = global_line + 1;
-                                let h = if src_line.is_empty() {
-                                    line_h
+                                if src_line.is_empty() {
+                                    new_rows.push(LayoutRow {
+                                        line_no: lno, ci, bi, it: 1,
+                                        text: String::new(),
+                                        height: line_h,
+                                        char_offset,
+                                        galley: None,
+                                    });
                                 } else {
-                                    ui.fonts(|f| f.layout_delayed_color(
+                                    let galley = ui.fonts(|f| f.layout_delayed_color(
                                         src_line.to_string(),
                                         font_id.clone(),
-                                        text_avail_w))
-                                        .rect.height().max(1.0)
-                                };
-                                new_rows.push(LayoutRow {
-                                    line_no: lno, ci, bi, it: 1,
-                                    text: src_line.to_string(),
-                                    height: h,
-                                    char_offset,
-                                });
+                                        text_avail_w));
+                                    let h = galley.rect.height().max(1.0);
+                                    new_rows.push(LayoutRow {
+                                        line_no: lno, ci, bi, it: 1,
+                                        text: src_line.to_string(),
+                                        height: h,
+                                        char_offset,
+                                        galley: Some(galley.into()),
+                                    });
+                                }
                                 char_offset += src_line.chars().count();
                                 if li < lines.len() - 1 {
                                     char_offset += 1; // account for '\n' between lines
@@ -257,6 +274,7 @@ pub fn render_document(
                                 text: String::new(),
                                 height: h + 8.0,
                                 char_offset: 0,
+                                galley: None,
                             });
                             global_line += 1;
                         }
@@ -339,16 +357,11 @@ pub fn render_document(
                             );
                         }
 
-                        let text = &rows[i].text;
-                        if !text.is_empty() {
+                        if let Some(galley) = &rows[i].galley {
                             let text_x = content_left + gutter_w;
-                            let galley = ui.fonts(|f| f.layout_delayed_color(
-                                text.clone(),
-                                font_id.clone(),
-                                text_avail_w));
                             painter.add(egui::Shape::galley(
                                 egui::pos2(text_x, rect.top()),
-                                galley,
+                                galley.clone(),  // cheap Arc clone
                                 text_color,
                             ));
                         }
