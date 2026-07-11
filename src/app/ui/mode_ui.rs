@@ -267,14 +267,38 @@ pub fn render_document(
             if reading.layout_cache_rows.is_empty() {
                 let mut new_rows: Vec<LayoutRow> = Vec::new();
                 let mut global_line: usize = 0;
+                // Compute average loaded chapter height for placeholder sizing
+                let mut ph_sum = 0.0f32;
+                let mut ph_cnt = 0usize;
+                for (_, ch_opt) in reading.chapter_cache.iter().enumerate() {
+                    if let Some(ch) = ch_opt.as_ref() {
+                        for b in &ch.blocks {
+                            ph_sum += match b {
+                                ContentBlock::Text(t) => cpl_heuristic(t, text_avail_w, font_size, line_h),
+                                ContentBlock::Image(img) => {
+                                    let max_w = avail_w.min(600.0);
+                                    let aspect = img.width as f32 / img.height.max(1) as f32;
+                                    max_w / aspect + 8.0
+                                }
+                            };
+                        }
+                        ph_cnt += 1;
+                    }
+                }
+                let ph = if ph_cnt > 0 { (ph_sum / ph_cnt as f32).max(200.0) } else { 600.0 };
+
                 for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
-                    let chapter = match chapter_opt.as_ref() {
-                        Some(ch) => ch,
-                        None => continue,
-                    };
                     if ci > 0 {
                         new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen });
                     }
+                    let chapter = match chapter_opt.as_ref() {
+                        Some(ch) => ch,
+                        None => {
+                            new_rows.push(LayoutRow { line_no: global_line + 1, ci, bi: 0, it: 3, text: String::new(), height: ph, char_offset: 0, galley: None, layout_gen: gen });
+                            global_line += 1;
+                            continue;
+                        }
+                    };
                     for (bi, block) in chapter.blocks.iter().enumerate() {
                         match block {
                             ContentBlock::Text(text) => {
@@ -372,6 +396,7 @@ pub fn render_document(
                         }
                         row.galley = None;
                     }
+                    3 => { row.galley = None; }
                     _ => { row.height = 12.0; row.galley = None; }
                 }
             }
@@ -457,6 +482,23 @@ pub fn render_document(
                                 text_color,
                             ));
                         }
+                    }
+                    3 => {
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(content_left + gutter_w, rect.top() + 4.0),
+                                egui::vec2(img_max_w, (rect.height() - 8.0).max(0.0)),
+                            ),
+                            4.0,
+                            egui::Color32::from_gray(238),
+                        );
+                        painter.text(
+                            egui::pos2(content_left + gutter_w + 8.0, rect.top() + 8.0),
+                            egui::Align2::LEFT_TOP,
+                            "加载中...",
+                            egui::FontId::proportional(12.0),
+                            egui::Color32::GRAY,
+                        );
                     }
                     _ => {
                         // If image raw_bytes not loaded yet, draw a placeholder
