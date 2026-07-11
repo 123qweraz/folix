@@ -2,6 +2,7 @@ use super::{Document, ReflowLayout, TocEntry, StoredImage, ContentBlock, Chapter
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 
+#[derive(Clone)]
 enum RawBlock {
     Text(String),
     ImageRef(String),
@@ -15,6 +16,8 @@ pub struct ReflowDocument {
     spine_items: Vec<(String, String)>, // (id, href)
     /// Lazy-loaded chapter HTML content (index → html). Read from zip on first access.
     chapter_html_cache: std::sync::Mutex<HashMap<usize, String>>,
+    /// Cache for parsed raw blocks (avoid re-parsing HTML for chapter_info / image upgrade).
+    raw_block_cache: std::sync::Mutex<HashMap<usize, (Vec<RawBlock>, HashSet<String>)>>,
     chapter_cache: std::sync::Mutex<HashMap<usize, Vec<ContentBlock>>>,
     image_cache: std::sync::Mutex<HashMap<String, StoredImage>>,
 }
@@ -96,6 +99,7 @@ impl ReflowDocument {
             epub: Some(std::sync::Mutex::new(epub)),
             spine_items,
             chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
+            raw_block_cache: std::sync::Mutex::new(HashMap::new()),
             chapter_cache: std::sync::Mutex::new(HashMap::new()),
             image_cache: std::sync::Mutex::new(HashMap::new()),
         })
@@ -161,6 +165,7 @@ impl ReflowDocument {
             epub: None,
             spine_items: vec![],
             chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
+            raw_block_cache: std::sync::Mutex::new(HashMap::new()),
             chapter_cache: std::sync::Mutex::new(cache),
             image_cache: std::sync::Mutex::new(HashMap::new()),
         })
@@ -363,6 +368,7 @@ impl ReflowDocument {
             epub: None,
             spine_items: vec![],
             chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
+            raw_block_cache: std::sync::Mutex::new(HashMap::new()),
             chapter_cache: std::sync::Mutex::new(cache),
             image_cache: std::sync::Mutex::new(HashMap::new()),
         })
@@ -601,7 +607,15 @@ impl ReflowDocument {
 
     /// Read and parse a chapter's HTML into raw blocks, collecting image references.
     /// HTML is lazily loaded from zip on first access, then cached.
+    /// Results are cached in `raw_block_cache` to avoid re-parsing.
     fn parse_chapter_raw_blocks(&self, chapter_idx: usize) -> (Vec<RawBlock>, HashSet<String>) {
+        {
+            let cache = self.raw_block_cache.lock().unwrap();
+            if let Some(result) = cache.get(&chapter_idx) {
+                return (result.0.clone(), result.1.clone());
+            }
+        }
+
         let (_, href) = match self.spine_items.get(chapter_idx) {
             Some(item) => item,
             None => return (vec![], HashSet::new()),
@@ -614,7 +628,9 @@ impl ReflowDocument {
 
         let mut referenced = HashSet::new();
         let raw_blocks = Self::extract_raw_blocks(&html, href, &mut referenced);
-        (raw_blocks, referenced)
+        let result = (raw_blocks, referenced);
+        self.raw_block_cache.lock().unwrap().insert(chapter_idx, result.clone());
+        result
     }
 
     /// Load and parse a single chapter's blocks.

@@ -139,35 +139,28 @@ pub fn render_document(
         drop(doc);
 
         if reading.chapter_cache.is_empty() {
-            let t0 = std::time::Instant::now();
             let doc_handle = document.lock();
             if let Some(reflow) = doc_handle.as_reflow() {
-                for ci in 0..reflow.chapter_count() {
-                    reading.chapter_cache.push(Some(reflow.load_chapter(ci, false)));
+                for _ci in 0..reflow.chapter_count() {
+                    reading.chapter_cache.push(None);
                 }
             }
-            let t1 = std::time::Instant::now();
-            eprintln!("[perf] initial text load: {:?}", t1 - t0);
             reading.next_upgrade_ci = 0;
         }
 
-        // Background upgrade: load images for up to 3 chapters per frame
+        // Background load: load up to 3 chapters per frame (text + images)
         {
             let doc_guard = document.lock();
             if let Some(reflow) = doc_guard.as_reflow() {
-                let mut upgraded = 0;
-                while reading.next_upgrade_ci < reading.chapter_cache.len() && upgraded < 3 {
+                let mut loaded = 0;
+                while reading.next_upgrade_ci < reading.chapter_cache.len() && loaded < 3 {
                     let ci = reading.next_upgrade_ci;
                     reading.next_upgrade_ci += 1;
-                    if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
-                        let needs_upgrade = ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty()));
-                        if needs_upgrade {
-                            let t0 = std::time::Instant::now();
-                            reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, true));
-                            let t1 = std::time::Instant::now();
-                            eprintln!("[perf] upgraded ch{}: {:?}", ci, t1 - t0);
-                            upgraded += 1;
-                        }
+                    if reading.chapter_cache[ci].is_none() {
+                        let t0 = std::time::Instant::now();
+                        reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, true));
+                        eprintln!("[perf] loaded ch{}: {:?}", ci, t0.elapsed());
+                        loaded += 1;
                     }
                 }
             }
