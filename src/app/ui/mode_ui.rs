@@ -160,6 +160,7 @@ pub fn render_document(
                         let t0 = std::time::Instant::now();
                         reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, true));
                         eprintln!("[perf] loaded ch{}: {:?}", ci, t0.elapsed());
+                        reading.layout_cache_rows.clear();
                         loaded += 1;
                     }
                 }
