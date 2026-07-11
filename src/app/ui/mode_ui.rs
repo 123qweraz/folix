@@ -517,7 +517,7 @@ pub fn render_document(
                                     &decoded,
                                     display_w.max(1),
                                     display_h.max(1),
-                                    image::imageops::FilterType::Lanczos3,
+                                    image::imageops::FilterType::Triangle,
                                 )
                             } else {
                                 decoded
