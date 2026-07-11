@@ -146,10 +146,9 @@ pub fn render_document(
                 }
             }
             reading.next_load_ci = 0;
-            reading.next_image_ci = 0;
         }
 
-        // Background load: load text-only chapters (no images), 3 per frame
+        // Background load: load up to 3 chapters per frame (text + images)
         {
             let doc_guard = document.lock();
             if let Some(reflow) = doc_guard.as_reflow() {
@@ -159,32 +158,10 @@ pub fn render_document(
                     reading.next_load_ci += 1;
                     if reading.chapter_cache[ci].is_none() {
                         let t0 = std::time::Instant::now();
-                        reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, false));
-                        eprintln!("[perf] text ch{}: {:?}", ci, t0.elapsed());
+                        reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, true));
+                        eprintln!("[perf] loaded ch{}: {:?}", ci, t0.elapsed());
                         reading.layout_cache_rows.clear();
                         loaded += 1;
-                    }
-                }
-            }
-        }
-
-        // Background upgrade: load images for text-loaded chapters, 3 per frame
-        {
-            let doc_guard = document.lock();
-            if let Some(reflow) = doc_guard.as_reflow() {
-                let mut upgraded = 0;
-                while reading.next_image_ci < reading.chapter_cache.len() && upgraded < 3 {
-                    let ci = reading.next_image_ci;
-                    reading.next_image_ci += 1;
-                    if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
-                        let needs_upgrade = ch.blocks.iter().any(|b| matches!(b, ContentBlock::Image(img) if img.raw_bytes.is_empty()));
-                        if needs_upgrade {
-                            let t0 = std::time::Instant::now();
-                            reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, true));
-                            eprintln!("[perf] img ch{}: {:?}", ci, t0.elapsed());
-                            reading.layout_cache_rows.clear();
-                            upgraded += 1;
-                        }
                     }
                 }
             }
