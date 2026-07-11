@@ -622,12 +622,14 @@ impl eframe::App for FolixApp {
                             let active = tab.modes.active;
                             if active == ModeKind::LightReading || active == ModeKind::DeepReading {
                                 let sw = tab.modes.reading.sidebar_width;
-                                let sidebar_rect = egui::Rect::from_min_size(
-                                    egui::pos2(0.0, 0.0),
+                                // Allocate sidebar space so the Area covers a real rect and captures input
+                                let (sb_rect, _) = ui.allocate_exact_size(
                                     egui::vec2(sw, sidebar_h),
+                                    egui::Sense::empty(),
                                 );
+                                // Render content inside the allocated rect
                                 let mut sb_ui = ui.new_child(egui::UiBuilder::new()
-                                    .max_rect(sidebar_rect)
+                                    .max_rect(sb_rect)
                                     .layout(*ui.layout()));
                                 let frame_resp = egui::Frame::default()
                                     .fill(ui.style().visuals.panel_fill)
