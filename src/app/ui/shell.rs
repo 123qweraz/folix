@@ -601,6 +601,10 @@ impl eframe::App for FolixApp {
             t.has_document() && (t.modes.active == ModeKind::LightReading || t.modes.active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
         });
 
+        // Compute sidebar dimensions before CentralPanel (available_rect is still valid)
+        let sidebar_y = ctx.available_rect().top();
+        let sidebar_h = ctx.screen_rect().height() - sidebar_y;
+
         let panel_resp = egui::CentralPanel::default().show(ctx, |ui| {
             self.render_document_view(ui);
         });
@@ -610,7 +614,6 @@ impl eframe::App for FolixApp {
             let doc = self.state.current_tab()
                 .and_then(|t| t.document.clone());
             if let Some(doc) = doc {
-                let sidebar_y = ctx.available_rect().top();
                 egui::Area::new("reading_sidebar_overlay".into())
                     .anchor(egui::Align2::LEFT_TOP, [0.0, sidebar_y])
                     .order(egui::Order::Foreground)
@@ -619,6 +622,13 @@ impl eframe::App for FolixApp {
                             let active = tab.modes.active;
                             if active == ModeKind::LightReading || active == ModeKind::DeepReading {
                                 let sw = tab.modes.reading.sidebar_width;
+                                let sidebar_rect = egui::Rect::from_min_size(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::vec2(sw, sidebar_h),
+                                );
+                                let mut sb_ui = ui.new_child(egui::UiBuilder::new()
+                                    .max_rect(sidebar_rect)
+                                    .layout(*ui.layout()));
                                 let frame_resp = egui::Frame::default()
                                     .fill(ui.style().visuals.panel_fill)
                                     .shadow(egui::epaint::Shadow {
@@ -627,9 +637,7 @@ impl eframe::App for FolixApp {
                                         spread: 0,
                                         color: egui::Color32::from_black_alpha(80),
                                     })
-                                    .show(ui, |ui| {
-                                        ui.set_max_width(sw);
-                                        ui.set_min_width(sw);
+                                    .show(&mut sb_ui, |ui| {
                                         mode_ui::render_sidebar(ui, &doc, &mut tab.modes.page, &mut tab.modes.reading, lng);
                                     });
                                 let r = frame_resp.response.rect;
