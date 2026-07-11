@@ -1670,7 +1670,15 @@ pub fn render_sidebar(
                                 rs.stream_jump_to = Some(target_page);
                                 rs.stream_page_end = rs.stream_page_end.max(target_page);
                                 *page = target_page;
-                                rs.scroll_offset_y = 0.0;
+                                if document.lock().is_fixed() {
+                                    rs.scroll_offset_y = 0.0;
+                                } else {
+                                    rs.scroll_offset_y = rs.layout_cache_rows.iter()
+                                        .zip(rs.layout_cache_starts.iter())
+                                        .find(|(row, _)| row.ci == target_page)
+                                        .map(|(_, &y)| y)
+                                        .unwrap_or(0.0);
+                                }
                             }
                         }
                     });
