@@ -260,105 +260,83 @@ pub fn render_document(
             reading.layout_cache_pending_avail_w = avail_w;
             rows = &reading.layout_cache_rows;
             row_starts = &reading.layout_cache_starts;
-        } else if reading.layout_cache_rows.is_empty() {
-            // First load: full rebuild (all rows with exact layout_delayed_color)
+        } else {
+            // Rebuild: first load, or font_size / show_ln / avail_w changed
             reading.layout_cache_pending_avail_w = 0.0;
             reading.layout_cache_gen = reading.layout_cache_gen.wrapping_add(1);
+            reading.layout_cache_font_size = font_size;
+            reading.layout_cache_avail_w = avail_w;
+            reading.layout_cache_show_ln = reading.show_line_numbers;
             let gen = reading.layout_cache_gen;
-            let mut new_rows: Vec<LayoutRow> = Vec::new();
-            let mut global_line: usize = 0;
-            for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
-                let chapter = match chapter_opt.as_ref() {
-                    Some(ch) => ch,
-                    None => continue,
-                };
-                if ci > 0 {
-                    new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen });
-                }
-                for (bi, block) in chapter.blocks.iter().enumerate() {
-                    match block {
-                        ContentBlock::Text(text) => {
-                            let lines: Vec<&str> = text.split('\n').collect();
-                            let mut char_offset = 0;
-                            for (li, src_line) in lines.iter().enumerate() {
-                                let lno = global_line + 1;
-                                if src_line.is_empty() {
-                                    new_rows.push(LayoutRow {
-                                        line_no: lno, ci, bi, it: 1,
-                                        text: String::new(),
-                                        height: line_h,
-                                        char_offset,
-                                        galley: None,
-                                        layout_gen: gen,
-                                    });
-                                } else {
-                                    let galley = ui.fonts(|f| f.layout_delayed_color(
-                                        src_line.to_string(),
-                                        font_id.clone(),
-                                        text_avail_w));
-                                    let h = galley.rect.height().max(1.0);
+
+            // First load: create all rows from scratch with cpl-estimated heights
+            if reading.layout_cache_rows.is_empty() {
+                let mut new_rows: Vec<LayoutRow> = Vec::new();
+                let mut global_line: usize = 0;
+                for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
+                    let chapter = match chapter_opt.as_ref() {
+                        Some(ch) => ch,
+                        None => continue,
+                    };
+                    if ci > 0 {
+                        new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen });
+                    }
+                    for (bi, block) in chapter.blocks.iter().enumerate() {
+                        match block {
+                            ContentBlock::Text(text) => {
+                                let lines: Vec<&str> = text.split('\n').collect();
+                                let mut char_offset = 0;
+                                for (li, src_line) in lines.iter().enumerate() {
+                                    let lno = global_line + 1;
+                                    let h = if src_line.is_empty() { line_h } else { cpl_heuristic(src_line, text_avail_w, font_size, line_h) };
                                     new_rows.push(LayoutRow {
                                         line_no: lno, ci, bi, it: 1,
                                         text: src_line.to_string(),
                                         height: h,
                                         char_offset,
-                                        galley: Some(galley.into()),
+                                        galley: None,
                                         layout_gen: gen,
                                     });
+                                    char_offset += src_line.chars().count();
+                                    if li < lines.len() - 1 { char_offset += 1; }
+                                    global_line += 1;
                                 }
-                                char_offset += src_line.chars().count();
-                                if li < lines.len() - 1 {
-                                    char_offset += 1;
-                                }
+                            }
+                            ContentBlock::Image(img) => {
+                                let max_w = avail_w.min(600.0);
+                                let aspect = img.width as f32 / img.height.max(1) as f32;
+                                new_rows.push(LayoutRow {
+                                    line_no: global_line + 1, ci, bi, it: 2,
+                                    text: String::new(),
+                                    height: max_w / aspect + 8.0,
+                                    char_offset: 0,
+                                    galley: None,
+                                    layout_gen: gen,
+                                });
                                 global_line += 1;
                             }
                         }
-                        ContentBlock::Image(img) => {
-                            let max_w = avail_w.min(600.0);
-                            let aspect = img.width as f32 / img.height.max(1) as f32;
-                            let h = max_w / aspect;
-                            new_rows.push(LayoutRow {
-                                line_no: global_line + 1, ci, bi, it: 2,
-                                text: String::new(),
-                                height: h + 8.0,
-                                char_offset: 0,
-                                galley: None,
-                                layout_gen: gen,
-                            });
-                            global_line += 1;
-                        }
                     }
                 }
+                let mut new_starts = Vec::with_capacity(new_rows.len());
+                let mut acc_y = 0.0;
+                for r in &new_rows {
+                    new_starts.push(acc_y);
+                    acc_y += r.height;
+                }
+                reading.layout_cache_rows = new_rows;
+                reading.layout_cache_starts = new_starts;
             }
-            let mut new_starts = Vec::with_capacity(new_rows.len());
-            let mut acc_y = 0.0;
-            for r in &new_rows {
-                new_starts.push(acc_y);
-                acc_y += r.height;
-            }
-            reading.layout_cache_rows = new_rows;
-            reading.layout_cache_starts = new_starts;
-            reading.layout_cache_font_size = font_size;
-            reading.layout_cache_avail_w = avail_w;
-            reading.layout_cache_show_ln = reading.show_line_numbers;
-            rows = &reading.layout_cache_rows;
-            row_starts = &reading.layout_cache_starts;
-        } else {
-            // Partial rebuild (font_size / show_ln / avail_w changed, but not first load)
-            reading.layout_cache_pending_avail_w = 0.0;
-            reading.layout_cache_gen = reading.layout_cache_gen.wrapping_add(1);
-            reading.layout_cache_font_size = font_size;
-            reading.layout_cache_avail_w = avail_w;
-            reading.layout_cache_show_ln = reading.show_line_numbers;
-            let gen = reading.layout_cache_gen;
-            let gutter_w = if reading.show_line_numbers { 65.0 } else { 0.0 };
-            let text_avail_w = (avail_w - gutter_w).max(1.0);
 
-            // Save top row index (correct row whose start <= scroll_y)
-            let top_idx = reading.layout_cache_starts
-                .partition_point(|&y| y <= reading.scroll_offset_y)
-                .saturating_sub(1)
-                .min(reading.layout_cache_rows.len().saturating_sub(1));
+            // Save top row index
+            let top_idx = if reading.layout_cache_rows.len() > 0 {
+                reading.layout_cache_starts
+                    .partition_point(|&y| y <= reading.scroll_offset_y)
+                    .saturating_sub(1)
+                    .min(reading.layout_cache_rows.len().saturating_sub(1))
+            } else {
+                0
+            };
 
             // Estimate visible range
             let approx_vh = ui.available_height();
@@ -410,7 +388,9 @@ pub fn render_document(
                 reading.layout_cache_starts[i] = acc_y;
                 acc_y += reading.layout_cache_rows[i].height;
             }
-            reading.scroll_offset_y = reading.layout_cache_starts[top_idx];
+            if top_idx < reading.layout_cache_rows.len() {
+                reading.scroll_offset_y = reading.layout_cache_starts[top_idx];
+            }
             reading.total_height = acc_y;
 
             rows = &reading.layout_cache_rows;
