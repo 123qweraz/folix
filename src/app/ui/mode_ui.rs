@@ -153,7 +153,7 @@ pub fn render_document(
             let doc_guard = document.lock();
             if let Some(reflow) = doc_guard.as_reflow() {
                 let mut loaded = 0;
-                while reading.next_upgrade_ci < reading.chapter_cache.len() && loaded < 1 {
+                while reading.next_upgrade_ci < reading.chapter_cache.len() && loaded < 3 {
                     let ci = reading.next_upgrade_ci;
                     reading.next_upgrade_ci += 1;
                     if reading.chapter_cache[ci].is_none() {
