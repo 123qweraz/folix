@@ -188,11 +188,15 @@ pub fn render_document(
 
         let output;
         // ---- Unified virtual scrolling (layout cache + painter + interaction) ----
-        let avail_w = ui.available_width().max(1.0);
+        let full_w = ui.available_width().max(1.0);
+        let mw = reading.max_text_width;
+        let avail_w = if mw > 0.0 { full_w.min(mw) } else { full_w };
+        let x_off = ((full_w - avail_w) * 0.5).max(0.0);
         let gutter_w = if reading.show_line_numbers { 65.0 } else { 0.0 };
         let text_avail_w = (avail_w - gutter_w).max(1.0);
         let cpl = (text_avail_w / (font_size * 0.55)).floor().max(1.0) as usize;
         let line_h = font_size * 1.4;
+        let font_id = egui::FontId::proportional(font_size);
 
         // Use cached layout if font_size, avail_w, and show_line_numbers haven't changed
         let rows: &[LayoutRow];
@@ -276,8 +280,7 @@ pub fn render_document(
             + rows.last().map_or(0.0, |r| r.height);
         let chapter_cache_ref = &reading.chapter_cache;
         let text_color = ui.style().visuals.text_color();
-        let cpl_text = text_avail_w / (font_size * 0.55);
-        let font_id = egui::FontId::proportional(font_size);
+        let img_max_w = (avail_w - gutter_w).min(600.0);
 
         output = sa.show(ui, |ui| {
             let total_h = reading.total_height;
@@ -301,6 +304,7 @@ pub fn render_document(
             let base_x = response.rect.left();
             let base_y = content_origin;
             let alloc_w = response.rect.width();
+            let content_left = base_x + x_off;
             let ann_ref = annotate.as_ref();
 
             // Paint pass
@@ -321,7 +325,7 @@ pub fn render_document(
                     1 => {
                         if reading.show_line_numbers {
                             painter.text(
-                                egui::pos2(rect.left() + 4.0, rect.top()),
+                                egui::pos2(content_left + 4.0, rect.top()),
                                 egui::Align2::LEFT_TOP,
                                 format!("{:>6}│ ", rows[i].line_no),
                                 font_id.clone(),
@@ -331,25 +335,21 @@ pub fn render_document(
 
                         let text = &rows[i].text;
                         if !text.is_empty() {
-                            let text_x = rect.left() + gutter_w;
-                            let actual_cpl = cpl_text.floor().max(1.0) as usize;
-                            let chars: Vec<char> = text.chars().collect();
-                            let total = chars.len();
-                            let mut pos = 0;
-                            let mut vline = 0;
-                            while pos < total {
-                                let end = (pos + actual_cpl).min(total);
-                                let segment: String = chars[pos..end].iter().collect();
-                                painter.text(
-                                    egui::pos2(text_x, rect.top() + vline as f32 * line_h),
-                                    egui::Align2::LEFT_TOP,
-                                    segment,
-                                    font_id.clone(),
-                                    text_color,
-                                );
-                                pos = end;
-                                vline += 1;
-                            }
+                            let text_x = content_left + gutter_w;
+                            let galley = ui.fonts(|f| f.layout_delayed_color(
+                                text.clone(),
+                                font_id.clone(),
+                                text_avail_w));
+                            painter.add(egui::Shape::galley(
+                                egui::pos2(text_x, rect.top()),
+                                galley.clone(),
+                                text_color,
+                            ));
+                            painter.galley(
+                                egui::pos2(text_x, rect.top()),
+                                galley,
+                                text_color,
+                            );
                         }
                     }
                     _ => {
@@ -362,10 +362,10 @@ pub fn render_document(
                             let aspect = img_data.map_or(1.0, |img| {
                                 if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 }
                             });
-                            let p_h = alloc_w.min(600.0) / aspect.max(0.01);
+                            let p_h = img_max_w / aspect.max(0.01);
                             if reading.show_line_numbers {
                                 painter.text(
-                                    egui::pos2(rect.left() + 4.0, rect.top()),
+                                    egui::pos2(content_left + 4.0, rect.top()),
                                     egui::Align2::LEFT_TOP,
                                     format!("{:>6}│ ", rows[i].line_no),
                                     font_id.clone(),
@@ -374,8 +374,8 @@ pub fn render_document(
                             }
                             painter.rect_filled(
                                 egui::Rect::from_min_size(
-                                    egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
-                                    egui::vec2(alloc_w.min(600.0), p_h),
+                                    egui::pos2(content_left + gutter_w, rect.top() + 4.0),
+                                    egui::vec2(img_max_w, p_h),
                                 ),
                                 4.0,
                                 egui::Color32::from_gray(230),
@@ -398,7 +398,7 @@ pub fn render_document(
                             };
                             let (native_w, native_h) = decoded.dimensions();
                             let aspect = native_w as f32 / native_h as f32;
-                            let display_w = (alloc_w.min(600.0)).ceil() as u32;
+                            let display_w = img_max_w.ceil() as u32;
                             let display_h = (display_w as f32 / aspect).ceil() as u32;
                             let resized = if display_w < native_w {
                                 image::imageops::resize(
@@ -420,7 +420,7 @@ pub fn render_document(
 
                         if reading.show_line_numbers {
                             painter.text(
-                                egui::pos2(rect.left() + 4.0, rect.top()),
+                                egui::pos2(content_left + 4.0, rect.top()),
                                 egui::Align2::LEFT_TOP,
                                 format!("{:>6}│ ", rows[i].line_no),
                                 font_id.clone(),
@@ -434,13 +434,12 @@ pub fn render_document(
                             _ => unreachable!(),
                         };
                         let aspect = img.width as f32 / img.height as f32;
-                        let max_w = alloc_w.min(600.0);
-                        let img_w = max_w;
-                        let img_h = max_w / aspect;
+                        let img_w = img_max_w;
+                        let img_h = img_max_w / aspect;
                         painter.image(
                             texture.id(),
                             egui::Rect::from_min_size(
-                                egui::pos2(rect.left() + gutter_w, rect.top() + 4.0),
+                                egui::pos2(content_left + gutter_w, rect.top() + 4.0),
                                 egui::vec2(img_w, img_h),
                             ),
                             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
@@ -455,13 +454,9 @@ pub fn render_document(
                 let sel = &mut reading.selection;
                 for i in first..last.min(rows.len()) {
                     if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
-                    let rect = egui::Rect::from_min_size(
-                        egui::pos2(base_x, base_y + row_starts[i]),
-                        egui::vec2(alloc_w, rows[i].height),
-                    );
                     let text_rect = egui::Rect::from_min_size(
-                        egui::pos2(rect.left() + gutter_w, rect.top()),
-                        egui::vec2((rect.width() - gutter_w).max(1.0), rect.height()),
+                        egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
+                        egui::vec2(text_avail_w, rows[i].height),
                     );
                     let resp = ui.interact(text_rect, egui::Id::new(("row", i)), egui::Sense::click_and_drag());
 

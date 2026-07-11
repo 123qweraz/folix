@@ -162,6 +162,8 @@ pub struct ReadingState {
     /// Sentence collection (句子收藏) for the current book.
     pub sentences: Vec<Sentence_>,
     pub sentences_dirty: bool,
+    /// Max text column width (0 = unlimited).
+    pub max_text_width: f32,
     /// Show line numbers for reflow documents.
     pub show_line_numbers: bool,
     /// Layout cache for per-source-line rendering.
@@ -365,6 +367,7 @@ impl TabModes {
                 vocab_dirty: false,
                 sentences: vec![],
                 sentences_dirty: false,
+                max_text_width: 0.0,
                 show_line_numbers: false,
                 layout_cache_rows: vec![],
                 layout_cache_starts: vec![],
