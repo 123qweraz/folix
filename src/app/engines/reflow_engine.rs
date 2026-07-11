@@ -725,48 +725,108 @@ impl ReflowDocument {
         chapter_href: &str,
         referenced_hrefs: &mut HashSet<String>,
     ) -> Vec<RawBlock> {
+        use quick_xml::events::Event;
+        use quick_xml::Reader;
+
+        let mut reader = Reader::from_str(html);
+        reader.config_mut().trim_text(true);
+
         let mut blocks = Vec::new();
         let mut current_text = String::new();
-        let mut in_tag = false;
-        let mut tag_content = String::new();
+        let mut buf = Vec::new();
+        let mut skip_depth: u32 = 0;
 
-        for c in html.chars() {
-            match c {
-                '<' => {
-                    in_tag = true;
-                    tag_content.clear();
-                }
-                '>' => {
-                    in_tag = false;
-                    let tag_lower = tag_content.to_lowercase();
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                    let qn = e.name();
+                    let name = qn.as_ref();
 
-                    if tag_lower.starts_with("img ") || tag_lower == "img" {
-                        Self::push_image_ref(&tag_content, &mut blocks, &mut current_text, chapter_href, referenced_hrefs);
-                    } else if tag_lower.starts_with("image ") || tag_lower == "image" {
-                        Self::push_image_ref(&tag_content, &mut blocks, &mut current_text, chapter_href, referenced_hrefs);
-                    } else if tag_lower.starts_with("br") || tag_lower.starts_with("hr") {
-                        current_text.push('\n');
-                    } else if tag_lower.starts_with('/') {
-                        let closing_tag = tag_lower.trim_start_matches('/').split_whitespace().next().unwrap_or("");
-                        match closing_tag {
-                            "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "li" | "td" | "th" => {
-                                if !current_text.ends_with('\n') {
-                                    current_text.push('\n');
+                    if name.eq_ignore_ascii_case(b"script")
+                        || name.eq_ignore_ascii_case(b"style")
+                        || name.eq_ignore_ascii_case(b"svg")
+                    {
+                        skip_depth += 1;
+                    }
+
+                    if skip_depth > 0 {
+                        buf.clear();
+                        continue;
+                    }
+
+                    // <img> and <image> tags → extract src and emit ImageRef
+                    if name.eq_ignore_ascii_case(b"img") || name.eq_ignore_ascii_case(b"image") {
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref().eq_ignore_ascii_case(b"src") {
+                                let src = String::from_utf8_lossy(&attr.value);
+                                if src.starts_with("data:") || src.contains("://") {
+                                    break;
                                 }
+                                let resolved = resolve_path(chapter_href, &src);
+                                let trimmed = current_text.trim().to_string();
+                                if !trimmed.is_empty() {
+                                    blocks.push(RawBlock::Text(trimmed));
+                                    current_text.clear();
+                                }
+                                referenced_hrefs.insert(resolved.clone());
+                                blocks.push(RawBlock::ImageRef(resolved));
+                                break;
                             }
-                            _ => {}
+                        }
+                        buf.clear();
+                        continue;
+                    }
+
+                    // <br> and <hr> → line break
+                    if name.eq_ignore_ascii_case(b"br") || name.eq_ignore_ascii_case(b"hr") {
+                        current_text.push('\n');
+                        buf.clear();
+                        continue;
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    let qn = e.name();
+                    let name = qn.as_ref();
+
+                    if name.eq_ignore_ascii_case(b"script")
+                        || name.eq_ignore_ascii_case(b"style")
+                        || name.eq_ignore_ascii_case(b"svg")
+                    {
+                        if skip_depth > 0 {
+                            skip_depth -= 1;
+                        }
+                        buf.clear();
+                        continue;
+                    }
+
+                    if skip_depth > 0 {
+                        buf.clear();
+                        continue;
+                    }
+
+                    // Block-level closing tags add a line break
+                    match name {
+                        b"p" | b"div" | b"h1" | b"h2" | b"h3" | b"h4" | b"h5" | b"h6"
+                        | b"blockquote" | b"li" | b"td" | b"th" => {
+                            if !current_text.ends_with('\n') {
+                                current_text.push('\n');
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Text(ref e)) => {
+                    if skip_depth == 0 {
+                        if let Ok(text) = e.unescape() {
+                            current_text.push_str(&text);
                         }
                     }
                 }
-                _ if !in_tag => {
-                    current_text.push(c);
-                }
-                _ => {
-                    if in_tag {
-                        tag_content.push(c);
-                    }
-                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
             }
+            buf.clear();
         }
 
         let trimmed = current_text.trim().to_string();
@@ -775,53 +835,6 @@ impl ReflowDocument {
         }
 
         blocks
-    }
-
-    fn push_image_ref(
-        tag_content: &str,
-        blocks: &mut Vec<RawBlock>,
-        current_text: &mut String,
-        chapter_href: &str,
-        referenced_hrefs: &mut HashSet<String>,
-    ) {
-        if let Some(src) = Self::extract_attr(tag_content, "src") {
-            if src.starts_with("data:") || src.contains("://") {
-                return;
-            }
-            let resolved = resolve_path(chapter_href, &src);
-            let trimmed = current_text.trim().to_string();
-            if !trimmed.is_empty() {
-                blocks.push(RawBlock::Text(trimmed));
-                current_text.clear();
-            }
-            referenced_hrefs.insert(resolved.clone());
-            blocks.push(RawBlock::ImageRef(resolved));
-        }
-    }
-
-    fn extract_attr(tag: &str, attr: &str) -> Option<String> {
-        let lower = tag.to_lowercase();
-        let search = format!("{}=\"", attr.to_lowercase());
-        if let Some(start) = lower.find(&search) {
-            let value_start = start + search.len();
-            if value_start < tag.len() {
-                let remaining = &tag[value_start..];
-                if let Some(end) = remaining.find('"') {
-                    return Some(remaining[..end].to_string());
-                }
-            }
-        }
-        let search = format!("{}='", attr.to_lowercase());
-        if let Some(start) = lower.find(&search) {
-            let value_start = start + search.len();
-            if value_start < tag.len() {
-                let remaining = &tag[value_start..];
-                if let Some(end) = remaining.find('\'') {
-                    return Some(remaining[..end].to_string());
-                }
-            }
-        }
-        None
     }
 
     pub fn path(&self) -> &str {
