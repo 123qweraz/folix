@@ -662,17 +662,23 @@ impl ReflowDocument {
                         } else {
                             format!("/{}", img_href)
                         };
-                        if let Ok(bytes) = epub.read_resource_bytes(epub_img_path.as_str()) {
-                            let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
-                                .with_guessed_format()
-                                .ok()
-                                .and_then(|r| r.into_dimensions().ok())
-                                .unwrap_or((0, 0));
-                            image_cache.insert(img_href.clone(), StoredImage {
-                                raw_bytes: bytes,
-                                width: w,
-                                height: h,
-                            });
+                        match epub.read_resource_bytes(epub_img_path.as_str()) {
+                            Ok(bytes) => {
+                                let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                                    .with_guessed_format()
+                                    .ok()
+                                    .and_then(|r| r.into_dimensions().ok())
+                                    .unwrap_or((0, 0));
+                                eprintln!("[img] loaded {} ({}x{}) {} bytes", img_href, w, h, bytes.len());
+                                image_cache.insert(img_href.clone(), StoredImage {
+                                    raw_bytes: bytes,
+                                    width: w,
+                                    height: h,
+                                });
+                            }
+                            Err(e) => {
+                                eprintln!("[img] FAILED to load {}: {:?}", img_href, e);
+                            }
                         }
                     }
                 }

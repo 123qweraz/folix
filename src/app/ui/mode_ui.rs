@@ -146,9 +146,10 @@ pub fn render_document(
                 }
             }
             reading.next_load_ci = 0;
+            reading.next_img_load_ci = 0;
         }
 
-        // Background load: load up to 3 chapters per frame (text + images)
+        // Phase 1: load text-only (3 chapters/frame)
         {
             let doc_guard = document.lock();
             if let Some(reflow) = doc_guard.as_reflow() {
@@ -158,10 +159,41 @@ pub fn render_document(
                     reading.next_load_ci += 1;
                     if reading.chapter_cache[ci].is_none() {
                         let t0 = std::time::Instant::now();
-                        reading.chapter_cache[ci] = Some(reflow.load_chapter(ci, true));
-                        eprintln!("[perf] loaded ch{}: {:?}", ci, t0.elapsed());
+                        let ch = reflow.load_chapter(ci, false);
+                        let img_cnt = ch.blocks.iter().filter(|b| matches!(b, ContentBlock::Image(_))).count();
+                        let empty_imgs = ch.blocks.iter().filter(|b| {
+                            if let ContentBlock::Image(img) = b { img.raw_bytes.is_empty() } else { false }
+                        }).count();
+                        eprintln!("[perf] loaded ch{}: {:?} blocks={} imgs={} empty_imgs={}", ci, t0.elapsed(), ch.blocks.len(), img_cnt, empty_imgs);
+                        reading.chapter_cache[ci] = Some(ch);
                         reading.layout_cache_rows.clear();
                         loaded += 1;
+                    }
+                }
+            }
+        }
+
+        // Phase 2: load images (1 chapter/frame) after all text is loaded
+        if reading.next_load_ci >= reading.chapter_cache.len() {
+            let doc_guard = document.lock();
+            if let Some(reflow) = doc_guard.as_reflow() {
+                while reading.next_img_load_ci < reading.chapter_cache.len() {
+                    let ci = reading.next_img_load_ci;
+                    reading.next_img_load_ci += 1;
+                    // Only reload chapters that have empty image placeholders
+                    if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
+                        let has_empty_images = ch.blocks.iter().any(|b| {
+                            if let ContentBlock::Image(img) = b { img.raw_bytes.is_empty() } else { false }
+                        });
+                        if has_empty_images {
+                            let t0 = std::time::Instant::now();
+                            let ch = reflow.load_chapter(ci, true);
+                            let img_cnt = ch.blocks.iter().filter(|b| matches!(b, ContentBlock::Image(_))).count();
+                            eprintln!("[perf] loaded ch{} images: {:?} imgs={}", ci, t0.elapsed(), img_cnt);
+                            reading.chapter_cache[ci] = Some(ch);
+                            reading.layout_cache_rows.clear();
+                            break; // 1 chapter per frame
+                        }
                     }
                 }
             }
@@ -506,7 +538,21 @@ pub fn render_document(
                         let img_data = ch.as_ref().and_then(|ch| {
                             if let ContentBlock::Image(img) = &ch.blocks[rows[i].bi] { Some(img) } else { None }
                         });
-                        if img_data.map_or(true, |img| img.raw_bytes.is_empty()) {
+                        let is_empty = img_data.map_or(true, |img| img.raw_bytes.is_empty());
+                        if is_empty {
+                            // On-demand: prioritize this chapter for Phase 2 image loading
+                            if reading.next_img_load_ci > rows[i].ci {
+                                reading.next_img_load_ci = rows[i].ci;
+                            }
+                            if let Some(ch) = ch.as_ref() {
+                                if rows[i].bi < ch.blocks.len() {
+                                    let kind = match &ch.blocks[rows[i].bi] {
+                                        ContentBlock::Text(_) => "Text",
+                                        ContentBlock::Image(_) => "Image",
+                                    };
+                                    eprintln!("[dbg] ci={} bi={} it={} kind={}", rows[i].ci, rows[i].bi, rows[i].it, kind);
+                                }
+                            }
                             let aspect = img_data.map_or(1.0, |img| {
                                 if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 }
                             });
