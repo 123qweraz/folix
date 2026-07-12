@@ -167,6 +167,7 @@ pub fn render_document(
                             eprintln!("[perf] loaded ch{} images: {:?} imgs={}", ci, t0.elapsed(), img_cnt);
                             reading.chapter_cache[ci] = Some(ch);
                             reading.layout_cache_rows.clear();
+                            reading.layout_cache_starts.clear();
                             break; // 1 chapter per frame
                         }
                     }
@@ -603,7 +604,11 @@ pub fn render_document(
                         // If image raw_bytes not loaded yet, draw a placeholder
                         let ch = &chapter_cache_ref[rows[i].ci];
                         let img_data = ch.as_ref().and_then(|ch| {
-                            if let ContentBlock::Image(img) = &ch.blocks[rows[i].bi] { Some(img) } else { None }
+                            if rows[i].bi < ch.blocks.len() {
+                                if let ContentBlock::Image(img) = &ch.blocks[rows[i].bi] { Some(img) } else { None }
+                            } else {
+                                None
+                            }
                         });
                         let is_empty = img_data.map_or(true, |img| img.raw_bytes.is_empty());
                         if is_empty {
@@ -690,11 +695,8 @@ pub fn render_document(
                             );
                         }
 
-                        let ch = chapter_cache_ref[rows[i].ci].as_ref().unwrap();
-                        let img = match &ch.blocks[rows[i].bi] {
-                            ContentBlock::Image(img) => img,
-                            _ => unreachable!(),
-                        };
+                        let Some(ch) = chapter_cache_ref[rows[i].ci].as_ref() else { continue; };
+                        let Some(ContentBlock::Image(img)) = ch.blocks.get(rows[i].bi) else { continue; };
                         let aspect = img.width as f32 / img.height.max(1) as f32;
                         let img_w = img_max_w.min(img.width.max(1) as f32);
                         let img_h = img_w / aspect;
@@ -853,7 +855,7 @@ pub fn render_document(
 
         // Update current line / total lines for toolbar display
         if !rows.is_empty() {
-            let idx = row_starts.partition_point(|&y| y <= output.state.offset.y);
+            let idx = row_starts.partition_point(|&y| y <= output.state.offset.y).min(rows.len());
             reading.current_line = if idx > 0 && idx <= rows.len() {
                 rows[idx - 1].line_no
             } else if !rows.is_empty() {
