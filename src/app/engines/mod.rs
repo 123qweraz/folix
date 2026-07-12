@@ -33,8 +33,6 @@ pub struct StoredImage {
     pub raw_bytes: Vec<u8>,
     pub width: u32,
     pub height: u32,
-    pub html_width: Option<u32>,
-    pub html_height: Option<u32>,
 }
 
 #[derive(Clone)]
