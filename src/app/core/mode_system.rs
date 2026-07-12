@@ -189,6 +189,8 @@ pub struct ReadingState {
     pub total_lines: usize,
     /// Input buffer for jump-to-line.
     pub goto_line_text: String,
+    /// Pending scroll Y position (set by link clicks, consumed before ScrollArea init).
+    pub pending_scroll_y: Option<f32>,
     /// Next chapter index for Phase 2 image-only loading.
     pub next_img_load_ci: usize,
 }
@@ -391,6 +393,7 @@ impl TabModes {
                 current_line: 0,
                 total_lines: 0,
                 goto_line_text: String::new(),
+                pending_scroll_y: None,
                 next_img_load_ci: 0,
             },
             auto: AutoState {

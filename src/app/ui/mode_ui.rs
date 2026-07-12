@@ -183,7 +183,9 @@ pub fn render_document(
             reading.scroll_offset_y =
                 (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
         }
-        sa = sa.vertical_scroll_offset(reading.scroll_offset_y);
+        let init_offset = reading.pending_scroll_y.take().unwrap_or(reading.scroll_offset_y);
+        reading.scroll_offset_y = init_offset;
+        sa = sa.vertical_scroll_offset(init_offset);
 
         let font_size = 16.0 * *scale;
 
@@ -680,11 +682,12 @@ pub fn render_document(
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         if resp.clicked() {
                             if let Some(tci) = rows[i].target_ci {
-                                reading.scroll_offset_y = reading.layout_cache_starts.iter()
+                                let target_y = reading.layout_cache_starts.iter()
                                     .zip(rows.iter())
                                     .find(|(_, r)| r.ci >= tci)
                                     .map(|(&y, _)| y)
                                     .unwrap_or(reading.scroll_offset_y);
+                                reading.pending_scroll_y = Some(target_y);
                             }
                         }
                         continue;
