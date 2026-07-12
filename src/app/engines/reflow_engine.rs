@@ -723,7 +723,9 @@ impl ReflowDocument {
                         image_cache.get(&href).map(|img| ContentBlock::Image(img.clone()))
                     }
                     RawBlock::Link(text, href) => {
-                        let target_ci = self.href_to_ci.get(&href).copied().unwrap_or(0);
+                        let clean = href.split('#').next().unwrap_or(&href).split('?').next().unwrap_or(&href).to_string();
+                        let target_ci = self.href_to_ci.get(&clean).copied().unwrap_or(0);
+                        eprintln!("[link] '{}' href='{}' clean='{}' -> ci={}", text, href, clean, target_ci);
                         Some(ContentBlock::Link { text, target_ci })
                     }
                 })
@@ -751,7 +753,8 @@ impl ReflowDocument {
                         }))
                     }
                     RawBlock::Link(text, href) => {
-                        let target_ci = self.href_to_ci.get(&href).copied().unwrap_or(0);
+                        let clean = href.split('#').next().unwrap_or(&href).split('?').next().unwrap_or(&href).to_string();
+                        let target_ci = self.href_to_ci.get(&clean).copied().unwrap_or(0);
                         Some(ContentBlock::Link { text, target_ci })
                     }
                 })
