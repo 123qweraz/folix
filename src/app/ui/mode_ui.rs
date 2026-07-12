@@ -222,6 +222,17 @@ pub fn render_document(
                 _ => body,
             }
         };
+        let font_family_for_row = |bold: bool, italic: bool| -> egui::FontFamily {
+            if bold && italic {
+                egui::FontFamily::Name("bold_italic".into())
+            } else if bold {
+                egui::FontFamily::Name("bold".into())
+            } else if italic {
+                egui::FontFamily::Name("italic".into())
+            } else {
+                egui::FontFamily::Proportional
+            }
+        };
 
         // Lazy update: recompute galley for rows that scrolled into view
         // (runs BEFORE rows/row_starts borrow; fixes rows whose galley is None
@@ -238,7 +249,7 @@ pub fn render_document(
                 let row = &mut reading.layout_cache_rows[i];
                 if (row.it == 1 || row.it == 4) && !row.text.is_empty() && row.galley.is_none() && row.layout_gen == gen {
                     let actual_fs = heading_font_size(row.heading_level, font_size);
-                    let actual_fid = egui::FontId::proportional(actual_fs);
+                    let actual_fid = egui::FontId::new(actual_fs, font_family_for_row(row.bold, row.italic));
                     let g = ui.fonts(|f| f.layout_delayed_color(
                         row.text.clone(),
                         actual_fid,
@@ -430,7 +441,7 @@ pub fn render_document(
                             row.galley = None;
                         } else if i >= vis_first && i < vis_last {
                             let actual_fs = heading_font_size(row.heading_level, font_size);
-                            let actual_fid = egui::FontId::proportional(actual_fs);
+                            let actual_fid = egui::FontId::new(actual_fs, font_family_for_row(row.bold, row.italic));
                             let g = ui.fonts(|f| f.layout_delayed_color(
                                 row.text.clone(),
                                 actual_fid,

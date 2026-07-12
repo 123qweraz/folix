@@ -85,9 +85,27 @@ impl FolixApp {
 
         let mut fonts = egui::FontDefinitions::default();
 
+        let classify = |stem: &str| -> &'static str {
+            let lower = stem.to_lowercase();
+            let is_bold = lower.contains("bold") || lower.contains("black") || lower.contains("heavy");
+            let is_italic = lower.contains("italic") || lower.contains("oblique");
+            if is_bold && is_italic {
+                "bold_italic"
+            } else if is_bold {
+                "bold"
+            } else if is_italic {
+                "italic"
+            } else {
+                "regular"
+            }
+        };
+
         for path in &font_paths {
             let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-            let name = format!("cjk_{}", ext);
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown_font");
+            let safe = stem.replace(|c: char| !c.is_alphanumeric(), "_");
+            let name = format!("flx_{}", safe);
+
             match std::fs::read(path) {
                 Ok(data) => {
                     let index = if ext == "ttc" { 2 } else { 0 };
@@ -95,8 +113,29 @@ impl FolixApp {
                     font_data.index = index;
                     fonts.font_data.insert(name.clone(), std::sync::Arc::new(font_data));
 
-                    for family in &[egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                        let list = fonts.families.get_mut(family).unwrap();
+                    let style = classify(stem);
+                    let families: &[egui::FontFamily] = match style {
+                        "bold_italic" => &[
+                            egui::FontFamily::Name("bold_italic".into()),
+                            egui::FontFamily::Name("bold".into()),
+                            egui::FontFamily::Name("italic".into()),
+                            egui::FontFamily::Proportional,
+                        ],
+                        "bold" => &[
+                            egui::FontFamily::Name("bold".into()),
+                            egui::FontFamily::Proportional,
+                        ],
+                        "italic" => &[
+                            egui::FontFamily::Name("italic".into()),
+                            egui::FontFamily::Proportional,
+                        ],
+                        _ => &[
+                            egui::FontFamily::Proportional,
+                            egui::FontFamily::Monospace,
+                        ],
+                    };
+                    for family in families {
+                        let list = fonts.families.entry(family.clone()).or_default();
                         if !list.contains(&name) {
                             list.insert(0, name.clone());
                         }
