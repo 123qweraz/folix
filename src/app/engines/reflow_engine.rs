@@ -92,14 +92,28 @@ impl ReflowDocument {
             }
         }
 
+        // Preload all chapter HTML + parse raw blocks into cache (like TXT pre-caches everything)
+        let chapter_html_cache = std::sync::Mutex::new(HashMap::new());
+        let raw_block_cache = std::sync::Mutex::new(HashMap::new());
+        for (i, (_, href)) in spine_items.iter().enumerate() {
+            let path = if href.starts_with('/') { href.clone() } else { format!("/{}", href) };
+            if let Ok(bytes) = epub.read_resource_bytes(&path) {
+                let html = String::from_utf8_lossy(&bytes).into_owned();
+                chapter_html_cache.lock().unwrap().insert(i, html.clone());
+                let mut referenced = HashSet::new();
+                let raw_blocks = Self::extract_raw_blocks(&html, href, &mut referenced);
+                raw_block_cache.lock().unwrap().insert(i, (raw_blocks, referenced));
+            }
+        }
+
         Some(Self {
             path: path.to_string(),
             doc_title,
             toc,
             epub: Some(std::sync::Mutex::new(epub)),
             spine_items,
-            chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
-            raw_block_cache: std::sync::Mutex::new(HashMap::new()),
+            chapter_html_cache,
+            raw_block_cache,
             chapter_cache: std::sync::Mutex::new(HashMap::new()),
             image_cache: std::sync::Mutex::new(HashMap::new()),
         })

@@ -187,8 +187,6 @@ pub struct ReadingState {
     pub total_lines: usize,
     /// Input buffer for jump-to-line.
     pub goto_line_text: String,
-    /// Next chapter index to load (per-frame batch, text + images).
-    pub next_load_ci: usize,
     /// Next chapter index for Phase 2 image-only loading.
     pub next_img_load_ci: usize,
 }
@@ -391,7 +389,6 @@ impl TabModes {
                 current_line: 0,
                 total_lines: 0,
                 goto_line_text: String::new(),
-                next_load_ci: 0,
                 next_img_load_ci: 0,
             },
             auto: AutoState {

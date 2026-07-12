@@ -141,46 +141,21 @@ pub fn render_document(
         if reading.chapter_cache.is_empty() {
             let doc_handle = document.lock();
             if let Some(reflow) = doc_handle.as_reflow() {
-                for _ci in 0..reflow.chapter_count() {
-                    reading.chapter_cache.push(None);
+                let n = reflow.chapter_count();
+                for ci in 0..n {
+                    reading.chapter_cache.push(Some(reflow.load_chapter(ci, false)));
                 }
             }
-            reading.next_load_ci = 0;
             reading.next_img_load_ci = 0;
         }
 
-        // Phase 1: load text-only (3 chapters/frame)
-        {
-            let doc_guard = document.lock();
-            if let Some(reflow) = doc_guard.as_reflow() {
-                let mut loaded = 0;
-                while reading.next_load_ci < reading.chapter_cache.len() && loaded < 3 {
-                    let ci = reading.next_load_ci;
-                    reading.next_load_ci += 1;
-                    if reading.chapter_cache[ci].is_none() {
-                        let t0 = std::time::Instant::now();
-                        let ch = reflow.load_chapter(ci, false);
-                        let img_cnt = ch.blocks.iter().filter(|b| matches!(b, ContentBlock::Image(_))).count();
-                        let empty_imgs = ch.blocks.iter().filter(|b| {
-                            if let ContentBlock::Image(img) = b { img.raw_bytes.is_empty() } else { false }
-                        }).count();
-                        eprintln!("[perf] loaded ch{}: {:?} blocks={} imgs={} empty_imgs={}", ci, t0.elapsed(), ch.blocks.len(), img_cnt, empty_imgs);
-                        reading.chapter_cache[ci] = Some(ch);
-                        reading.layout_cache_rows.clear();
-                        loaded += 1;
-                    }
-                }
-            }
-        }
-
         // Phase 2: load images (1 chapter/frame) after all text is loaded
-        if reading.next_load_ci >= reading.chapter_cache.len() {
+        {
             let doc_guard = document.lock();
             if let Some(reflow) = doc_guard.as_reflow() {
                 while reading.next_img_load_ci < reading.chapter_cache.len() {
                     let ci = reading.next_img_load_ci;
                     reading.next_img_load_ci += 1;
-                    // Only reload chapters that have empty image placeholders
                     if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
                         let has_empty_images = ch.blocks.iter().any(|b| {
                             if let ContentBlock::Image(img) = b { img.raw_bytes.is_empty() } else { false }
