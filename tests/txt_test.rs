@@ -15,7 +15,7 @@ fn test_open_txt_utf8() {
     assert_eq!(doc.chapter_count(), 1);
     let ch = doc.load_chapter(0, false);
     let text: String = ch.blocks.iter()
-        .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
+        .map(|b| match b { ContentBlock::Text { text: t, .. } => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
         .join("");
     assert!(text.contains("Hello World"));
@@ -34,7 +34,7 @@ fn test_open_txt_gbk_small() {
     ).expect("Failed to open GBK TXT");
     let ch = doc.load_chapter(0, false);
     let text: String = ch.blocks.iter()
-        .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
+        .map(|b| match b { ContentBlock::Text { text: t, .. } => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
         .join("");
     assert!(text.contains("中文测试"), "GBK text should decode as '中文测试', got: {:?}", text);
@@ -54,7 +54,7 @@ fn test_open_chinese_novel() {
     for i in 0..doc.chapter_count() {
         let ch = doc.load_chapter(i, false);
         for b in ch.blocks {
-            if let ContentBlock::Text(t) = b {
+            if let ContentBlock::Text { text: t, .. } = b {
                 full_text.push_str(&t);
             }
         }
@@ -94,7 +94,7 @@ Some ~~strikethrough~~ text.
     assert!(doc.chapter_count() >= 2, "Should have at least 2 chapters from # headings, got {}", doc.chapter_count());
     let ch0 = doc.load_chapter(0, false);
     let text0: String = ch0.blocks.iter()
-        .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
+        .map(|b| match b { ContentBlock::Text { text: t, .. } => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
         .join("");
     // Markdown formatting stripped: **world** → world, *some* → some, `code` → code
@@ -105,7 +105,7 @@ Some ~~strikethrough~~ text.
 
     let ch1 = doc.load_chapter(1, false);
     let text1: String = ch1.blocks.iter()
-        .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
+        .map(|b| match b { ContentBlock::Text { text: t, .. } => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
         .join("");
     assert!(text1.contains("strikethrough"), "Strikethrough text should be kept: {:?}", text1);
@@ -130,7 +130,7 @@ More text.
 
     let ch = doc.load_chapter(0, false);
     let text: String = ch.blocks.iter()
-        .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
+        .map(|b| match b { ContentBlock::Text { text: t, .. } => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
         .join("");
     assert!(text.contains("a link"), "Link text should be kept: {:?}", text);
@@ -229,14 +229,14 @@ fn test_open_docx_simple() {
 
     let ch0 = doc.load_chapter(0, false);
     let text0: String = ch0.blocks.iter()
-        .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
+        .map(|b| match b { ContentBlock::Text { text: t, .. } => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
         .join("");
     assert!(text0.contains("Hello World"), "Chapter 0 should contain Hello World: {:?}", text0);
 
     let ch1 = doc.load_chapter(1, false);
     let text1: String = ch1.blocks.iter()
-        .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
+        .map(|b| match b { ContentBlock::Text { text: t, .. } => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
         .join("");
     assert!(text1.contains("Chapter One"), "Chapter 1 should contain heading text: {:?}", text1);

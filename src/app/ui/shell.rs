@@ -367,7 +367,7 @@ impl FolixApp {
                             let chapter = reflow.load_chapter(a_ch, false);
                             let sel_text: String = chapter.blocks.get(a_blk)
                                 .and_then(|b| match b {
-                                    ContentBlock::Text(t) => Some(t.chars().skip(cstart).take(cend - cstart).collect()),
+                                    ContentBlock::Text { text: t, .. } => Some(t.chars().skip(cstart).take(cend - cstart).collect()),
                                     _ => None,
                                 })
                                 .unwrap_or_default();

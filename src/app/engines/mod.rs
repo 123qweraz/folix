@@ -37,7 +37,7 @@ pub struct StoredImage {
 
 #[derive(Clone)]
 pub enum ContentBlock {
-    Text(String),
+    Text { text: String, heading_level: u8, bold: bool, italic: bool, list_item: bool },
     Image(StoredImage),
     Link { text: String, target_ci: Option<usize> },
 }

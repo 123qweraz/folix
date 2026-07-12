@@ -211,6 +211,17 @@ pub fn render_document(
             let vlines = (nc as f32 / cpl as f32).ceil().max(1.0);
             vlines * lh
         };
+        let heading_font_size = |level: u8, body: f32| -> f32 {
+            match level {
+                1 => body * 1.75,
+                2 => body * 1.5,
+                3 => body * 1.25,
+                4 => body * 1.1,
+                5 => body * 1.0,
+                6 => body * 0.875,
+                _ => body,
+            }
+        };
 
         // Lazy update: recompute galley for rows that scrolled into view
         // (runs BEFORE rows/row_starts borrow; fixes rows whose galley is None
@@ -226,9 +237,11 @@ pub fn render_document(
             for i in first..last {
                 let row = &mut reading.layout_cache_rows[i];
                 if (row.it == 1 || row.it == 4) && !row.text.is_empty() && row.galley.is_none() && row.layout_gen == gen {
+                    let actual_fs = heading_font_size(row.heading_level, font_size);
+                    let actual_fid = egui::FontId::proportional(actual_fs);
                     let g = ui.fonts(|f| f.layout_delayed_color(
                         row.text.clone(),
-                        font_id.clone(),
+                        actual_fid,
                         text_avail_w));
                     row.height = g.rect.height().max(1.0);
                     row.galley = Some(g.into());
@@ -283,7 +296,7 @@ pub fn render_document(
                     if let Some(ch) = ch_opt.as_ref() {
                         for b in &ch.blocks {
                             ph_sum += match b {
-                                ContentBlock::Text(t) | ContentBlock::Link { text: t, .. } => cpl_heuristic(t, text_avail_w, font_size, line_h),
+                                ContentBlock::Text { text: t, .. } | ContentBlock::Link { text: t, .. } => cpl_heuristic(t, text_avail_w, font_size, line_h),
                                 ContentBlock::Image(img) => {
                                     let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
                                     let aspect = img.width as f32 / img.height.max(1) as f32;
@@ -298,24 +311,26 @@ pub fn render_document(
 
                 for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
                     if ci > 0 {
-                        new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen, target_ci: None });
+                        new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen, heading_level: 0, bold: false, italic: false, list_item: false, target_ci: None });
                     }
                     let chapter = match chapter_opt.as_ref() {
                         Some(ch) => ch,
                         None => {
-                            new_rows.push(LayoutRow { line_no: global_line + 1, ci, bi: 0, it: 3, text: String::new(), height: ph, char_offset: 0, galley: None, layout_gen: gen, target_ci: None });
+                            new_rows.push(LayoutRow { line_no: global_line + 1, ci, bi: 0, it: 3, text: String::new(), height: ph, char_offset: 0, galley: None, layout_gen: gen, heading_level: 0, bold: false, italic: false, list_item: false, target_ci: None });
                             global_line += 1;
                             continue;
                         }
                     };
                     for (bi, block) in chapter.blocks.iter().enumerate() {
                         match block {
-                            ContentBlock::Text(text) => {
+                            ContentBlock::Text { text, heading_level, bold, italic, list_item } => {
                                 let lines: Vec<&str> = text.split('\n').collect();
                                 let mut char_offset = 0;
                                 for (li, src_line) in lines.iter().enumerate() {
                                     let lno = global_line + 1;
-                                    let h = if src_line.is_empty() { line_h } else { cpl_heuristic(src_line, text_avail_w, font_size, line_h) };
+                                    let actual_fs = heading_font_size(*heading_level, font_size);
+                                    let actual_lh = actual_fs * 1.4;
+                                    let h = if src_line.is_empty() { actual_lh } else { cpl_heuristic(src_line, text_avail_w, actual_fs, actual_lh) };
                                     new_rows.push(LayoutRow {
                                         line_no: lno, ci, bi, it: 1,
                                         text: src_line.to_string(),
@@ -323,6 +338,10 @@ pub fn render_document(
                                         char_offset,
                                         galley: None,
                                         layout_gen: gen,
+                                        heading_level: *heading_level,
+                                        bold: *bold,
+                                        italic: *italic,
+                                        list_item: *list_item,
                                         target_ci: None,
                                     });
                                     char_offset += src_line.chars().count();
@@ -340,6 +359,10 @@ pub fn render_document(
                                     char_offset: 0,
                                     galley: None,
                                     layout_gen: gen,
+                                    heading_level: 0,
+                                    bold: false,
+                                    italic: false,
+                                    list_item: false,
                                     target_ci: None,
                                 });
                                 global_line += 1;
@@ -355,6 +378,10 @@ pub fn render_document(
                                         char_offset: 0,
                                         galley: None,
                                         layout_gen: gen,
+                                        heading_level: 0,
+                                        bold: false,
+                                        italic: false,
+                                        list_item: false,
                                         target_ci: *target_ci,
                                     });
                                     global_line += 1;
@@ -402,14 +429,18 @@ pub fn render_document(
                             row.height = line_h;
                             row.galley = None;
                         } else if i >= vis_first && i < vis_last {
+                            let actual_fs = heading_font_size(row.heading_level, font_size);
+                            let actual_fid = egui::FontId::proportional(actual_fs);
                             let g = ui.fonts(|f| f.layout_delayed_color(
                                 row.text.clone(),
-                                font_id.clone(),
+                                actual_fid,
                                 text_avail_w));
                             row.height = g.rect.height().max(1.0);
                             row.galley = Some(g.into());
                         } else {
-                            row.height = cpl_heuristic(&row.text, text_avail_w, font_size, line_h);
+                            let actual_fs = heading_font_size(row.heading_level, font_size);
+                            let actual_lh = actual_fs * 1.4;
+                            row.height = cpl_heuristic(&row.text, text_avail_w, actual_fs, actual_lh);
                             row.galley = None;
                         }
                     }
@@ -572,7 +603,7 @@ pub fn render_document(
                             if let Some(ch) = ch.as_ref() {
                                 if rows[i].bi < ch.blocks.len() {
                                     let kind = match &ch.blocks[rows[i].bi] {
-                                        ContentBlock::Text(_) => "Text",
+                                        ContentBlock::Text { .. } => "Text",
                                         ContentBlock::Image(_) => "Image",
                                         ContentBlock::Link { .. } => "Link",
                                     };
@@ -790,7 +821,7 @@ pub fn render_document(
                             let (f_ch, f_blk, f_pos) = focus;
                             let block_text = chapter_cache_ref[rows[i].ci].as_ref()
                                 .and_then(|ch| ch.blocks.get(rows[i].bi))
-                                .and_then(|b| if let ContentBlock::Text(t) = b { Some(t.as_str()) } else { None })
+                                .and_then(|b| if let ContentBlock::Text { text: t, .. } = b { Some(t.as_str()) } else { None })
                                 .unwrap_or("");
                             let block_len = block_text.chars().count();
                             let local_a = if a_ch == rows[i].ci && a_blk == rows[i].bi { a_pos } else { 0 };

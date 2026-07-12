@@ -4,7 +4,7 @@ use std::io::Read;
 
 #[derive(Clone)]
 enum RawBlock {
-    Text(String),
+    Text { text: String, heading_level: u8, bold: bool, italic: bool, list_item: bool },
     ImageRef(String),
     Link(String, String), // text, href
 }
@@ -180,7 +180,7 @@ impl ReflowDocument {
         // Pre-populate cache with chapter blocks
         let mut cache = HashMap::new();
         for (i, (_, text)) in chapters.iter().enumerate() {
-            cache.insert(i, vec![ContentBlock::Text(text.clone())]);
+            cache.insert(i, vec![ContentBlock::Text { text: text.clone(), heading_level: 0, bold: false, italic: false, list_item: false }]);
         }
 
         Some(Self {
@@ -384,7 +384,7 @@ impl ReflowDocument {
 
         let mut cache = HashMap::new();
         for (i, (_, text)) in chapters.iter().enumerate() {
-            cache.insert(i, vec![ContentBlock::Text(text.clone())]);
+            cache.insert(i, vec![ContentBlock::Text { text: text.clone(), heading_level: 0, bold: false, italic: false, list_item: false }]);
         }
 
         Some(Self {
@@ -715,9 +715,9 @@ impl ReflowDocument {
             let image_cache = self.image_cache.lock().unwrap();
             let blocks: Vec<ContentBlock> = raw_blocks.into_iter()
                 .filter_map(|rb| match rb {
-                    RawBlock::Text(t) => {
+                    RawBlock::Text { text: t, heading_level, bold, italic, list_item } => {
                         let trimmed = t.trim().to_string();
-                        if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
+                        if trimmed.is_empty() { None } else { Some(ContentBlock::Text { text: trimmed, heading_level, bold, italic, list_item }) }
                     }
                     RawBlock::ImageRef(href) => {
                         image_cache.get(&href).map(|img| ContentBlock::Image(img.clone()))
@@ -741,9 +741,9 @@ impl ReflowDocument {
             // Text-only: no image I/O, placeholder images with default dimensions
             let blocks: Vec<ContentBlock> = raw_blocks.into_iter()
                 .filter_map(|rb| match rb {
-                    RawBlock::Text(t) => {
+                    RawBlock::Text { text: t, heading_level, bold, italic, list_item } => {
                         let trimmed = t.trim().to_string();
-                        if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
+                        if trimmed.is_empty() { None } else { Some(ContentBlock::Text { text: trimmed, heading_level, bold, italic, list_item }) }
                     }
                     RawBlock::ImageRef(_) => {
                         Some(ContentBlock::Image(StoredImage {
@@ -782,6 +782,28 @@ impl ReflowDocument {
         let mut link_href: Option<String> = None;
         let mut link_text = String::new();
 
+        // Formatting state
+        let mut heading_level: u8 = 0;
+        let mut bold_depth: u32 = 0;
+        let mut italic_depth: u32 = 0;
+        let mut in_li = false;
+        // Stack of (is_ordered, counter)
+        let mut list_stack: Vec<(bool, usize)> = Vec::new();
+
+        let flush_text = |blocks: &mut Vec<RawBlock>, text: &mut String, hl: u8, bd: u32, id: u32, il: bool| {
+            let trimmed = text.trim().to_string();
+            if !trimmed.is_empty() {
+                blocks.push(RawBlock::Text {
+                    text: trimmed,
+                    heading_level: hl,
+                    bold: bd > 0,
+                    italic: id > 0,
+                    list_item: il,
+                });
+                text.clear();
+            }
+        };
+
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
@@ -800,48 +822,96 @@ impl ReflowDocument {
                         continue;
                     }
 
-                // <img> and <image> tags → extract src and emit ImageRef
-                if name.eq_ignore_ascii_case(b"img") || name.eq_ignore_ascii_case(b"image") {
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref().eq_ignore_ascii_case(b"src") {
-                            let src = String::from_utf8_lossy(&attr.value);
-                            if src.starts_with("data:") || src.contains("://") {
+                    // <h1>..<h6>
+                    if name.len() == 2 && name[0] == b'h' && name[1] >= b'1' && name[1] <= b'6' {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        heading_level = name[1] - b'0';
+                        buf.clear();
+                        continue;
+                    }
+
+                    // <strong>, <b>
+                    if name.eq_ignore_ascii_case(b"strong") || name.eq_ignore_ascii_case(b"b") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        bold_depth += 1;
+                        buf.clear();
+                        continue;
+                    }
+
+                    // <em>, <i>
+                    if name.eq_ignore_ascii_case(b"em") || name.eq_ignore_ascii_case(b"i") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        italic_depth += 1;
+                        buf.clear();
+                        continue;
+                    }
+
+                    // <ul>
+                    if name.eq_ignore_ascii_case(b"ul") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        list_stack.push((false, 0));
+                        buf.clear();
+                        continue;
+                    }
+
+                    // <ol>
+                    if name.eq_ignore_ascii_case(b"ol") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        list_stack.push((true, 0));
+                        buf.clear();
+                        continue;
+                    }
+
+                    // <li>
+                    if name.eq_ignore_ascii_case(b"li") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        if let Some((is_ordered, counter)) = list_stack.last_mut() {
+                            *counter += 1;
+                            if *is_ordered {
+                                current_text.push_str(&format!("{}. ", counter));
+                            } else {
+                                current_text.push_str("• ");
+                            }
+                        }
+                        in_li = true;
+                        buf.clear();
+                        continue;
+                    }
+
+                    // <img> and <image> tags → extract src and emit ImageRef
+                    if name.eq_ignore_ascii_case(b"img") || name.eq_ignore_ascii_case(b"image") {
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref().eq_ignore_ascii_case(b"src") {
+                                let src = String::from_utf8_lossy(&attr.value);
+                                if src.starts_with("data:") || src.contains("://") {
+                                    break;
+                                }
+                                let resolved = resolve_path(chapter_href, &src);
+                                flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                                referenced_hrefs.insert(resolved.clone());
+                                blocks.push(RawBlock::ImageRef(resolved));
                                 break;
                             }
-                            let resolved = resolve_path(chapter_href, &src);
-                            let trimmed = current_text.trim().to_string();
-                            if !trimmed.is_empty() {
-                                blocks.push(RawBlock::Text(trimmed));
-                                current_text.clear();
-                            }
-                            referenced_hrefs.insert(resolved.clone());
-                            blocks.push(RawBlock::ImageRef(resolved));
-                            break;
                         }
+                        buf.clear();
+                        continue;
                     }
-                    buf.clear();
-                    continue;
-                }
 
-                // <a> tag → extract href, start accumulating link text
-                if name.eq_ignore_ascii_case(b"a") {
-                    let trimmed = current_text.trim().to_string();
-                    if !trimmed.is_empty() {
-                        blocks.push(RawBlock::Text(trimmed));
-                        current_text.clear();
-                    }
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref().eq_ignore_ascii_case(b"href") {
-                            let val = String::from_utf8_lossy(&attr.value);
-                            if !val.starts_with('#') && !val.contains("://") {
-                                link_href = Some(resolve_path(chapter_href, &val));
+                    // <a> tag → extract href, start accumulating link text
+                    if name.eq_ignore_ascii_case(b"a") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref().eq_ignore_ascii_case(b"href") {
+                                let val = String::from_utf8_lossy(&attr.value);
+                                if !val.starts_with('#') && !val.contains("://") {
+                                    link_href = Some(resolve_path(chapter_href, &val));
+                                }
+                                break;
                             }
-                            break;
                         }
+                        buf.clear();
+                        continue;
                     }
-                    buf.clear();
-                    continue;
-                }
 
                     // <br> and <hr> → line break
                     if name.eq_ignore_ascii_case(b"br") || name.eq_ignore_ascii_case(b"hr") {
@@ -870,6 +940,52 @@ impl ReflowDocument {
                         continue;
                     }
 
+                    // </h1>..</h6>
+                    if name.len() == 2 && name[0] == b'h' && name[1] >= b'1' && name[1] <= b'6' {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        heading_level = 0;
+                        if !current_text.ends_with('\n') {
+                            current_text.push('\n');
+                        }
+                        buf.clear();
+                        continue;
+                    }
+
+                    // </strong>, </b>
+                    if name.eq_ignore_ascii_case(b"strong") || name.eq_ignore_ascii_case(b"b") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        bold_depth = bold_depth.saturating_sub(1);
+                        buf.clear();
+                        continue;
+                    }
+
+                    // </em>, </i>
+                    if name.eq_ignore_ascii_case(b"em") || name.eq_ignore_ascii_case(b"i") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        italic_depth = italic_depth.saturating_sub(1);
+                        buf.clear();
+                        continue;
+                    }
+
+                    // </li>
+                    if name.eq_ignore_ascii_case(b"li") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        in_li = false;
+                        if !current_text.ends_with('\n') {
+                            current_text.push('\n');
+                        }
+                        buf.clear();
+                        continue;
+                    }
+
+                    // </ul>, </ol>
+                    if name.eq_ignore_ascii_case(b"ul") || name.eq_ignore_ascii_case(b"ol") {
+                        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
+                        list_stack.pop();
+                        buf.clear();
+                        continue;
+                    }
+
                     // </a> → emit Link block
                     if name.eq_ignore_ascii_case(b"a") {
                         if let Some(href) = link_href.take() {
@@ -886,7 +1002,7 @@ impl ReflowDocument {
                     // Block-level closing tags add a line break
                     match name {
                         b"p" | b"div" | b"h1" | b"h2" | b"h3" | b"h4" | b"h5" | b"h6"
-                        | b"blockquote" | b"li" | b"td" | b"th" => {
+                        | b"blockquote" | b"td" | b"th" => {
                             if !current_text.ends_with('\n') {
                                 current_text.push('\n');
                             }
@@ -912,10 +1028,7 @@ impl ReflowDocument {
             buf.clear();
         }
 
-        let trimmed = current_text.trim().to_string();
-        if !trimmed.is_empty() {
-            blocks.push(RawBlock::Text(trimmed));
-        }
+        flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
 
         blocks
     }
@@ -940,7 +1053,7 @@ impl ReflowLayout for ReflowDocument {
         let ch = self.load_chapter(idx, false);
         ch.blocks.iter()
             .map(|b| match b {
-                ContentBlock::Text(t) => t.as_str(),
+                ContentBlock::Text { text: t, .. } => t.as_str(),
                 ContentBlock::Image(_) => "[IMAGE]",
                 ContentBlock::Link { text: t, .. } => t.as_str(),
             })
@@ -971,7 +1084,7 @@ impl ReflowLayout for ReflowDocument {
             let cache = self.chapter_cache.lock().unwrap();
             let blocks: Vec<BlockInfo> = cache.get(&idx).map(|blocks| {
                 blocks.iter().map(|b| match b {
-                    ContentBlock::Text(t) => BlockInfo { is_image: false, char_count: t.chars().count() },
+                    ContentBlock::Text { text: t, .. } => BlockInfo { is_image: false, char_count: t.chars().count() },
                     ContentBlock::Image(_) => BlockInfo { is_image: true, char_count: 1 },
                     ContentBlock::Link { text: t, .. } => BlockInfo { is_image: false, char_count: t.chars().count() },
                 }).collect()
@@ -981,7 +1094,7 @@ impl ReflowLayout for ReflowDocument {
         let (raw_blocks, _referenced) = self.parse_chapter_raw_blocks(idx);
         let blocks: Vec<BlockInfo> = raw_blocks.into_iter()
             .filter_map(|rb| match rb {
-                RawBlock::Text(t) => {
+                RawBlock::Text { text: t, .. } => {
                     let trimmed = t.trim().to_string();
                     if trimmed.is_empty() { None }
                     else { Some(BlockInfo { is_image: false, char_count: trimmed.chars().count() }) }
