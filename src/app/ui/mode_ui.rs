@@ -446,7 +446,10 @@ pub fn render_document(
             let cull_min = (visible_top - margin).max(0.0);
             let cull_max = (visible_bottom + margin).min(total_h);
 
-            let first = row_starts.partition_point(|&y| y < cull_min);
+            let mut first = row_starts.partition_point(|&y| y < cull_min);
+            if first > 0 && row_starts[first - 1] + rows[first - 1].height > cull_min {
+                first -= 1;
+            }
             let last = row_starts.partition_point(|&y| y < cull_max);
 
             let base_x = response.rect.left();
