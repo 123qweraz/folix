@@ -39,6 +39,7 @@ pub struct StoredImage {
 pub enum ContentBlock {
     Text(String),
     Image(StoredImage),
+    Link { text: String, target_ci: usize },
 }
 
 pub trait Document: Send + Sync {

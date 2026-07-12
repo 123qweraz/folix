@@ -6,6 +6,7 @@ use std::io::Read;
 enum RawBlock {
     Text(String),
     ImageRef(String),
+    Link(String, String), // text, href
 }
 
 pub struct ReflowDocument {
@@ -14,6 +15,8 @@ pub struct ReflowDocument {
     toc: Vec<TocEntry>,
     epub: Option<std::sync::Mutex<rbook::Epub>>,
     spine_items: Vec<(String, String)>, // (id, href)
+    /// Maps normalized href path → spine index for link target resolution.
+    href_to_ci: HashMap<String, usize>,
     /// Lazy-loaded chapter HTML content (index → html). Read from zip on first access.
     chapter_html_cache: std::sync::Mutex<HashMap<usize, String>>,
     /// Cache for parsed raw blocks (avoid re-parsing HTML for chapter_info / image upgrade).
@@ -77,6 +80,13 @@ impl ReflowDocument {
             id_to_spine_idx.insert(id.clone(), i);
         }
 
+        // Build href → spine index map for link target resolution
+        let mut href_to_ci: HashMap<String, usize> = HashMap::new();
+        for (i, (_, href)) in spine_items.iter().enumerate() {
+            let normalized = normalize_path(href);
+            href_to_ci.insert(normalized, i);
+        }
+
         // Build ToC — page_index = spine index (not flattened TOC index)
         let mut toc: Vec<TocEntry> = Vec::new();
         let toc_data = epub.toc();
@@ -112,6 +122,7 @@ impl ReflowDocument {
             toc,
             epub: Some(std::sync::Mutex::new(epub)),
             spine_items,
+            href_to_ci,
             chapter_html_cache,
             raw_block_cache,
             chapter_cache: std::sync::Mutex::new(HashMap::new()),
@@ -178,6 +189,7 @@ impl ReflowDocument {
             toc,
             epub: None,
             spine_items: vec![],
+            href_to_ci: HashMap::new(),
             chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
             raw_block_cache: std::sync::Mutex::new(HashMap::new()),
             chapter_cache: std::sync::Mutex::new(cache),
@@ -381,6 +393,7 @@ impl ReflowDocument {
             toc,
             epub: None,
             spine_items: vec![],
+            href_to_ci: HashMap::new(),
             chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
             raw_block_cache: std::sync::Mutex::new(HashMap::new()),
             chapter_cache: std::sync::Mutex::new(cache),
@@ -709,6 +722,10 @@ impl ReflowDocument {
                     RawBlock::ImageRef(href) => {
                         image_cache.get(&href).map(|img| ContentBlock::Image(img.clone()))
                     }
+                    RawBlock::Link(text, href) => {
+                        let target_ci = self.href_to_ci.get(&href).copied().unwrap_or(0);
+                        Some(ContentBlock::Link { text, target_ci })
+                    }
                 })
                 .collect();
 
@@ -733,6 +750,10 @@ impl ReflowDocument {
                             height: 800,
                         }))
                     }
+                    RawBlock::Link(text, href) => {
+                        let target_ci = self.href_to_ci.get(&href).copied().unwrap_or(0);
+                        Some(ContentBlock::Link { text, target_ci })
+                    }
                 })
                 .collect();
 
@@ -755,6 +776,8 @@ impl ReflowDocument {
         let mut current_text = String::new();
         let mut buf = Vec::new();
         let mut skip_depth: u32 = 0;
+        let mut link_href: Option<String> = None;
+        let mut link_text = String::new();
 
         loop {
             match reader.read_event_into(&mut buf) {
@@ -797,6 +820,26 @@ impl ReflowDocument {
                     continue;
                 }
 
+                // <a> tag → extract href, start accumulating link text
+                if name.eq_ignore_ascii_case(b"a") {
+                    let trimmed = current_text.trim().to_string();
+                    if !trimmed.is_empty() {
+                        blocks.push(RawBlock::Text(trimmed));
+                        current_text.clear();
+                    }
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref().eq_ignore_ascii_case(b"href") {
+                            let val = String::from_utf8_lossy(&attr.value);
+                            if !val.starts_with('#') && !val.contains("://") {
+                                link_href = Some(resolve_path(chapter_href, &val));
+                            }
+                            break;
+                        }
+                    }
+                    buf.clear();
+                    continue;
+                }
+
                     // <br> and <hr> → line break
                     if name.eq_ignore_ascii_case(b"br") || name.eq_ignore_ascii_case(b"hr") {
                         current_text.push('\n');
@@ -824,6 +867,19 @@ impl ReflowDocument {
                         continue;
                     }
 
+                    // </a> → emit Link block
+                    if name.eq_ignore_ascii_case(b"a") {
+                        if let Some(href) = link_href.take() {
+                            let trimmed = link_text.trim().to_string();
+                            if !trimmed.is_empty() {
+                                blocks.push(RawBlock::Link(trimmed, href));
+                            }
+                            link_text.clear();
+                        }
+                        buf.clear();
+                        continue;
+                    }
+
                     // Block-level closing tags add a line break
                     match name {
                         b"p" | b"div" | b"h1" | b"h2" | b"h3" | b"h4" | b"h5" | b"h6"
@@ -838,7 +894,11 @@ impl ReflowDocument {
                 Ok(Event::Text(ref e)) => {
                     if skip_depth == 0 {
                         if let Ok(text) = e.unescape() {
-                            current_text.push_str(&text);
+                            if link_href.is_some() {
+                                link_text.push_str(&text);
+                            } else {
+                                current_text.push_str(&text);
+                            }
                         }
                     }
                 }
@@ -879,6 +939,7 @@ impl ReflowLayout for ReflowDocument {
             .map(|b| match b {
                 ContentBlock::Text(t) => t.as_str(),
                 ContentBlock::Image(_) => "[IMAGE]",
+                ContentBlock::Link { text: t, .. } => t.as_str(),
             })
             .collect::<Vec<&str>>()
             .join("\n")
@@ -909,6 +970,7 @@ impl ReflowLayout for ReflowDocument {
                 blocks.iter().map(|b| match b {
                     ContentBlock::Text(t) => BlockInfo { is_image: false, char_count: t.chars().count() },
                     ContentBlock::Image(_) => BlockInfo { is_image: true, char_count: 1 },
+                    ContentBlock::Link { text: t, .. } => BlockInfo { is_image: false, char_count: t.chars().count() },
                 }).collect()
             }).unwrap_or_default();
             return ChapterInfo { title, blocks };
@@ -923,6 +985,11 @@ impl ReflowLayout for ReflowDocument {
                 }
                 RawBlock::ImageRef(_) => {
                     Some(BlockInfo { is_image: true, char_count: 1 })
+                }
+                RawBlock::Link(text, _) => {
+                    let trimmed = text.trim().to_string();
+                    if trimmed.is_empty() { None }
+                    else { Some(BlockInfo { is_image: false, char_count: trimmed.chars().count() }) }
                 }
             })
             .collect();

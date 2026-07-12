@@ -74,6 +74,8 @@ pub struct LayoutRow {
     pub galley: Option<std::sync::Arc<egui::Galley>>,
     /// Generation counter: matched against ReadingState::layout_cache_gen to detect staleness.
     pub layout_gen: u64,
+    /// Target chapter index for link rows (it=4).
+    pub target_ci: Option<usize>,
 }
 
 #[derive(Clone)]

@@ -29,6 +29,7 @@ fn test_open_epub_books() {
                 match b {
                     ContentBlock::Text(t) => total_text_len += t.len(),
                     ContentBlock::Image(_) => img_count += 1,
+                    ContentBlock::Link { .. } => {},
                 }
             }
         }

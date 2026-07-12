@@ -223,7 +223,7 @@ pub fn render_document(
             let mut any_change = false;
             for i in first..last {
                 let row = &mut reading.layout_cache_rows[i];
-                if row.it == 1 && !row.text.is_empty() && row.galley.is_none() && row.layout_gen == gen {
+                if (row.it == 1 || row.it == 4) && !row.text.is_empty() && row.galley.is_none() && row.layout_gen == gen {
                     let g = ui.fonts(|f| f.layout_delayed_color(
                         row.text.clone(),
                         font_id.clone(),
@@ -281,7 +281,7 @@ pub fn render_document(
                     if let Some(ch) = ch_opt.as_ref() {
                         for b in &ch.blocks {
                             ph_sum += match b {
-                                ContentBlock::Text(t) => cpl_heuristic(t, text_avail_w, font_size, line_h),
+                                ContentBlock::Text(t) | ContentBlock::Link { text: t, .. } => cpl_heuristic(t, text_avail_w, font_size, line_h),
                                 ContentBlock::Image(img) => {
                                     let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
                                     let aspect = img.width as f32 / img.height.max(1) as f32;
@@ -296,12 +296,12 @@ pub fn render_document(
 
                 for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
                     if ci > 0 {
-                        new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen });
+                        new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen, target_ci: None });
                     }
                     let chapter = match chapter_opt.as_ref() {
                         Some(ch) => ch,
                         None => {
-                            new_rows.push(LayoutRow { line_no: global_line + 1, ci, bi: 0, it: 3, text: String::new(), height: ph, char_offset: 0, galley: None, layout_gen: gen });
+                            new_rows.push(LayoutRow { line_no: global_line + 1, ci, bi: 0, it: 3, text: String::new(), height: ph, char_offset: 0, galley: None, layout_gen: gen, target_ci: None });
                             global_line += 1;
                             continue;
                         }
@@ -321,6 +321,7 @@ pub fn render_document(
                                         char_offset,
                                         galley: None,
                                         layout_gen: gen,
+                                        target_ci: None,
                                     });
                                     char_offset += src_line.chars().count();
                                     if li < lines.len() - 1 { char_offset += 1; }
@@ -337,8 +338,25 @@ pub fn render_document(
                                     char_offset: 0,
                                     galley: None,
                                     layout_gen: gen,
+                                    target_ci: None,
                                 });
                                 global_line += 1;
+                            }
+                            ContentBlock::Link { text, target_ci } => {
+                                for src_line in text.split('\n') {
+                                    let lno = global_line + 1;
+                                    let h = if src_line.is_empty() { line_h } else { cpl_heuristic(src_line, text_avail_w, font_size, line_h) };
+                                    new_rows.push(LayoutRow {
+                                        line_no: lno, ci, bi, it: 4,
+                                        text: src_line.to_string(),
+                                        height: h,
+                                        char_offset: 0,
+                                        galley: None,
+                                        layout_gen: gen,
+                                        target_ci: Some(*target_ci),
+                                    });
+                                    global_line += 1;
+                                }
                             }
                         }
                     }
@@ -377,7 +395,7 @@ pub fn render_document(
                 let row = &mut reading.layout_cache_rows[i];
                 row.layout_gen = gen;
                 match row.it {
-                    1 => {
+                    1 | 4 => {
                         if row.text.is_empty() {
                             row.height = line_h;
                             row.galley = None;
@@ -510,6 +528,33 @@ pub fn render_document(
                             egui::Color32::GRAY,
                         );
                     }
+                    4 => {
+                        if reading.show_line_numbers {
+                            painter.text(
+                                egui::pos2(content_left + 4.0, rect.top()),
+                                egui::Align2::LEFT_TOP,
+                                format!("{:>6}│ ", rows[i].line_no),
+                                font_id.clone(),
+                                egui::Color32::GRAY,
+                            );
+                        }
+                        let link_color = egui::Color32::from_rgb(30, 100, 220);
+                        if let Some(galley) = &rows[i].galley {
+                            let text_x = content_left + gutter_w;
+                            let text_top = rect.top();
+                            painter.add(egui::Shape::galley(
+                                egui::pos2(text_x, text_top),
+                                galley.clone(),
+                                link_color,
+                            ));
+                            // underline
+                            let line_y = rect.bottom() - 2.0;
+                            painter.line_segment(
+                                [egui::pos2(text_x, line_y), egui::pos2(text_x + galley.rect.width(), line_y)],
+                                (1.0, link_color),
+                            );
+                        }
+                    }
                     _ => {
                         // If image raw_bytes not loaded yet, draw a placeholder
                         let ch = &chapter_cache_ref[rows[i].ci];
@@ -527,6 +572,7 @@ pub fn render_document(
                                     let kind = match &ch.blocks[rows[i].bi] {
                                         ContentBlock::Text(_) => "Text",
                                         ContentBlock::Image(_) => "Image",
+                                        ContentBlock::Link { .. } => "Link",
                                     };
                                     eprintln!("[dbg] ci={} bi={} it={} kind={}", rows[i].ci, rows[i].bi, rows[i].it, kind);
                                 }
@@ -625,6 +671,24 @@ pub fn render_document(
             if !reading.show_line_numbers {
                 let sel = &mut reading.selection;
                 for i in first..last.min(rows.len()) {
+                    if rows[i].it == 4 {
+                        let text_rect = egui::Rect::from_min_size(
+                            egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
+                            egui::vec2(text_avail_w, rows[i].height),
+                        );
+                        let resp = ui.interact(text_rect, egui::Id::new(("link", i)), egui::Sense::click());
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        if resp.clicked() {
+                            if let Some(tci) = rows[i].target_ci {
+                                reading.scroll_offset_y = reading.layout_cache_starts.iter()
+                                    .zip(rows.iter())
+                                    .find(|(_, r)| r.ci >= tci)
+                                    .map(|(&y, _)| y)
+                                    .unwrap_or(reading.scroll_offset_y);
+                            }
+                        }
+                        continue;
+                    }
                     if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
                     let text_rect = egui::Rect::from_min_size(
                         egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
