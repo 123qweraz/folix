@@ -283,7 +283,7 @@ pub fn render_document(
                             ph_sum += match b {
                                 ContentBlock::Text(t) => cpl_heuristic(t, text_avail_w, font_size, line_h),
                                 ContentBlock::Image(img) => {
-                                    let max_w = avail_w.min(600.0);
+                                    let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
                                     let aspect = img.width as f32 / img.height.max(1) as f32;
                                     max_w / aspect + 8.0
                                 }
@@ -396,7 +396,7 @@ pub fn render_document(
                     2 => {
                         if let Some(Some(ch)) = reading.chapter_cache.get(row.ci) {
                             if let Some(ContentBlock::Image(img)) = ch.blocks.get(row.bi) {
-                                let max_w = avail_w.min(600.0);
+                                let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
                                 let aspect = img.width as f32 / img.height.max(1) as f32;
                                 row.height = max_w / aspect + 8.0;
                             }
@@ -570,7 +570,7 @@ pub fn render_document(
                             };
                             let (native_w, native_h) = decoded.dimensions();
                             let aspect = native_w as f32 / native_h as f32;
-                            let display_w = img_max_w.ceil() as u32;
+                            let display_w = (img_max_w.min(native_w as f32)).ceil() as u32;
                             let display_h = (display_w as f32 / aspect).ceil() as u32;
                             let resized = if display_w < native_w {
                                 image::imageops::resize(
@@ -605,9 +605,9 @@ pub fn render_document(
                             ContentBlock::Image(img) => img,
                             _ => unreachable!(),
                         };
-                        let aspect = img.width as f32 / img.height as f32;
-                        let img_w = img_max_w;
-                        let img_h = img_max_w / aspect;
+                        let aspect = img.width as f32 / img.height.max(1) as f32;
+                        let img_w = img_max_w.min(img.width.max(1) as f32);
+                        let img_h = img_w / aspect;
                         painter.image(
                             texture.id(),
                             egui::Rect::from_min_size(
