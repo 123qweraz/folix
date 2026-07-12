@@ -355,7 +355,7 @@ pub fn render_document(
                                         char_offset: 0,
                                         galley: None,
                                         layout_gen: gen,
-                                        target_ci: Some(*target_ci),
+                                        target_ci: *target_ci,
                                     });
                                     global_line += 1;
                                 }

@@ -724,8 +724,8 @@ impl ReflowDocument {
                     }
                     RawBlock::Link(text, href) => {
                         let clean = href.split('#').next().unwrap_or(&href).split('?').next().unwrap_or(&href).to_string();
-                        let target_ci = self.href_to_ci.get(&clean).copied().unwrap_or(0);
-                        eprintln!("[link] '{}' href='{}' clean='{}' -> ci={}", text, href, clean, target_ci);
+                        let target_ci = self.href_to_ci.get(&clean).copied();
+                        eprintln!("[link] '{}' href='{}' clean='{}' -> ci={:?}", text, href, clean, target_ci);
                         Some(ContentBlock::Link { text, target_ci })
                     }
                 })
@@ -754,7 +754,7 @@ impl ReflowDocument {
                     }
                     RawBlock::Link(text, href) => {
                         let clean = href.split('#').next().unwrap_or(&href).split('?').next().unwrap_or(&href).to_string();
-                        let target_ci = self.href_to_ci.get(&clean).copied().unwrap_or(0);
+                        let target_ci = self.href_to_ci.get(&clean).copied();
                         Some(ContentBlock::Link { text, target_ci })
                     }
                 })
