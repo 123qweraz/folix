@@ -13,7 +13,7 @@ fn test_open_txt_utf8() {
         path.to_str().unwrap()
     ).expect("Failed to open UTF-8 TXT");
     assert_eq!(doc.chapter_count(), 1);
-    let ch = doc.load_chapter(0);
+    let ch = doc.load_chapter(0, false);
     let text: String = ch.blocks.iter()
         .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
@@ -32,7 +32,7 @@ fn test_open_txt_gbk_small() {
     let doc = folix::app::engines::reflow_engine::ReflowDocument::open(
         path.to_str().unwrap()
     ).expect("Failed to open GBK TXT");
-    let ch = doc.load_chapter(0);
+    let ch = doc.load_chapter(0, false);
     let text: String = ch.blocks.iter()
         .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
@@ -52,7 +52,7 @@ fn test_open_chinese_novel() {
     // Concatenate all chapters' text
     let mut full_text = String::new();
     for i in 0..doc.chapter_count() {
-        let ch = doc.load_chapter(i);
+        let ch = doc.load_chapter(i, false);
         for b in ch.blocks {
             if let ContentBlock::Text(t) = b {
                 full_text.push_str(&t);
@@ -92,7 +92,7 @@ Some ~~strikethrough~~ text.
 
     // Two chapters from # headings (## is not detected by the TXT splitter, but that's OK)
     assert!(doc.chapter_count() >= 2, "Should have at least 2 chapters from # headings, got {}", doc.chapter_count());
-    let ch0 = doc.load_chapter(0);
+    let ch0 = doc.load_chapter(0, false);
     let text0: String = ch0.blocks.iter()
         .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
@@ -103,7 +103,7 @@ Some ~~strikethrough~~ text.
     assert!(!text0.contains("**"), "Bold markers should be stripped: {:?}", text0);
     assert!(!text0.contains('*'), "Italic markers should be stripped: {:?}", text0);
 
-    let ch1 = doc.load_chapter(1);
+    let ch1 = doc.load_chapter(1, false);
     let text1: String = ch1.blocks.iter()
         .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
@@ -128,7 +128,7 @@ More text.
         path.to_str().unwrap()
     ).expect("Failed to open MD with links");
 
-    let ch = doc.load_chapter(0);
+    let ch = doc.load_chapter(0, false);
     let text: String = ch.blocks.iter()
         .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
@@ -227,14 +227,14 @@ fn test_open_docx_simple() {
 
     assert_eq!(doc.chapter_count(), 2, "Should have 2 chapters (heading + body)");
 
-    let ch0 = doc.load_chapter(0);
+    let ch0 = doc.load_chapter(0, false);
     let text0: String = ch0.blocks.iter()
         .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()
         .join("");
     assert!(text0.contains("Hello World"), "Chapter 0 should contain Hello World: {:?}", text0);
 
-    let ch1 = doc.load_chapter(1);
+    let ch1 = doc.load_chapter(1, false);
     let text1: String = ch1.blocks.iter()
         .map(|b| match b { ContentBlock::Text(t) => t.as_str(), _ => "" })
         .collect::<Vec<&str>>()

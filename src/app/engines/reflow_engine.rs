@@ -5,7 +5,7 @@ use std::io::Read;
 #[derive(Clone)]
 enum RawBlock {
     Text(String),
-    ImageRef(String),
+    ImageRef(String, Option<u32>, Option<u32>), // href, html_width, html_height
 }
 
 pub struct ReflowDocument {
@@ -688,6 +688,8 @@ impl ReflowDocument {
                                     raw_bytes: bytes,
                                     width: w,
                                     height: h,
+                                    html_width: None,
+                                    html_height: None,
                                 });
                             }
                             Err(e) => {
@@ -706,8 +708,13 @@ impl ReflowDocument {
                         let trimmed = t.trim().to_string();
                         if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
                     }
-                    RawBlock::ImageRef(href) => {
-                        image_cache.get(&href).map(|img| ContentBlock::Image(img.clone()))
+                    RawBlock::ImageRef(href, html_w, html_h) => {
+                        image_cache.get(&href).map(|img| {
+                            let mut cloned = img.clone();
+                            cloned.html_width = html_w;
+                            cloned.html_height = html_h;
+                            ContentBlock::Image(cloned)
+                        })
                     }
                 })
                 .collect();
@@ -726,11 +733,13 @@ impl ReflowDocument {
                         let trimmed = t.trim().to_string();
                         if trimmed.is_empty() { None } else { Some(ContentBlock::Text(trimmed)) }
                     }
-                    RawBlock::ImageRef(_) => {
+                    RawBlock::ImageRef(_, html_w, html_h) => {
                         Some(ContentBlock::Image(StoredImage {
                             raw_bytes: Vec::new(),
                             width: 600,
                             height: 800,
+                            html_width: html_w,
+                            html_height: html_h,
                         }))
                     }
                 })
@@ -774,28 +783,38 @@ impl ReflowDocument {
                         continue;
                     }
 
-                    // <img> and <image> tags → extract src and emit ImageRef
-                    if name.eq_ignore_ascii_case(b"img") || name.eq_ignore_ascii_case(b"image") {
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref().eq_ignore_ascii_case(b"src") {
-                                let src = String::from_utf8_lossy(&attr.value);
-                                if src.starts_with("data:") || src.contains("://") {
-                                    break;
-                                }
-                                let resolved = resolve_path(chapter_href, &src);
-                                let trimmed = current_text.trim().to_string();
-                                if !trimmed.is_empty() {
-                                    blocks.push(RawBlock::Text(trimmed));
-                                    current_text.clear();
-                                }
-                                referenced_hrefs.insert(resolved.clone());
-                                blocks.push(RawBlock::ImageRef(resolved));
-                                break;
-                            }
+                // <img> and <image> tags → extract src and emit ImageRef
+                if name.eq_ignore_ascii_case(b"img") || name.eq_ignore_ascii_case(b"image") {
+                    let mut src = None;
+                    let mut html_w = None;
+                    let mut html_h = None;
+                    for attr in e.attributes().flatten() {
+                        let key = attr.key.as_ref();
+                        if key.eq_ignore_ascii_case(b"src") {
+                            src = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                        } else if key.eq_ignore_ascii_case(b"width") {
+                            html_w = String::from_utf8_lossy(&attr.value).parse::<u32>().ok();
+                        } else if key.eq_ignore_ascii_case(b"height") {
+                            html_h = String::from_utf8_lossy(&attr.value).parse::<u32>().ok();
                         }
-                        buf.clear();
-                        continue;
                     }
+                    if let Some(src_str) = src {
+                        if src_str.starts_with("data:") || src_str.contains("://") {
+                            buf.clear();
+                            continue;
+                        }
+                        let resolved = resolve_path(chapter_href, &src_str);
+                        let trimmed = current_text.trim().to_string();
+                        if !trimmed.is_empty() {
+                            blocks.push(RawBlock::Text(trimmed));
+                            current_text.clear();
+                        }
+                        referenced_hrefs.insert(resolved.clone());
+                        blocks.push(RawBlock::ImageRef(resolved, html_w, html_h));
+                    }
+                    buf.clear();
+                    continue;
+                }
 
                     // <br> and <hr> → line break
                     if name.eq_ignore_ascii_case(b"br") || name.eq_ignore_ascii_case(b"hr") {
@@ -921,7 +940,7 @@ impl ReflowLayout for ReflowDocument {
                     if trimmed.is_empty() { None }
                     else { Some(BlockInfo { is_image: false, char_count: trimmed.chars().count() }) }
                 }
-                RawBlock::ImageRef(_) => {
+                RawBlock::ImageRef(_, _, _) => {
                     Some(BlockInfo { is_image: true, char_count: 1 })
                 }
             })

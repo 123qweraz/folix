@@ -283,7 +283,8 @@ pub fn render_document(
                             ph_sum += match b {
                                 ContentBlock::Text(t) => cpl_heuristic(t, text_avail_w, font_size, line_h),
                                 ContentBlock::Image(img) => {
-                                    let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
+                                    let display_w = img.html_width.unwrap_or(img.width.max(1));
+                                    let max_w = (avail_w.min(600.0)).min(display_w as f32);
                                     let aspect = img.width as f32 / img.height.max(1) as f32;
                                     max_w / aspect + 8.0
                                 }
@@ -396,7 +397,8 @@ pub fn render_document(
                     2 => {
                         if let Some(Some(ch)) = reading.chapter_cache.get(row.ci) {
                             if let Some(ContentBlock::Image(img)) = ch.blocks.get(row.bi) {
-                                let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
+                                let display_w = img.html_width.unwrap_or(img.width.max(1));
+                                let max_w = (avail_w.min(600.0)).min(display_w as f32);
                                 let aspect = img.width as f32 / img.height.max(1) as f32;
                                 row.height = max_w / aspect + 8.0;
                             }
@@ -531,10 +533,11 @@ pub fn render_document(
                                     eprintln!("[dbg] ci={} bi={} it={} kind={}", rows[i].ci, rows[i].bi, rows[i].it, kind);
                                 }
                             }
+                            let placeholder_w = img_data.and_then(|img| img.html_width.map(|w| w as f32)).unwrap_or(img_max_w);
                             let aspect = img_data.map_or(1.0, |img| {
                                 if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 }
                             });
-                            let p_h = img_max_w / aspect.max(0.01);
+                            let p_h = placeholder_w / aspect.max(0.01);
                             if reading.show_line_numbers {
                                 painter.text(
                                     egui::pos2(content_left + 4.0, rect.top()),
@@ -547,7 +550,7 @@ pub fn render_document(
                             painter.rect_filled(
                                 egui::Rect::from_min_size(
                                     egui::pos2(content_left + gutter_w, rect.top() + 4.0),
-                                    egui::vec2(img_max_w, p_h),
+                                    egui::vec2(placeholder_w, p_h),
                                 ),
                                 4.0,
                                 egui::Color32::from_gray(230),
@@ -570,7 +573,8 @@ pub fn render_document(
                             };
                             let (native_w, native_h) = decoded.dimensions();
                             let aspect = native_w as f32 / native_h as f32;
-                            let display_w = (img_max_w.min(native_w as f32)).ceil() as u32;
+                            let html_display_w = img.html_width.unwrap_or(native_w);
+                            let display_w = (img_max_w.min(html_display_w as f32)).ceil() as u32;
                             let display_h = (display_w as f32 / aspect).ceil() as u32;
                             let resized = if display_w < native_w {
                                 image::imageops::resize(
@@ -605,8 +609,9 @@ pub fn render_document(
                             ContentBlock::Image(img) => img,
                             _ => unreachable!(),
                         };
+                        let display_w = img.html_width.unwrap_or(img.width.max(1));
                         let aspect = img.width as f32 / img.height.max(1) as f32;
-                        let img_w = img_max_w.min(img.width.max(1) as f32);
+                        let img_w = img_max_w.min(display_w as f32);
                         let img_h = img_w / aspect;
                         painter.image(
                             texture.id(),
