@@ -869,6 +869,16 @@ pub fn render_document(
 
         reading.scroll_offset_y = output.state.offset.y;
         reading.scroll_velocity = 0.0;
+
+        if let Some(target) = reading.stream_jump_to.take() {
+            if target > 0 && !reading.layout_cache_rows.is_empty() {
+                jump_to_line(reading, target);
+                // Override the ScrollArea offset by setting a pending scroll for next frame
+                reading.pending_scroll_y = Some(reading.scroll_offset_y);
+            } else {
+                reading.stream_jump_to = Some(target);
+            }
+        }
     }
     eprintln!("[perf] frame: {:?}", _frame_timer.elapsed());
 }

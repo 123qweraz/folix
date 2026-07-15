@@ -55,11 +55,16 @@ impl FolixApp {
         if let Some(ref db) = self.db {
             for tab in &self.state.tabs {
                 if let Some(ref book_id) = tab.book_id {
-                    // Skip tabs that haven't finished positioning (pending stream jump)
                     if tab.modes.reading.stream_jump_to.is_some() {
                         continue;
                     }
-                    let _ = db.save_progress(book_id, tab.modes.page, tab.modes.auto.progress as f64);
+                    let is_fixed = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
+                    let page = if is_fixed {
+                        tab.modes.page
+                    } else {
+                        tab.modes.reading.current_line
+                    };
+                    let _ = db.save_progress(book_id, page, tab.modes.auto.progress as f64);
                 }
             }
         }
@@ -281,16 +286,16 @@ impl FolixApp {
                                 }
                             }
                             // Load progress
-                            if let Ok(Some((saved_page, _))) = db.load_progress(&book_id) {
+                            if let Ok(Some((saved_pos, _))) = db.load_progress(&book_id) {
                                 let is_fixed = d.lock().as_fixed().is_some();
                                 if is_fixed {
                                     let max = d.lock().as_fixed()
                                         .map(|f| f.page_count().saturating_sub(1))
                                         .unwrap_or(0);
-                                    tab.modes.page = saved_page.min(max);
+                                    tab.modes.page = saved_pos.min(max);
                                 } else {
-                                    // Reflow: save for later (paginator not yet created)
-                                    tab.modes.reading.stream_jump_to = Some(saved_page);
+                                    // Reflow: saved_pos stores current_line
+                                    tab.modes.reading.stream_jump_to = Some(saved_pos);
                                 }
                             }
                         }
