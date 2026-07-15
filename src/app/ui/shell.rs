@@ -65,7 +65,9 @@ impl FolixApp {
                     } else {
                         tab.modes.reading.layout.current_line
                     };
-                    let _ = db.save_progress(book_id, page, tab.modes.auto.progress as f64);
+                    if let Err(e) = db.save_progress(book_id, page, tab.modes.auto.progress as f64) {
+                        eprintln!("[warn] save_progress failed: {}", e);
+                    }
                 }
             }
         }
@@ -1272,7 +1274,9 @@ impl FolixApp {
         if is_deep && tab.modes.annotate.dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.sync_annotations(book_id, &tab.modes.annotate.annotations);
+                    if let Err(e) = db.sync_annotations(book_id, &tab.modes.annotate.annotations) {
+                        eprintln!("[warn] sync_annotations failed: {}", e);
+                    }
                     tab.modes.annotate.dirty = false;
                 }
             }
@@ -1282,7 +1286,9 @@ impl FolixApp {
         if tab.modes.reading.vocab_state.vocab_dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.sync_vocabulary(book_id, &tab.modes.reading.vocab_state.vocab);
+                    if let Err(e) = db.sync_vocabulary(book_id, &tab.modes.reading.vocab_state.vocab) {
+                        eprintln!("[warn] sync_vocabulary failed: {}", e);
+                    }
                     tab.modes.reading.vocab_state.vocab_dirty = false;
                 }
             }
@@ -1292,7 +1298,9 @@ impl FolixApp {
         if tab.modes.reading.vocab_state.sentences_dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.sync_sentences(book_id, &tab.modes.reading.vocab_state.sentences);
+                    if let Err(e) = db.sync_sentences(book_id, &tab.modes.reading.vocab_state.sentences) {
+                        eprintln!("[warn] sync_sentences failed: {}", e);
+                    }
                     tab.modes.reading.vocab_state.sentences_dirty = false;
                 }
             }
@@ -1302,7 +1310,9 @@ impl FolixApp {
         if tab.modes.reading.bookmarks_dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.sync_bookmarks(book_id, &tab.modes.reading.bookmarks);
+                    if let Err(e) = db.sync_bookmarks(book_id, &tab.modes.reading.bookmarks) {
+                        eprintln!("[warn] sync_bookmarks failed: {}", e);
+                    }
                     tab.modes.reading.bookmarks_dirty = false;
                 }
             }
