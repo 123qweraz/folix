@@ -1811,4 +1811,8 @@ fn page_jump(tab: &mut crate::app::core::app_state::OpenTab, target: usize) {
     tab.modes.page = target;
     tab.modes.reading.goto_page_text.clear();
     tab.modes.reading.layout.scroll_offset_y = 0.0;
+    if tab.modes.mo_yu.visible {
+        tab.modes.mo_yu.page = target;
+        tab.modes.mo_yu.sentences.clear();
+    }
 }
