@@ -30,7 +30,7 @@ impl Database {
             );
             CREATE TABLE IF NOT EXISTS progress (
                 id TEXT PRIMARY KEY,
-                book_id TEXT NOT NULL,
+                book_id TEXT NOT NULL UNIQUE,
                 page INTEGER NOT NULL DEFAULT 0,
                 progress_pct REAL NOT NULL DEFAULT 0.0,
                 updated_at TEXT NOT NULL
@@ -85,18 +85,32 @@ impl Database {
 
     pub fn save_progress(&self, book_id: &str, page: usize, progress_pct: f64) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO progress (id, book_id, page, progress_pct, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(id) DO UPDATE SET page=excluded.page, progress_pct=excluded.progress_pct, updated_at=excluded.updated_at",
-            params![book_id, book_id, page as i64, progress_pct, now],
-        )?;
+        let existing: Result<String> = self.conn.query_row(
+            "SELECT id FROM progress WHERE book_id = ?1",
+            params![book_id],
+            |row| row.get(0),
+        );
+        match existing {
+            Ok(id) => {
+                self.conn.execute(
+                    "UPDATE progress SET page = ?1, progress_pct = ?2, updated_at = ?3 WHERE id = ?4",
+                    params![page as i64, progress_pct, now, id],
+                )?;
+            }
+            Err(_) => {
+                let id = uuid::Uuid::new_v4().to_string();
+                self.conn.execute(
+                    "INSERT INTO progress (id, book_id, page, progress_pct, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![id, book_id, page as i64, progress_pct, now],
+                )?;
+            }
+        }
         Ok(())
     }
 
     pub fn load_progress(&self, book_id: &str) -> Result<Option<(usize, f64)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT page, progress_pct FROM progress WHERE id = ?1"
+            "SELECT page, progress_pct FROM progress WHERE book_id = ?1"
         )?;
         let mut rows = stmt.query_map(params![book_id], |row| {
             Ok((row.get::<_, i64>(0)? as usize, row.get::<_, f64>(1)?))
