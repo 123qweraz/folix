@@ -126,8 +126,8 @@ impl FixedLayout for PdfDocument {
             let mut cache = self.text_cache.lock();
             cache.insert(page, text.clone());
             if cache.len() > 5 {
-                let oldest = *cache.keys().min().unwrap();
-                cache.remove(&oldest);
+                let key = *cache.keys().next().unwrap();
+                cache.remove(&key);
             }
         }
 
@@ -172,14 +172,18 @@ impl FixedLayout for PdfDocument {
             let mut text_cache = self.text_cache.lock();
             text_cache.insert(page, full_text);
             if text_cache.len() > 5 {
-                let oldest = *text_cache.keys().min().unwrap();
-                text_cache.remove(&oldest);
+                let key = *text_cache.keys().next().unwrap();
+                text_cache.remove(&key);
             }
         }
 
         {
             let mut cache = self.text_positions_cache.lock();
             cache.insert(page, positions.clone());
+            if cache.len() > 32 {
+                let key = *cache.keys().next().unwrap();
+                cache.remove(&key);
+            }
         }
 
         positions
@@ -232,8 +236,8 @@ impl FixedLayout for PdfDocument {
             let mut cache = self.render_cache.lock();
             cache.insert(page, (scale, rendered.clone()));
             if cache.len() > 32 {
-                let oldest = *cache.keys().min().unwrap();
-                cache.remove(&oldest);
+                let key = *cache.keys().next().unwrap();
+                cache.remove(&key);
             }
         }
         Some(rendered)
@@ -291,8 +295,8 @@ impl FixedLayout for PdfDocument {
         let mut cache = self.texture_handles.lock();
         cache.insert(page, (scale.to_bits(), handle));
         if cache.len() > 32 {
-            let oldest = *cache.keys().min().unwrap();
-            cache.remove(&oldest);
+            let key = *cache.keys().next().unwrap();
+            cache.remove(&key);
         }
     }
 }
