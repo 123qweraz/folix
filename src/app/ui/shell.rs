@@ -55,14 +55,14 @@ impl FolixApp {
         if let Some(ref db) = self.db {
             for tab in &self.state.tabs {
                 if let Some(ref book_id) = tab.book_id {
-                    if tab.modes.reading.stream_jump_to.is_some() {
+                    if tab.modes.reading.layout.stream_jump_to.is_some() {
                         continue;
                     }
                     let is_fixed = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
                     let page = if is_fixed {
                         tab.modes.page
                     } else {
-                        tab.modes.reading.current_line
+                        tab.modes.reading.layout.current_line
                     };
                     let _ = db.save_progress(book_id, page, tab.modes.auto.progress as f64);
                 }
@@ -266,7 +266,7 @@ impl FolixApp {
                             // Load vocabulary
                             if let Ok(rows) = db.list_vocabulary(&book_id) {
                                 for (id, word, context, definition, page) in rows {
-                                    tab.modes.reading.vocab.push(Vocabulary {
+                                    tab.modes.reading.vocab_state.vocab.push(Vocabulary {
                                         id,
                                         word,
                                         context_sentence: context,
@@ -278,7 +278,7 @@ impl FolixApp {
                             // Load sentences
                             if let Ok(rows) = db.list_sentences(&book_id) {
                                 for (id, text, page) in rows {
-                                    tab.modes.reading.sentences.push(Sentence_ {
+                                    tab.modes.reading.vocab_state.sentences.push(Sentence_ {
                                         id,
                                         text,
                                         page,
@@ -295,7 +295,7 @@ impl FolixApp {
                                     tab.modes.page = saved_pos.min(max);
                                 } else {
                                     // Reflow: saved_pos stores current_line
-                                    tab.modes.reading.stream_jump_to = Some(saved_pos);
+                                    tab.modes.reading.layout.stream_jump_to = Some(saved_pos);
                                 }
                             }
                         }
@@ -305,9 +305,9 @@ impl FolixApp {
 
             // Handle pending jump for reflow documents
             if let Some(tab) = self.state.current_tab_mut() {
-                if let Some(target) = tab.modes.reading.stream_jump_to {
+                if let Some(target) = tab.modes.reading.layout.stream_jump_to {
                     let max = page_count_for_tab(tab).saturating_sub(1);
-                    tab.modes.reading.stream_page_end = target.min(max);
+                    tab.modes.reading.layout.stream_page_end = target.min(max);
                 }
             }
 
@@ -529,7 +529,7 @@ impl eframe::App for FolixApp {
         if arr_dn || arr_up {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = if arr_dn { speed } else { -speed };
+                    tab.modes.reading.layout.scroll_velocity = if arr_dn { speed } else { -speed };
                 }
             }
         }
@@ -540,7 +540,7 @@ impl eframe::App for FolixApp {
         if space_dn || space_up {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = if space_dn { speed } else { -speed };
+                    tab.modes.reading.layout.scroll_velocity = if space_dn { speed } else { -speed };
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
@@ -553,7 +553,7 @@ impl eframe::App for FolixApp {
         if self.shortcut(ctx, SA::ScrollDown) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = speed;
+                    tab.modes.reading.layout.scroll_velocity = speed;
                 } else {
                     let max = page_count_for_tab(tab).saturating_sub(1);
                     let cur = tab.modes.page;
@@ -565,7 +565,7 @@ impl eframe::App for FolixApp {
         if self.shortcut(ctx, SA::ScrollUp) {
             if let Some(tab) = self.state.current_tab_mut() {
                 if tab.modes.reading_layout == ReadingLayout::Scroll {
-                    tab.modes.reading.scroll_velocity = -speed;
+                    tab.modes.reading.layout.scroll_velocity = -speed;
                 } else if tab.modes.page > 0 { page_jump(tab, tab.modes.page - 1); }
             }
         }
@@ -1240,26 +1240,26 @@ impl FolixApp {
 
         // Handle pending vocabulary/sentence additions from context menu
         if let Some(word) = tab.modes.reading.selection.pending_vocab.take() {
-            tab.modes.reading.vocab.push(Vocabulary {
+            tab.modes.reading.vocab_state.vocab.push(Vocabulary {
                 id: uuid::Uuid::new_v4().to_string(),
                 word,
                 context_sentence: None,
                 definition: None,
                 page: tab.modes.page,
             });
-            tab.modes.reading.vocab_dirty = true;
+            tab.modes.reading.vocab_state.vocab_dirty = true;
             // Clear text selection after adding (both fixed and reflow)
             tab.modes.reading.selection.selected_word_indices.clear();
             tab.modes.reading.selection.char_anchor = None;
             tab.modes.reading.selection.char_focus = None;
         }
         if let Some(text) = tab.modes.reading.selection.pending_sentence.take() {
-            tab.modes.reading.sentences.push(Sentence_ {
+            tab.modes.reading.vocab_state.sentences.push(Sentence_ {
                 id: uuid::Uuid::new_v4().to_string(),
                 text,
                 page: tab.modes.page,
             });
-            tab.modes.reading.sentences_dirty = true;
+            tab.modes.reading.vocab_state.sentences_dirty = true;
             tab.modes.reading.selection.selected_word_indices.clear();
             tab.modes.reading.selection.char_anchor = None;
             tab.modes.reading.selection.char_focus = None;
@@ -1276,21 +1276,21 @@ impl FolixApp {
         }
 
         // Sync vocabulary
-        if tab.modes.reading.vocab_dirty {
+        if tab.modes.reading.vocab_state.vocab_dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.sync_vocabulary(book_id, &tab.modes.reading.vocab);
-                    tab.modes.reading.vocab_dirty = false;
+                    let _ = db.sync_vocabulary(book_id, &tab.modes.reading.vocab_state.vocab);
+                    tab.modes.reading.vocab_state.vocab_dirty = false;
                 }
             }
         }
 
         // Sync sentences
-        if tab.modes.reading.sentences_dirty {
+        if tab.modes.reading.vocab_state.sentences_dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.sync_sentences(book_id, &tab.modes.reading.sentences);
-                    tab.modes.reading.sentences_dirty = false;
+                    let _ = db.sync_sentences(book_id, &tab.modes.reading.vocab_state.sentences);
+                    tab.modes.reading.vocab_state.sentences_dirty = false;
                 }
             }
         }
@@ -1429,20 +1429,20 @@ impl FolixApp {
                 }
 
                     // ── Line display + jump (reflow + line numbers) ──
-                    if !is_fixed_doc && tab.modes.reading.show_line_numbers {
-                        let total = tab.modes.reading.total_lines;
+                    if !is_fixed_doc && tab.modes.reading.layout.show_line_numbers {
+                        let total = tab.modes.reading.layout.total_lines;
                         if total > 0 && show_page {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(format!("{}/{}", tab.modes.reading.current_line, total));
-                            ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.goto_line_text)
+                            ui.label(format!("{}/{}", tab.modes.reading.layout.current_line, total));
+                            ui.add(egui::TextEdit::singleline(&mut tab.modes.reading.layout.goto_line_text)
                                 .desired_width(50.0)
                                 .font(egui::TextStyle::Monospace)
                                 .hint_text("跳转"));
                             if ui.input(|i| i.key_pressed(egui::Key::Enter))
-                                && tab.modes.reading.goto_line_text.len() > 0
+                                && tab.modes.reading.layout.goto_line_text.len() > 0
                             {
-                                let input = tab.modes.reading.goto_line_text.clone();
-                                tab.modes.reading.goto_line_text.clear();
+                                let input = tab.modes.reading.layout.goto_line_text.clone();
+                                tab.modes.reading.layout.goto_line_text.clear();
                                 if let Ok(line) = input.trim().parse::<usize>() {
                                     mode_ui::jump_to_line(&mut tab.modes.reading, line.max(1));
                                 }
@@ -1477,15 +1477,15 @@ impl FolixApp {
                             }
                         } else {
                             let up_btn = ui.add_enabled(
-                                tab.modes.reading.scroll_offset_y > 0.0,
+                                tab.modes.reading.layout.scroll_offset_y > 0.0,
                                 egui::Button::new("▲"),
                             );
                             if up_btn.clicked() || up_btn.is_pointer_button_down_on() {
-                                tab.modes.reading.scroll_velocity = -speed;
+                                tab.modes.reading.layout.scroll_velocity = -speed;
                             }
                             let dn_btn = ui.button("▼");
                             if dn_btn.clicked() || dn_btn.is_pointer_button_down_on() {
-                                tab.modes.reading.scroll_velocity = speed;
+                                tab.modes.reading.layout.scroll_velocity = speed;
                             }
                         }
                         ui.separator();
@@ -1558,9 +1558,9 @@ impl FolixApp {
                         }
 
                         if !is_fixed_doc {
-                            let show_ln = tab.modes.reading.show_line_numbers;
+                            let show_ln = tab.modes.reading.layout.show_line_numbers;
                             if ui.selectable_label(show_ln, crate::app::i18n::tr(lng, "Line Numbers")).clicked() {
-                                tab.modes.reading.show_line_numbers = !show_ln;
+                                tab.modes.reading.layout.show_line_numbers = !show_ln;
                             }
                         }
                         ui.separator();
@@ -1793,9 +1793,9 @@ fn show_in_folder(path: &str) {
 fn page_jump(tab: &mut crate::app::core::app_state::OpenTab, target: usize) {
     let max = page_count_for_tab(tab).saturating_sub(1);
     let target = target.min(max);
-    tab.modes.reading.stream_jump_to = Some(target);
-    tab.modes.reading.stream_page_end = tab.modes.reading.stream_page_end.max(target);
+    tab.modes.reading.layout.stream_jump_to = Some(target);
+    tab.modes.reading.layout.stream_page_end = tab.modes.reading.layout.stream_page_end.max(target);
     tab.modes.page = target;
     tab.modes.reading.goto_page_text.clear();
-    tab.modes.reading.scroll_offset_y = 0.0;
+    tab.modes.reading.layout.scroll_offset_y = 0.0;
 }

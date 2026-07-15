@@ -143,37 +143,17 @@ pub enum SidebarSection {
 }
 
 #[derive(Clone)]
-pub struct ReadingState {
-    pub view_mode: ViewMode,
-    pub show_sidebar: bool,
-    pub sidebar_width: f32,
-    pub sidebar_section: SidebarSection,
-    pub show_add_vocab_dialog: bool,
-    pub add_vocab_text: String,
-    pub show_goto_dialog: bool,
-    pub goto_page_text: String,
-    pub search: SearchState,
-    pub bookmarks: Vec<Bookmark>,
-    pub bookmarks_dirty: bool,
-    pub scroll_offset_y: f32,
-    pub total_height: f32,
-    pub selection: SelectionState,
+pub struct LayoutState {
     /// Reflow continuous stream: number of pages loaded into the scroll stream.
     pub stream_page_end: usize,
     /// Reflow stream: Y offset of each page's first rendered element.
     pub stream_page_y_starts: Vec<f32>,
     /// Pending jump-to-page request (consumed by renderer).
     pub stream_jump_to: Option<usize>,
-    /// Velocity-based scroll (px/s). Positive = down, negative = up. 0 = idle.
-    pub scroll_velocity: f32,
     /// Cached chapter data for reflow stream (loaded once, not per-frame).
     pub chapter_cache: Vec<Option<crate::app::engines::Chapter>>,
-    /// Vocabulary (生词本) for the current book.
-    pub vocab: Vec<Vocabulary>,
-    pub vocab_dirty: bool,
-    /// Sentence collection (句子收藏) for the current book.
-    pub sentences: Vec<Sentence_>,
-    pub sentences_dirty: bool,
+    /// Velocity-based scroll (px/s). Positive = down, negative = up. 0 = idle.
+    pub scroll_velocity: f32,
     /// Max text column width (0 = unlimited).
     pub max_text_width: f32,
     /// Show line numbers for reflow documents.
@@ -198,6 +178,34 @@ pub struct ReadingState {
     pub pending_scroll_y: Option<f32>,
     /// Next chapter index for Phase 2 image-only loading.
     pub next_img_load_ci: usize,
+    pub scroll_offset_y: f32,
+    pub total_height: f32,
+}
+
+#[derive(Clone)]
+pub struct VocabState {
+    pub show_add_vocab_dialog: bool,
+    pub add_vocab_text: String,
+    pub vocab: Vec<Vocabulary>,
+    pub vocab_dirty: bool,
+    pub sentences: Vec<Sentence_>,
+    pub sentences_dirty: bool,
+}
+
+#[derive(Clone)]
+pub struct ReadingState {
+    pub view_mode: ViewMode,
+    pub show_sidebar: bool,
+    pub sidebar_width: f32,
+    pub sidebar_section: SidebarSection,
+    pub show_goto_dialog: bool,
+    pub goto_page_text: String,
+    pub search: SearchState,
+    pub bookmarks: Vec<Bookmark>,
+    pub bookmarks_dirty: bool,
+    pub selection: SelectionState,
+    pub layout: LayoutState,
+    pub vocab_state: VocabState,
 }
 
 #[derive(Clone)]
@@ -367,39 +375,43 @@ impl TabModes {
                 show_sidebar: false,
                 sidebar_width: 260.0,
                 sidebar_section: SidebarSection::TOC,
-                show_add_vocab_dialog: false,
-                add_vocab_text: String::new(),
                 show_goto_dialog: false,
                 goto_page_text: String::new(),
                 search: SearchState::new(),
                 bookmarks: vec![],
                 bookmarks_dirty: false,
-                scroll_offset_y: 0.0,
-                total_height: 0.0,
                 selection: SelectionState::default(),
-                stream_page_end: 0,
-                stream_page_y_starts: vec![],
-                stream_jump_to: None,
-                scroll_velocity: 0.0,
-                chapter_cache: vec![],
-                vocab: vec![],
-                vocab_dirty: false,
-                sentences: vec![],
-                sentences_dirty: false,
-                max_text_width: 720.0,
-                show_line_numbers: false,
-                layout_cache_rows: vec![],
-                layout_cache_starts: vec![],
-                layout_cache_font_size: 0.0,
-                layout_cache_avail_w: 0.0,
-                layout_cache_show_ln: false,
-                layout_cache_pending_avail_w: 0.0,
-                layout_cache_gen: 0,
-                current_line: 0,
-                total_lines: 0,
-                goto_line_text: String::new(),
-                pending_scroll_y: None,
-                next_img_load_ci: 0,
+                layout: LayoutState {
+                    stream_page_end: 0,
+                    stream_page_y_starts: vec![],
+                    stream_jump_to: None,
+                    scroll_velocity: 0.0,
+                    chapter_cache: vec![],
+                    max_text_width: 720.0,
+                    show_line_numbers: false,
+                    layout_cache_rows: vec![],
+                    layout_cache_starts: vec![],
+                    layout_cache_font_size: 0.0,
+                    layout_cache_avail_w: 0.0,
+                    layout_cache_show_ln: false,
+                    layout_cache_pending_avail_w: 0.0,
+                    layout_cache_gen: 0,
+                    current_line: 0,
+                    total_lines: 0,
+                    goto_line_text: String::new(),
+                    pending_scroll_y: None,
+                    next_img_load_ci: 0,
+                    scroll_offset_y: 0.0,
+                    total_height: 0.0,
+                },
+                vocab_state: VocabState {
+                    show_add_vocab_dialog: false,
+                    add_vocab_text: String::new(),
+                    vocab: vec![],
+                    vocab_dirty: false,
+                    sentences: vec![],
+                    sentences_dirty: false,
+                },
             },
             auto: AutoState {
                 playing: false,

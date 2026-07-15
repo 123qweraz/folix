@@ -79,13 +79,13 @@ pub fn render_document(
                             }
                         }
                         ReadingLayout::Scroll => {
-                            reading.scroll_offset_y += dt * 200.0 * aut.speed;
+                            reading.layout.scroll_offset_y += dt * 200.0 * aut.speed;
                         }
                     }
                 }
             } else {
                 // Reflow (EPUB/TXT) auto-scroll: drive velocity like the ▼ button does.
-                reading.scroll_velocity = 200.0 * aut.speed;
+                reading.layout.scroll_velocity = 200.0 * aut.speed;
             }
             if let Some(ctx) = ctx {
                 ctx.request_repaint();
@@ -128,37 +128,37 @@ pub fn render_document(
             }
             ReadingLayout::Scroll => {
                 let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
-                if reading.scroll_velocity != 0.0 {
+                if reading.layout.scroll_velocity != 0.0 {
                     let dt = ui.input(|i| i.unstable_dt);
-                    reading.scroll_offset_y =
-                        (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
+                    reading.layout.scroll_offset_y =
+                        (reading.layout.scroll_offset_y + reading.layout.scroll_velocity * dt).max(0.0);
                 }
-                render_scroll(ui, document, page, *scale, *view_rotation, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights, doc_id);
-                reading.scroll_velocity = 0.0;
+                render_scroll(ui, document, page, *scale, *view_rotation, total, &mut reading.layout.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights, doc_id);
+                reading.layout.scroll_velocity = 0.0;
             }
         }
     } else {
         drop(doc);
 
-        if reading.chapter_cache.is_empty() {
+        if reading.layout.chapter_cache.is_empty() {
             let doc_handle = document.lock();
             if let Some(reflow) = doc_handle.as_reflow() {
                 let n = reflow.chapter_count();
                 for ci in 0..n {
-                    reading.chapter_cache.push(Some(reflow.load_chapter(ci, false)));
+                    reading.layout.chapter_cache.push(Some(reflow.load_chapter(ci, false)));
                 }
             }
-            reading.next_img_load_ci = 0;
+            reading.layout.next_img_load_ci = 0;
         }
 
         // Phase 2: load images (1 chapter/frame) after all text is loaded
         {
             let doc_guard = document.lock();
             if let Some(reflow) = doc_guard.as_reflow() {
-                while reading.next_img_load_ci < reading.chapter_cache.len() {
-                    let ci = reading.next_img_load_ci;
-                    reading.next_img_load_ci += 1;
-                    if let Some(Some(ch)) = reading.chapter_cache.get(ci) {
+                while reading.layout.next_img_load_ci < reading.layout.chapter_cache.len() {
+                    let ci = reading.layout.next_img_load_ci;
+                    reading.layout.next_img_load_ci += 1;
+                    if let Some(Some(ch)) = reading.layout.chapter_cache.get(ci) {
                         let has_empty_images = ch.blocks.iter().any(|b| {
                             if let ContentBlock::Image(img) = b { img.raw_bytes.is_empty() } else { false }
                         });
@@ -167,9 +167,9 @@ pub fn render_document(
                             let ch = reflow.load_chapter(ci, true);
                             let img_cnt = ch.blocks.iter().filter(|b| matches!(b, ContentBlock::Image(_))).count();
                             eprintln!("[perf] loaded ch{} images: {:?} imgs={}", ci, t0.elapsed(), img_cnt);
-                            reading.chapter_cache[ci] = Some(ch);
-                            reading.layout_cache_rows.clear();
-                            reading.layout_cache_starts.clear();
+                            reading.layout.chapter_cache[ci] = Some(ch);
+                            reading.layout.layout_cache_rows.clear();
+                            reading.layout.layout_cache_starts.clear();
                             break; // 1 chapter per frame
                         }
                     }
@@ -181,13 +181,13 @@ pub fn render_document(
             .id_salt("reflow_stream")
             .auto_shrink([false; 2]);
 
-        if reading.scroll_velocity != 0.0 {
+        if reading.layout.scroll_velocity != 0.0 {
             let dt = ui.input(|i| i.unstable_dt);
-            reading.scroll_offset_y =
-                (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
+            reading.layout.scroll_offset_y =
+                (reading.layout.scroll_offset_y + reading.layout.scroll_velocity * dt).max(0.0);
         }
-        let init_offset = reading.pending_scroll_y.take().unwrap_or(reading.scroll_offset_y);
-        reading.scroll_offset_y = init_offset;
+        let init_offset = reading.layout.pending_scroll_y.take().unwrap_or(reading.layout.scroll_offset_y);
+        reading.layout.scroll_offset_y = init_offset;
         sa = sa.vertical_scroll_offset(init_offset);
 
         let font_size = 16.0 * *scale;
@@ -195,10 +195,10 @@ pub fn render_document(
         let output;
         // ---- Unified virtual scrolling (layout cache + painter + interaction) ----
         let full_w = ui.available_width().max(1.0);
-        let mw = reading.max_text_width;
+        let mw = reading.layout.max_text_width;
         let avail_w = if mw > 0.0 { full_w.min(mw) } else { full_w };
         let x_off = ((full_w - avail_w) * 0.5).max(0.0);
-        let gutter_w = if reading.show_line_numbers { 65.0 } else { 0.0 };
+        let gutter_w = if reading.layout.show_line_numbers { 65.0 } else { 0.0 };
         let text_avail_w = (avail_w - gutter_w).max(1.0);
         let font_id = egui::FontId::proportional(font_size);
         let line_h = font_size * 1.4;
@@ -240,16 +240,16 @@ pub fn render_document(
         // Lazy update: recompute galley for rows that scrolled into view
         // (runs BEFORE rows/row_starts borrow; fixes rows whose galley is None
         //  because they were outside the visible range during the last partial build)
-        if reading.layout_cache_gen > 0 {
-            let gen = reading.layout_cache_gen;
-            let cull_min = (reading.scroll_offset_y - ui.available_height() * 0.5).max(0.0);
-            let cull_max = reading.scroll_offset_y + ui.available_height() * 1.5;
-            let first = reading.layout_cache_starts.partition_point(|&y| y < cull_min);
-            let last = reading.layout_cache_starts.partition_point(|&y| y < cull_max)
-                .min(reading.layout_cache_rows.len());
+        if reading.layout.layout_cache_gen > 0 {
+            let gen = reading.layout.layout_cache_gen;
+            let cull_min = (reading.layout.scroll_offset_y - ui.available_height() * 0.5).max(0.0);
+            let cull_max = reading.layout.scroll_offset_y + ui.available_height() * 1.5;
+            let first = reading.layout.layout_cache_starts.partition_point(|&y| y < cull_min);
+            let last = reading.layout.layout_cache_starts.partition_point(|&y| y < cull_max)
+                .min(reading.layout.layout_cache_rows.len());
             let mut any_change = false;
             for i in first..last {
-                let row = &mut reading.layout_cache_rows[i];
+                let row = &mut reading.layout.layout_cache_rows[i];
                 if (row.it == 1 || row.it == 4) && !row.text.is_empty() && row.galley.is_none() && row.layout_gen == gen {
                     let actual_fs = heading_font_size(row.heading_level, font_size);
                     let actual_fid = egui::FontId::new(actual_fs, font_family_for_row(row.bold, row.italic));
@@ -263,50 +263,50 @@ pub fn render_document(
                 }
             }
             if any_change {
-                let mut acc_y = if first > 0 { reading.layout_cache_starts[first] } else { 0.0 };
-                for i in first..reading.layout_cache_rows.len() {
-                    reading.layout_cache_starts[i] = acc_y;
-                    acc_y += reading.layout_cache_rows[i].height;
+                let mut acc_y = if first > 0 { reading.layout.layout_cache_starts[first] } else { 0.0 };
+                for i in first..reading.layout.layout_cache_rows.len() {
+                    reading.layout.layout_cache_starts[i] = acc_y;
+                    acc_y += reading.layout.layout_cache_rows[i].height;
                 }
-                reading.total_height = acc_y;
+                reading.layout.total_height = acc_y;
             }
         }
 
         // ---- Cache selection ----
-        let cache_hit = reading.layout_cache_font_size == font_size
-            && reading.layout_cache_avail_w == avail_w
-            && reading.layout_cache_show_ln == reading.show_line_numbers
-            && !reading.layout_cache_rows.is_empty();
+        let cache_hit = reading.layout.layout_cache_font_size == font_size
+            && reading.layout.layout_cache_avail_w == avail_w
+            && reading.layout.layout_cache_show_ln == reading.layout.show_line_numbers
+            && !reading.layout.layout_cache_rows.is_empty();
 
         if cache_hit {
-            rows = &reading.layout_cache_rows;
-            row_starts = &reading.layout_cache_starts;
-        } else if reading.layout_cache_font_size == font_size
-            && reading.layout_cache_show_ln == reading.show_line_numbers
-            && !reading.layout_cache_rows.is_empty()
-            && reading.layout_cache_pending_avail_w != avail_w
+            rows = &reading.layout.layout_cache_rows;
+            row_starts = &reading.layout.layout_cache_starts;
+        } else if reading.layout.layout_cache_font_size == font_size
+            && reading.layout.layout_cache_show_ln == reading.layout.show_line_numbers
+            && !reading.layout.layout_cache_rows.is_empty()
+            && reading.layout.layout_cache_pending_avail_w != avail_w
         {
             // Resize throttle: skip rebuild during active drag
-            reading.layout_cache_pending_avail_w = avail_w;
-            rows = &reading.layout_cache_rows;
-            row_starts = &reading.layout_cache_starts;
+            reading.layout.layout_cache_pending_avail_w = avail_w;
+            rows = &reading.layout.layout_cache_rows;
+            row_starts = &reading.layout.layout_cache_starts;
         } else {
             // Rebuild: first load, or font_size / show_ln / avail_w changed
-            reading.layout_cache_pending_avail_w = 0.0;
-            reading.layout_cache_gen = reading.layout_cache_gen.wrapping_add(1);
-            reading.layout_cache_font_size = font_size;
-            reading.layout_cache_avail_w = avail_w;
-            reading.layout_cache_show_ln = reading.show_line_numbers;
-            let gen = reading.layout_cache_gen;
+            reading.layout.layout_cache_pending_avail_w = 0.0;
+            reading.layout.layout_cache_gen = reading.layout.layout_cache_gen.wrapping_add(1);
+            reading.layout.layout_cache_font_size = font_size;
+            reading.layout.layout_cache_avail_w = avail_w;
+            reading.layout.layout_cache_show_ln = reading.layout.show_line_numbers;
+            let gen = reading.layout.layout_cache_gen;
 
             // First load: create all rows from scratch with cpl-estimated heights
-            if reading.layout_cache_rows.is_empty() {
+            if reading.layout.layout_cache_rows.is_empty() {
                 let mut new_rows: Vec<LayoutRow> = Vec::new();
                 let mut global_line: usize = 0;
                 // Compute average loaded chapter height for placeholder sizing
                 let mut ph_sum = 0.0f32;
                 let mut ph_cnt = 0usize;
-                for (_, ch_opt) in reading.chapter_cache.iter().enumerate() {
+                for (_, ch_opt) in reading.layout.chapter_cache.iter().enumerate() {
                     if let Some(ch) = ch_opt.as_ref() {
                         for b in &ch.blocks {
                             ph_sum += match b {
@@ -323,7 +323,7 @@ pub fn render_document(
                 }
                 let ph = if ph_cnt > 0 { (ph_sum / ph_cnt as f32).max(200.0) } else { 600.0 };
 
-                for (ci, chapter_opt) in reading.chapter_cache.iter().enumerate() {
+                for (ci, chapter_opt) in reading.layout.chapter_cache.iter().enumerate() {
                     if ci > 0 {
                         new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen, heading_level: 0, bold: false, italic: false, list_item: false, target_ci: None });
                     }
@@ -410,16 +410,16 @@ pub fn render_document(
                     new_starts.push(acc_y);
                     acc_y += r.height;
                 }
-                reading.layout_cache_rows = new_rows;
-                reading.layout_cache_starts = new_starts;
+                reading.layout.layout_cache_rows = new_rows;
+                reading.layout.layout_cache_starts = new_starts;
             }
 
             // Save top row index
-            let top_idx = if reading.layout_cache_rows.len() > 0 {
-                reading.layout_cache_starts
-                    .partition_point(|&y| y <= reading.scroll_offset_y)
+            let top_idx = if reading.layout.layout_cache_rows.len() > 0 {
+                reading.layout.layout_cache_starts
+                    .partition_point(|&y| y <= reading.layout.scroll_offset_y)
                     .saturating_sub(1)
-                    .min(reading.layout_cache_rows.len().saturating_sub(1))
+                    .min(reading.layout.layout_cache_rows.len().saturating_sub(1))
             } else {
                 0
             };
@@ -427,15 +427,15 @@ pub fn render_document(
             // Estimate visible range
             let approx_vh = ui.available_height();
             let margin = approx_vh * 0.5;
-            let cull_min = (reading.scroll_offset_y - margin).max(0.0);
-            let cull_max = reading.scroll_offset_y + approx_vh + margin;
-            let vis_first = reading.layout_cache_starts.partition_point(|&y| y < cull_min);
-            let vis_last = reading.layout_cache_starts.partition_point(|&y| y < cull_max)
-                .min(reading.layout_cache_rows.len());
+            let cull_min = (reading.layout.scroll_offset_y - margin).max(0.0);
+            let cull_max = reading.layout.scroll_offset_y + approx_vh + margin;
+            let vis_first = reading.layout.layout_cache_starts.partition_point(|&y| y < cull_min);
+            let vis_last = reading.layout.layout_cache_starts.partition_point(|&y| y < cull_max)
+                .min(reading.layout.layout_cache_rows.len());
 
             // Update heights for ALL rows (cpl fast path for non-visible, exact for visible)
-            for i in 0..reading.layout_cache_rows.len() {
-                let row = &mut reading.layout_cache_rows[i];
+            for i in 0..reading.layout.layout_cache_rows.len() {
+                let row = &mut reading.layout.layout_cache_rows[i];
                 row.layout_gen = gen;
                 match row.it {
                     1 | 4 => {
@@ -459,7 +459,7 @@ pub fn render_document(
                         }
                     }
                     2 => {
-                        if let Some(Some(ch)) = reading.chapter_cache.get(row.ci) {
+                        if let Some(Some(ch)) = reading.layout.chapter_cache.get(row.ci) {
                             if let Some(ContentBlock::Image(img)) = ch.blocks.get(row.bi) {
                                 let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
                                 let aspect = img.width as f32 / img.height.max(1) as f32;
@@ -475,28 +475,28 @@ pub fn render_document(
 
             // Recompute row_starts from scratch, fix scroll_offset_y
             let mut acc_y = 0.0;
-            for i in 0..reading.layout_cache_rows.len() {
-                reading.layout_cache_starts[i] = acc_y;
-                acc_y += reading.layout_cache_rows[i].height;
+            for i in 0..reading.layout.layout_cache_rows.len() {
+                reading.layout.layout_cache_starts[i] = acc_y;
+                acc_y += reading.layout.layout_cache_rows[i].height;
             }
-            if top_idx < reading.layout_cache_rows.len() {
-                reading.scroll_offset_y = reading.layout_cache_starts[top_idx];
+            if top_idx < reading.layout.layout_cache_rows.len() {
+                reading.layout.scroll_offset_y = reading.layout.layout_cache_starts[top_idx];
             }
-            reading.total_height = acc_y;
+            reading.layout.total_height = acc_y;
 
-            rows = &reading.layout_cache_rows;
-            row_starts = &reading.layout_cache_starts;
+            rows = &reading.layout.layout_cache_rows;
+            row_starts = &reading.layout.layout_cache_starts;
         }
 
-        reading.total_height = row_starts.last().map_or(0.0, |&last| last)
+        reading.layout.total_height = row_starts.last().map_or(0.0, |&last| last)
             + rows.last().map_or(0.0, |r| r.height);
 
-        let chapter_cache_ref = &reading.chapter_cache;
+        let chapter_cache_ref = &reading.layout.chapter_cache;
         let text_color = ui.style().visuals.text_color();
         let img_max_w = (avail_w - gutter_w).min(600.0);
 
         output = sa.show(ui, |ui| {
-            let total_h = reading.total_height;
+            let total_h = reading.layout.total_height;
             let (response, painter) = ui.allocate_painter(
                 egui::vec2(ui.available_width(), total_h.max(0.0)),
                 egui::Sense::empty(),
@@ -539,7 +539,7 @@ pub fn render_document(
                         );
                     }
                     1 => {
-                        if reading.show_line_numbers {
+                        if reading.layout.show_line_numbers {
                             painter.text(
                                 egui::pos2(content_left + 4.0, rect.top()),
                                 egui::Align2::LEFT_TOP,
@@ -576,7 +576,7 @@ pub fn render_document(
                         );
                     }
                     4 => {
-                        if reading.show_line_numbers {
+                        if reading.layout.show_line_numbers {
                             painter.text(
                                 egui::pos2(content_left + 4.0, rect.top()),
                                 egui::Align2::LEFT_TOP,
@@ -615,8 +615,8 @@ pub fn render_document(
                         let is_empty = img_data.map_or(true, |img| img.raw_bytes.is_empty());
                         if is_empty {
                             // On-demand: prioritize this chapter for Phase 2 image loading
-                            if reading.next_img_load_ci > rows[i].ci {
-                                reading.next_img_load_ci = rows[i].ci;
+                            if reading.layout.next_img_load_ci > rows[i].ci {
+                                reading.layout.next_img_load_ci = rows[i].ci;
                             }
                             if let Some(ch) = ch.as_ref() {
                                 if rows[i].bi < ch.blocks.len() {
@@ -632,7 +632,7 @@ pub fn render_document(
                                 if img.height > 0 { img.width as f32 / img.height as f32 } else { 1.0 }
                             });
                             let p_h = img_max_w / aspect.max(0.01);
-                            if reading.show_line_numbers {
+                            if reading.layout.show_line_numbers {
                                 painter.text(
                                     egui::pos2(content_left + 4.0, rect.top()),
                                     egui::Align2::LEFT_TOP,
@@ -694,7 +694,7 @@ pub fn render_document(
                         }
                         let texture = image_cache.get(&key).unwrap();
 
-                        if reading.show_line_numbers {
+                        if reading.layout.show_line_numbers {
                             painter.text(
                                 egui::pos2(content_left + 4.0, rect.top()),
                                 egui::Align2::LEFT_TOP,
@@ -723,7 +723,7 @@ pub fn render_document(
             }
 
             // Interaction layer (only for non-line-number mode)
-            if !reading.show_line_numbers {
+            if !reading.layout.show_line_numbers {
                 let sel = &mut reading.selection;
                 for i in first..last.min(rows.len()) {
                     if rows[i].it == 4 {
@@ -735,12 +735,12 @@ pub fn render_document(
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         if resp.clicked() {
                             if let Some(tci) = rows[i].target_ci {
-                                let target_y = reading.layout_cache_starts.iter()
+                                let target_y = reading.layout.layout_cache_starts.iter()
                                     .zip(rows.iter())
                                     .find(|(_, r)| r.ci >= tci)
                                     .map(|(&y, _)| y)
-                                    .unwrap_or(reading.scroll_offset_y);
-                                reading.pending_scroll_y = Some(target_y);
+                                    .unwrap_or(reading.layout.scroll_offset_y);
+                                reading.layout.pending_scroll_y = Some(target_y);
                             }
                         }
                         continue;
@@ -871,26 +871,26 @@ pub fn render_document(
         // Update current line / total lines for toolbar display
         if !rows.is_empty() {
             let idx = row_starts.partition_point(|&y| y <= output.state.offset.y).min(rows.len());
-            reading.current_line = if idx > 0 && idx <= rows.len() {
+            reading.layout.current_line = if idx > 0 && idx <= rows.len() {
                 rows[idx - 1].line_no
             } else if !rows.is_empty() {
                 rows[0].line_no
             } else {
                 0
             };
-            reading.total_lines = rows.last().map_or(0, |r| r.line_no);
+            reading.layout.total_lines = rows.last().map_or(0, |r| r.line_no);
         }
 
-        reading.scroll_offset_y = output.state.offset.y;
-        reading.scroll_velocity = 0.0;
+        reading.layout.scroll_offset_y = output.state.offset.y;
+        reading.layout.scroll_velocity = 0.0;
 
-        if let Some(target) = reading.stream_jump_to.take() {
-            if target > 0 && !reading.layout_cache_rows.is_empty() {
+        if let Some(target) = reading.layout.stream_jump_to.take() {
+            if target > 0 && !reading.layout.layout_cache_rows.is_empty() {
                 jump_to_line(reading, target);
                 // Override the ScrollArea offset by setting a pending scroll for next frame
-                reading.pending_scroll_y = Some(reading.scroll_offset_y);
+                reading.layout.pending_scroll_y = Some(reading.layout.scroll_offset_y);
             } else {
-                reading.stream_jump_to = Some(target);
+                reading.layout.stream_jump_to = Some(target);
             }
         }
     }
@@ -898,12 +898,12 @@ pub fn render_document(
 }
 
 pub fn jump_to_line(reading: &mut ReadingState, target: usize) {
-    if target == 0 || reading.layout_cache_rows.is_empty() {
+    if target == 0 || reading.layout.layout_cache_rows.is_empty() {
         return;
     }
-    for (i, row) in reading.layout_cache_rows.iter().enumerate() {
+    for (i, row) in reading.layout.layout_cache_rows.iter().enumerate() {
         if row.line_no >= target {
-            reading.scroll_offset_y = reading.layout_cache_starts.get(i).copied().unwrap_or(0.0);
+            reading.layout.scroll_offset_y = reading.layout.layout_cache_starts.get(i).copied().unwrap_or(0.0);
             return;
         }
     }
@@ -1873,14 +1873,14 @@ pub fn render_sidebar(
                             let target_page = entry.page_index;
                             let selected = *page == target_page;
                             if ui.selectable_label(selected, &entry.label).clicked() {
-                                rs.stream_jump_to = Some(target_page);
-                                rs.stream_page_end = rs.stream_page_end.max(target_page);
+                                rs.layout.stream_jump_to = Some(target_page);
+                                rs.layout.stream_page_end = rs.layout.stream_page_end.max(target_page);
                                 *page = target_page;
                                 if document.lock().is_fixed() {
-                                    rs.scroll_offset_y = 0.0;
+                                    rs.layout.scroll_offset_y = 0.0;
                                 } else {
-                                    rs.scroll_offset_y = rs.layout_cache_rows.iter()
-                                        .zip(rs.layout_cache_starts.iter())
+                                    rs.layout.scroll_offset_y = rs.layout.layout_cache_rows.iter()
+                                        .zip(rs.layout.layout_cache_starts.iter())
                                         .find(|(row, _)| row.ci == target_page)
                                         .map(|(_, &y)| y)
                                         .unwrap_or(0.0);
@@ -1939,10 +1939,10 @@ pub fn render_sidebar(
                     if let Some(&m) = rs.search.matches.get(rs.search.current_match) {
                         let target = m;
                         if target != *page {
-                            rs.stream_jump_to = Some(target);
-                            rs.stream_page_end = rs.stream_page_end.max(target);
+                            rs.layout.stream_jump_to = Some(target);
+                            rs.layout.stream_page_end = rs.layout.stream_page_end.max(target);
                             *page = target;
-                            rs.scroll_offset_y = 0.0;
+                            rs.layout.scroll_offset_y = 0.0;
                         }
                     }
                 }
@@ -1951,10 +1951,10 @@ pub fn render_sidebar(
                     if let Some(&m) = rs.search.matches.get(rs.search.current_match) {
                         let target = m;
                         if target != *page {
-                            rs.stream_jump_to = Some(target);
-                            rs.stream_page_end = rs.stream_page_end.max(target);
+                            rs.layout.stream_jump_to = Some(target);
+                            rs.layout.stream_page_end = rs.layout.stream_page_end.max(target);
                             *page = target;
-                            rs.scroll_offset_y = 0.0;
+                            rs.layout.scroll_offset_y = 0.0;
                         }
                     }
                 }
@@ -1985,11 +1985,11 @@ pub fn render_sidebar(
         }
         SidebarSection::Vocab => {
             if ui.button(crate::app::i18n::tr(lang, "+ Add")).clicked() {
-                rs.show_add_vocab_dialog = true;
-                rs.add_vocab_text.clear();
+                rs.vocab_state.show_add_vocab_dialog = true;
+                rs.vocab_state.add_vocab_text.clear();
             }
             let mut remove_idx: Option<usize> = None;
-            for (idx, v) in rs.vocab.iter().enumerate() {
+            for (idx, v) in rs.vocab_state.vocab.iter().enumerate() {
                 ui.horizontal(|ui| {
                     if ui.selectable_label(false, format!("{} (p.{})", v.word, v.page + 1)).clicked() {
                         *page = v.page;
@@ -2000,13 +2000,13 @@ pub fn render_sidebar(
                 });
             }
             if let Some(idx) = remove_idx {
-                rs.vocab.remove(idx);
-                rs.vocab_dirty = true;
+                rs.vocab_state.vocab.remove(idx);
+                rs.vocab_state.vocab_dirty = true;
             }
         }
         SidebarSection::Sentences => {
             let mut remove_idx: Option<usize> = None;
-            for (idx, s) in rs.sentences.iter().enumerate() {
+            for (idx, s) in rs.vocab_state.sentences.iter().enumerate() {
                 ui.horizontal(|ui| {
                     let preview: String = s.text.chars().take(40).collect();
                     if ui.selectable_label(false, format!("{} (p.{})", preview, s.page + 1)).clicked() {
@@ -2018,42 +2018,42 @@ pub fn render_sidebar(
                 });
             }
             if let Some(idx) = remove_idx {
-                rs.sentences.remove(idx);
-                rs.sentences_dirty = true;
+                rs.vocab_state.sentences.remove(idx);
+                rs.vocab_state.sentences_dirty = true;
             }
         }
     }
 
     // Manual add vocab dialog (for EPUB/TXT without word-position selection)
-    if rs.show_add_vocab_dialog {
+    if rs.vocab_state.show_add_vocab_dialog {
         let mut keep = true;
         egui::Window::new(crate::app::i18n::tr(lang, "Add Vocabulary"))
             .open(&mut keep)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ui.ctx(), |ui| {
                 ui.label(crate::app::i18n::tr(lang, "Word / Phrase:"));
-                ui.add(egui::TextEdit::singleline(&mut rs.add_vocab_text)
+                ui.add(egui::TextEdit::singleline(&mut rs.vocab_state.add_vocab_text)
                     .desired_width(200.0));
                 ui.add_space(8.0);
                 if ui.button(crate::app::i18n::tr(lang, "Save")).clicked() {
-                    let text = rs.add_vocab_text.trim().to_string();
+                    let text = rs.vocab_state.add_vocab_text.trim().to_string();
                     if !text.is_empty() {
-                        rs.vocab.push(Vocabulary {
+                        rs.vocab_state.vocab.push(Vocabulary {
                             id: uuid::Uuid::new_v4().to_string(),
                             word: text,
                             context_sentence: None,
                             definition: None,
                             page: *page,
                         });
-                        rs.vocab_dirty = true;
+                        rs.vocab_state.vocab_dirty = true;
                     }
-                    rs.show_add_vocab_dialog = false;
-                    rs.add_vocab_text.clear();
+                    rs.vocab_state.show_add_vocab_dialog = false;
+                    rs.vocab_state.add_vocab_text.clear();
                 }
             });
         if !keep {
-            rs.show_add_vocab_dialog = false;
-            rs.add_vocab_text.clear();
+            rs.vocab_state.show_add_vocab_dialog = false;
+            rs.vocab_state.add_vocab_text.clear();
         }
     }
 
