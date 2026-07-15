@@ -19,6 +19,7 @@ pub fn render_document(
     ctx: Option<egui::Context>,
     dark_mode: bool,
     image_cache: &mut HashMap<String, egui::TextureHandle>,
+    doc_path: Option<&str>,
 ) {
     let _frame_timer = std::time::Instant::now();
 
@@ -651,17 +652,21 @@ pub fn render_document(
                             continue;
                         }
 
-                        let key = format!("epub_img_{}_{}", rows[i].ci, rows[i].bi);
-                        let texture = image_cache.entry(key.clone()).or_insert_with(|| {
+                        let doc_prefix = doc_path.unwrap_or("_");
+                        let key = format!("{}_epub_img_{}_{}", doc_prefix, rows[i].ci, rows[i].bi);
+                        if !image_cache.contains_key(&key) {
                             let img = img_data.unwrap();
                             let decoded = match image::load_from_memory(&img.raw_bytes) {
                                 Ok(d) => d.into_rgba8(),
                                 Err(_) => {
-                                    return ui.ctx().load_texture(
+                                    let placeholder = ui.ctx().load_texture(
                                         &key,
                                         egui::ColorImage::new([1, 1], egui::Color32::RED),
                                         egui::TextureOptions::default(),
                                     );
+                                    image_cache.insert(key.clone(), placeholder);
+                                    evict_cache(image_cache, 128);
+                                    continue;
                                 }
                             };
                             let (native_w, native_h) = decoded.dimensions();
@@ -683,8 +688,11 @@ pub fn render_document(
                                 [rw as usize, rh as usize],
                                 resized.as_raw(),
                             );
-                            ui.ctx().load_texture(&key, color_image, egui::TextureOptions::default())
-                        });
+                            let tex = ui.ctx().load_texture(&key, color_image, egui::TextureOptions::default());
+                            image_cache.insert(key.clone(), tex);
+                            evict_cache(image_cache, 128);
+                        }
+                        let texture = image_cache.get(&key).unwrap();
 
                         if reading.show_line_numbers {
                             painter.text(
@@ -1754,6 +1762,13 @@ pub fn render_mo_yu_ui(
 
     if mo_yu.playing {
         ui.ctx().request_repaint();
+    }
+}
+
+fn evict_cache(cache: &mut HashMap<String, egui::TextureHandle>, max: usize) {
+    while cache.len() > max {
+        let first = cache.keys().next().unwrap().clone();
+        cache.remove(&first);
     }
 }
 

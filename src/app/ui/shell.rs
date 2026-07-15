@@ -1219,6 +1219,7 @@ impl FolixApp {
         let is_light = tab.modes.active == ModeKind::LightReading;
         let is_deep = tab.modes.active == ModeKind::DeepReading;
         let dark_mode = self.state.settings.dark_mode;
+        let doc_path = tab.path.as_deref();
         mode_ui::render_document(
             ui, &document,
             &mut tab.modes.page,
@@ -1232,6 +1233,7 @@ impl FolixApp {
             Some(ctx.clone()),
             dark_mode,
             &mut self.image_texture_cache,
+            doc_path,
         );
 
         // Handle pending vocabulary/sentence additions from context menu
