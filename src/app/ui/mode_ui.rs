@@ -809,13 +809,22 @@ pub fn render_document(
                         }
                     }
 
-                    // Click/drag/context menu
+                    // Helper: get character position from mouse position
+                    let char_pos_from_mouse = |mouse_x: f32, row: &LayoutRow| -> usize {
+                        if let Some(galley) = &row.galley {
+                            let local_x = mouse_x - (content_left + gutter_w);
+                            let cursor = galley.cursor_from_pos(egui::vec2(local_x.max(0.0), 0.0));
+                            row.char_offset + cursor.ccursor.index
+                        } else {
+                            let local_x = mouse_x - text_rect.left();
+                            let ratio = (local_x / text_rect.width().max(1.0)).clamp(0.0, 1.0);
+                            row.char_offset + (ratio * row.text.chars().count() as f32) as usize
+                        }
+                    };
+
                     if resp.clicked() {
                         if let Some(mouse_pos) = resp.interact_pointer_pos() {
-                            let local_x = mouse_pos.x - text_rect.left();
-                            let ratio = (local_x / text_rect.width().max(1.0)).clamp(0.0, 1.0);
-                            let approx_char = (ratio * rows[i].text.chars().count() as f32) as usize;
-                            let abs_char = rows[i].char_offset + approx_char;
+                            let abs_char = char_pos_from_mouse(mouse_pos.x, &rows[i]);
                             sel.char_anchor = Some((rows[i].ci, rows[i].bi, abs_char));
                             sel.char_focus = Some((rows[i].ci, rows[i].bi, abs_char));
                             sel.selected_text = String::new();
@@ -826,10 +835,7 @@ pub fn render_document(
 
                     if resp.dragged() && sel.selecting {
                         if let Some(mouse_pos) = resp.interact_pointer_pos() {
-                            let local_x = mouse_pos.x - text_rect.left();
-                            let ratio = (local_x / text_rect.width().max(1.0)).clamp(0.0, 1.0);
-                            let approx_char = (ratio * rows[i].text.chars().count() as f32) as usize;
-                            let abs_char = rows[i].char_offset + approx_char;
+                            let abs_char = char_pos_from_mouse(mouse_pos.x, &rows[i]);
                             sel.char_focus = Some((rows[i].ci, rows[i].bi, abs_char));
                         }
                     }
