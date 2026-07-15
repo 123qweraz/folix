@@ -119,7 +119,6 @@ pub fn render_document(
                     }
                 }
             }
-            if *page > 0 { fixed.render_page(*page - 1, *scale); }
         }
 
         match *reading_layout {
