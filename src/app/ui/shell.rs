@@ -1162,7 +1162,8 @@ impl FolixApp {
                     // ── Info ──
                     ui.heading("Info");
                     ui.separator();
-                    ui.label(crate::app::i18n::tr(lng, "Config file: ./folix.conf"));
+                    let cfg_path = crate::app::config::config_path().to_string_lossy().to_string();
+                    ui.label(format!("{}: {}", crate::app::i18n::tr(lng, "Config file"), cfg_path));
                     ui.horizontal(|ui| {
                         if ui.button(crate::app::i18n::tr(lng, "Reset Shortcuts to Default")).clicked() {
                             self.state.settings.shortcuts = crate::app::core::shortcuts::default_shortcuts();

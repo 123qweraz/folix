@@ -2,7 +2,7 @@ use crate::app::core::app_state::AppSettings;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     // Follows XDG Base Directory spec on Linux, standard platform conventions on macOS/Windows
     let base = if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
         PathBuf::from(dir)
