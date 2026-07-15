@@ -460,12 +460,6 @@ impl eframe::App for FolixApp {
             self.open_file(path);
         }
 
-        // Tab toggles UI visibility — only when no text widget has focus
-        let has_focus = ctx.memory(|m| m.focused().is_some());
-        if !has_focus && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
-            self.state.ui_visible = !self.state.ui_visible;
-        }
-
         // Keyboard shortcuts (from config, with built-in defaults)
         if self.shortcut(ctx, SA::OpenFile) { self.open_dialog = true; }
 
@@ -606,6 +600,10 @@ impl eframe::App for FolixApp {
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.reading.show_sidebar = !tab.modes.reading.show_sidebar;
             }
+        }
+
+        if !ctx.memory(|m| m.focused().is_some()) && self.shortcut(ctx, SA::ToggleUI) {
+            self.state.ui_visible = !self.state.ui_visible;
         }
 
         // Copy: only consume Ctrl+C for image-based docs (PDF).
