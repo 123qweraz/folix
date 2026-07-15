@@ -593,6 +593,7 @@ impl eframe::App for FolixApp {
                     page: tab.modes.page,
                     label: format!("{} {}", crate::app::i18n::tr(lng, "Page"), tab.modes.page + 1),
                 });
+                tab.modes.reading.bookmarks_dirty = true;
             }
         }
 
