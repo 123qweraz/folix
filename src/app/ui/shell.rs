@@ -1247,8 +1247,10 @@ impl FolixApp {
                 page: tab.modes.page,
             });
             tab.modes.reading.vocab_dirty = true;
-            // Clear text selection after adding
+            // Clear text selection after adding (both fixed and reflow)
             tab.modes.reading.selection.selected_word_indices.clear();
+            tab.modes.reading.selection.char_anchor = None;
+            tab.modes.reading.selection.char_focus = None;
         }
         if let Some(text) = tab.modes.reading.selection.pending_sentence.take() {
             tab.modes.reading.sentences.push(Sentence_ {
@@ -1258,6 +1260,8 @@ impl FolixApp {
             });
             tab.modes.reading.sentences_dirty = true;
             tab.modes.reading.selection.selected_word_indices.clear();
+            tab.modes.reading.selection.char_anchor = None;
+            tab.modes.reading.selection.char_focus = None;
         }
 
         // Sync annotations to database (only when dirty)
