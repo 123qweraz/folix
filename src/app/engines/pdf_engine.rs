@@ -15,7 +15,7 @@ fn flatten_outline(entries: &[mupdf::outline::Outline], depth: usize, out: &mut 
         let page = entry
             .dest
             .as_ref()
-            .map(|d| d.loc.page_number as usize)
+            .map(|d| d.loc.page_number.max(0) as usize)
             .unwrap_or(0);
         out.push(TocEntry {
             label: format!("{}{}", "  ".repeat(depth), entry.title),

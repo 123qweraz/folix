@@ -69,7 +69,7 @@ pub fn render_document(
                             aut.progress += dt * aut.speed * 0.3;
                             let advance = aut.progress as usize;
                             if advance > 0 {
-                                *page = (*page + advance).min(max_page);
+                                *page = page.saturating_add(advance).min(max_page);
                                 aut.progress -= advance as f32;
                                 if *page >= max_page && total > 0 {
                                     aut.playing = false;
@@ -101,19 +101,20 @@ pub fn render_document(
         // page scrolls into view.
         if let Some(fixed) = document.lock().as_fixed() {
             let total = fixed.page_count();
-            if *page + 1 < total {
-                if fixed.get_texture_handle(*page + 1, *scale).is_none() {
-                    if let Some(p) = fixed.render_page(*page + 1, *scale) {
+            let next_page = page.saturating_add(1);
+            if next_page < total {
+                if fixed.get_texture_handle(next_page, *scale).is_none() {
+                    if let Some(p) = fixed.render_page(next_page, *scale) {
                         let ci = egui::ColorImage::from_rgba_unmultiplied(
                             [p.width as usize, p.height as usize],
                             &p.rgba,
                         );
                         let tex = ui.ctx().load_texture(
-                            format!("doc_page_{}", *page + 1),
+                            format!("doc_page_{}", next_page),
                             ci,
                             egui::TextureOptions::default(),
                         );
-                        fixed.set_texture_handle(*page + 1, *scale, tex);
+                        fixed.set_texture_handle(next_page, *scale, tex);
                     }
                 }
             }
