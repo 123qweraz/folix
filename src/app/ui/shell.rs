@@ -8,6 +8,7 @@ use crate::app::platform::font_loader::FontLoader;
 use crate::app::storage::sqlite::Database;
 use super::{mode_ui, pdf_toolbox};
 use std::collections::HashMap;
+use std::hash::Hasher;
 
 pub struct FolixApp {
     pub state: AppState,
@@ -106,14 +107,16 @@ impl FolixApp {
         };
 
         for path in &font_paths {
-            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown_font");
             let safe = stem.replace(|c: char| !c.is_alphanumeric(), "_");
-            let name = format!("flx_{}", safe);
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(path, &mut hasher);
+            let hash = hasher.finish();
+            let name = format!("flx_{}_{:x}", safe, hash);
 
             match std::fs::read(path) {
                 Ok(data) => {
-                    let index = if ext == "ttc" { 2 } else { 0 };
+                    let index = 0;
                     let mut font_data = egui::FontData::from_owned(data);
                     font_data.index = index;
                     fonts.font_data.insert(name.clone(), std::sync::Arc::new(font_data));
