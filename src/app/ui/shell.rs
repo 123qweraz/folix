@@ -1269,16 +1269,7 @@ impl FolixApp {
         if is_deep && tab.modes.annotate.dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.delete_book_annotations(book_id);
-                    for ann in &tab.modes.annotate.annotations {
-                        let kind_str = format!("{:?}", ann.kind);
-                        let rect_str = serde_json::to_string(&ann.rect).ok();
-                        let _ = db.add_annotation(
-                            book_id, ann.page, &kind_str,
-                            rect_str.as_deref(),
-                            ann.note.as_deref(),
-                        );
-                    }
+                    let _ = db.sync_annotations(book_id, &tab.modes.annotate.annotations);
                     tab.modes.annotate.dirty = false;
                 }
             }
@@ -1288,15 +1279,7 @@ impl FolixApp {
         if tab.modes.reading.vocab_dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.delete_book_vocabulary(book_id);
-                    for v in &tab.modes.reading.vocab {
-                        let _ = db.add_vocabulary(
-                            book_id, &v.word,
-                            v.context_sentence.as_deref(),
-                            v.definition.as_deref(),
-                            v.page,
-                        );
-                    }
+                    let _ = db.sync_vocabulary(book_id, &tab.modes.reading.vocab);
                     tab.modes.reading.vocab_dirty = false;
                 }
             }
@@ -1306,10 +1289,7 @@ impl FolixApp {
         if tab.modes.reading.sentences_dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.delete_book_sentences(book_id);
-                    for s in &tab.modes.reading.sentences {
-                        let _ = db.add_sentence(book_id, &s.text, s.page);
-                    }
+                    let _ = db.sync_sentences(book_id, &tab.modes.reading.sentences);
                     tab.modes.reading.sentences_dirty = false;
                 }
             }
@@ -1319,10 +1299,7 @@ impl FolixApp {
         if tab.modes.reading.bookmarks_dirty {
             if let Some(ref db) = self.db {
                 if let Some(book_id) = &tab.book_id {
-                    let _ = db.delete_book_bookmarks(book_id);
-                    for bm in &tab.modes.reading.bookmarks {
-                        let _ = db.add_bookmark(book_id, bm.page, Some(&bm.label));
-                    }
+                    let _ = db.sync_bookmarks(book_id, &tab.modes.reading.bookmarks);
                     tab.modes.reading.bookmarks_dirty = false;
                 }
             }

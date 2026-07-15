@@ -270,6 +270,98 @@ impl Database {
         Ok(())
     }
 
+    // ── Transactional batch sync ──
+
+    pub fn sync_annotations(&self, book_id: &str, annotations: &[crate::app::core::mode_system::Annotation]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM annotations WHERE book_id = ?1", params![book_id])?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut stmt = tx.prepare(
+            "INSERT INTO annotations (id, book_id, page, kind, rect_data, note, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+        )?;
+        for ann in annotations {
+            let kind_str = format!("{:?}", ann.kind);
+            let rect_str = serde_json::to_string(&ann.rect).ok();
+            stmt.execute(params![
+                uuid::Uuid::new_v4().to_string(),
+                book_id,
+                ann.page as i64,
+                kind_str,
+                rect_str,
+                ann.note.as_deref(),
+                now,
+            ])?;
+        }
+        drop(stmt);
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn sync_vocabulary(&self, book_id: &str, vocab_list: &[crate::app::core::mode_system::Vocabulary]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM vocabulary WHERE book_id = ?1", params![book_id])?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut stmt = tx.prepare(
+            "INSERT INTO vocabulary (id, book_id, word, context_sentence, definition, page, added_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+        )?;
+        for v in vocab_list {
+            stmt.execute(params![
+                uuid::Uuid::new_v4().to_string(),
+                book_id,
+                v.word,
+                v.context_sentence.as_deref(),
+                v.definition.as_deref(),
+                v.page as i64,
+                now,
+            ])?;
+        }
+        drop(stmt);
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn sync_sentences(&self, book_id: &str, sentence_list: &[crate::app::core::mode_system::Sentence_]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM sentences WHERE book_id = ?1", params![book_id])?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut stmt = tx.prepare(
+            "INSERT INTO sentences (id, book_id, text, page, added_at) VALUES (?1, ?2, ?3, ?4, ?5)"
+        )?;
+        for s in sentence_list {
+            stmt.execute(params![
+                uuid::Uuid::new_v4().to_string(),
+                book_id,
+                s.text,
+                s.page as i64,
+                now,
+            ])?;
+        }
+        drop(stmt);
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn sync_bookmarks(&self, book_id: &str, bookmark_list: &[crate::app::core::mode_system::Bookmark]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM bookmarks WHERE book_id = ?1", params![book_id])?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut stmt = tx.prepare(
+            "INSERT INTO bookmarks (id, book_id, page, label, created_at) VALUES (?1, ?2, ?3, ?4, ?5)"
+        )?;
+        for bm in bookmark_list {
+            stmt.execute(params![
+                uuid::Uuid::new_v4().to_string(),
+                book_id,
+                bm.page as i64,
+                bm.label,
+                now,
+            ])?;
+        }
+        drop(stmt);
+        tx.commit()?;
+        Ok(())
+    }
+
     // ── Bookmarks CRUD (for persistence) ──
     pub fn list_bookmarks(&self, book_id: &str) -> Result<Vec<(String, usize, Option<String>)>> {
         let mut stmt = self.conn.prepare(
