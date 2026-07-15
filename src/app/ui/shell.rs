@@ -361,6 +361,7 @@ impl FolixApp {
     }
 
     fn apply_highlight_selection(tab: &mut crate::app::core::app_state::OpenTab) {
+        let doc_id = tab.book_id.as_deref().unwrap_or("");
         if let Some(ref doc) = tab.document {
             let is_fixed = doc.lock().is_fixed();
             if is_fixed {
@@ -381,7 +382,7 @@ impl FolixApp {
                     if x0 != f32::MAX {
                         tab.modes.annotate.annotations.push(Annotation {
                             id: uuid::Uuid::new_v4().to_string(),
-                            doc_id: String::new(),
+                            doc_id: doc_id.to_string(),
                             kind: AnnotationTool::Highlight,
                             page,
                             rect: [x0, y0, x1, y1],
@@ -418,7 +419,7 @@ impl FolixApp {
                             drop(doc_guard);
                             tab.modes.annotate.annotations.push(Annotation {
                                 id: uuid::Uuid::new_v4().to_string(),
-                                doc_id: String::new(),
+                                doc_id: doc_id.to_string(),
                                 kind: AnnotationTool::Highlight,
                                 page: 0,
                                 rect: [a_ch as f32, a_blk as f32, cstart as f32, cend as f32],

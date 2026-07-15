@@ -121,9 +121,10 @@ pub fn render_document(
             }
         }
 
+        let doc_id = doc_path;
         match *reading_layout {
             ReadingLayout::Paged => {
-                render_paged(ui, document, *page, *scale, *view_rotation, &mut reading.selection, annotate, dark_mode, highlights);
+                render_paged_with_id(ui, document, *page, *scale, *view_rotation, &mut reading.selection, annotate, dark_mode, highlights, doc_id);
             }
             ReadingLayout::Scroll => {
                 let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
@@ -132,7 +133,7 @@ pub fn render_document(
                     reading.scroll_offset_y =
                         (reading.scroll_offset_y + reading.scroll_velocity * dt).max(0.0);
                 }
-                render_scroll(ui, document, page, *scale, *view_rotation, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights);
+                render_scroll_with_id(ui, document, page, *scale, *view_rotation, total, &mut reading.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights, doc_id);
                 reading.scroll_velocity = 0.0;
             }
         }
@@ -919,6 +920,21 @@ fn render_paged(
     dark_mode: bool,
     highlights: &std::collections::HashMap<usize, Vec<usize>>,
 ) {
+    render_paged_with_id(ui, doc, page, scale, view_rotation, selection, annotate, dark_mode, highlights, None)
+}
+
+fn render_paged_with_id(
+    ui: &mut egui::Ui,
+    doc: &Arc<Mutex<DocumentHandle>>,
+    page: usize,
+    scale: f32,
+    view_rotation: ViewRotation,
+    selection: &mut SelectionState,
+    annotate: Option<&mut AnnotateState>,
+    dark_mode: bool,
+    highlights: &std::collections::HashMap<usize, Vec<usize>>,
+    doc_id: Option<&str>,
+) {
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
@@ -936,7 +952,7 @@ fn render_paged(
             } else {
                 HashMap::new()
             };
-            render_image_page(ui, doc, page, scale, view_rotation, &all_words, selection, annotate, dark_mode, highlights);
+            render_image_page(ui, doc, page, scale, view_rotation, &all_words, selection, annotate, dark_mode, highlights, doc_id);
         });
 }
 
@@ -949,9 +965,26 @@ fn render_scroll(
     total: usize,
     out_scroll_y: &mut f32,
     selection: &mut SelectionState,
+    annotate: Option<&mut AnnotateState>,
+    dark_mode: bool,
+    highlights: &std::collections::HashMap<usize, Vec<usize>>,
+) {
+    render_scroll_with_id(ui, doc, page, scale, view_rotation, total, out_scroll_y, selection, annotate, dark_mode, highlights, None)
+}
+
+fn render_scroll_with_id(
+    ui: &mut egui::Ui,
+    doc: &Arc<Mutex<DocumentHandle>>,
+    page: &mut usize,
+    scale: f32,
+    view_rotation: ViewRotation,
+    total: usize,
+    out_scroll_y: &mut f32,
+    selection: &mut SelectionState,
     mut annotate: Option<&mut AnnotateState>,
     dark_mode: bool,
     highlights: &std::collections::HashMap<usize, Vec<usize>>,
+    doc_id: Option<&str>,
 ) {
     let id = ui.make_persistent_id("pdf_scroll_reading");
     let spacing = 12.0;
@@ -1017,7 +1050,7 @@ fn render_scroll(
         for (i, &(_pw, ph, py)) in layouts.iter().enumerate() {
             if py + ph >= scroll_target && py <= approx_bottom {
                 let an = annotate.as_mut().map(|r| &mut **r);
-                render_image_page(ui, doc, i, scale, view_rotation, &all_words, selection, an, dark_mode, highlights);
+                render_image_page(ui, doc, i, scale, view_rotation, &all_words, selection, an, dark_mode, highlights, doc_id);
             } else {
                 ui.allocate_exact_size(egui::vec2(ui.available_width(), ph), egui::Sense::hover());
             }
@@ -1063,6 +1096,7 @@ fn render_image_page(
     mut annotate: Option<&mut AnnotateState>,
     _dark_mode: bool,
     highlights: &std::collections::HashMap<usize, Vec<usize>>,
+    doc_id: Option<&str>,
 ) {
     // Acquire texture (from GPU cache or render + upload)
     let (tex_id, tex_size) = {
@@ -1215,7 +1249,7 @@ fn render_image_page(
                     let data = serde_json::to_string(&pts).unwrap_or_default();
                     ann.annotations.push(Annotation {
                         id: uuid::Uuid::new_v4().to_string(),
-                        doc_id: String::new(),
+                        doc_id: doc_id.unwrap_or("").to_string(),
                         kind: AnnotationTool::Pen,
                         page: page_idx,
                         rect: [0.0; 4],
