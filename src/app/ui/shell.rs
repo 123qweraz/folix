@@ -1600,20 +1600,32 @@ impl FolixApp {
                             }
                         }
                         ModeKind::DeepReading => {
-                            let tool = &tab.modes.annotate.tool;
-                            let is_sel = *tool == AnnotationTool::Highlight;
-                            let is_pen = *tool == AnnotationTool::Pen;
-                            let is_eraser = *tool == AnnotationTool::Eraser;
-                            if ui.selectable_label(is_sel, crate::app::i18n::tr(lng, "Sel")).clicked() {
-                                tab.modes.annotate.tool = AnnotationTool::Highlight;
+                            // PDF: Sel / Pen / Eraser tool buttons
+                            if is_fixed_doc {
+                                let tool = &tab.modes.annotate.tool;
+                                let is_sel = *tool == AnnotationTool::Highlight;
+                                let is_pen = *tool == AnnotationTool::Pen;
+                                let is_eraser = *tool == AnnotationTool::Eraser;
+                                if ui.selectable_label(is_sel, crate::app::i18n::tr(lng, "Sel")).clicked() {
+                                    tab.modes.annotate.tool = AnnotationTool::Highlight;
+                                }
+                                if ui.selectable_label(is_pen, crate::app::i18n::tr(lng, "Pen")).clicked() {
+                                    tab.modes.annotate.tool = AnnotationTool::Pen;
+                                }
+                                if ui.selectable_label(is_eraser, crate::app::i18n::tr(lng, "Eraser")).clicked() {
+                                    tab.modes.annotate.tool = AnnotationTool::Eraser;
+                                }
+                                ui.separator();
                             }
-                            if ui.selectable_label(is_pen, crate::app::i18n::tr(lng, "Pen")).clicked() {
-                                tab.modes.annotate.tool = AnnotationTool::Pen;
+
+                            // EPUB: magnifier toggle
+                            if !is_fixed_doc {
+                                let mag = &mut tab.modes.reading.magnifier;
+                                if ui.selectable_label(mag.active, "🔍").clicked() {
+                                    mag.active = !mag.active;
+                                }
+                                ui.separator();
                             }
-                            if ui.selectable_label(is_eraser, crate::app::i18n::tr(lng, "Eraser")).clicked() {
-                                tab.modes.annotate.tool = AnnotationTool::Eraser;
-                            }
-                            ui.separator();
 
                             // Highlight Selected button
                             if let Some(ref doc) = tab.document {

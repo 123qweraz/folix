@@ -136,6 +136,20 @@ pub struct Sentence_ {
     pub page: usize,
 }
 
+#[derive(Clone)]
+pub struct MagnifierState {
+    pub active: bool,
+    pub chinese_char: String,
+    pub source_line: String,
+    pub font_size: f32,
+}
+
+impl Default for MagnifierState {
+    fn default() -> Self {
+        Self { active: false, chinese_char: String::new(), source_line: String::new(), font_size: 64.0 }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum SidebarSection {
     TOC,
@@ -143,6 +157,7 @@ pub enum SidebarSection {
     Bookmarks,
     Vocab,
     Sentences,
+    Magnifier,
 }
 
 #[derive(Clone)]
@@ -209,6 +224,7 @@ pub struct ReadingState {
     pub selection: SelectionState,
     pub layout: LayoutState,
     pub vocab_state: VocabState,
+    pub magnifier: MagnifierState,
 }
 
 #[derive(Clone)]
@@ -437,6 +453,7 @@ impl TabModes {
                     sentences: vec![],
                     sentences_dirty: false,
                 },
+                magnifier: MagnifierState::default(),
             },
             auto: AutoState {
                 playing: false,

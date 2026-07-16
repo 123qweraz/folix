@@ -866,6 +866,20 @@ fn render_reflow_document(
                         }
                     }
                 });
+
+                // Magnifier: track character under mouse when active
+                if reading.magnifier.active {
+                    if let Some(mouse_pos) = resp.interact_pointer_pos() {
+                        let abs_char = char_pos_from_mouse(mouse_pos.x, &rows[i]);
+                        let local_idx = abs_char.saturating_sub(rows[i].char_offset);
+                        if let Some(ch) = rows[i].text.chars().nth(local_idx) {
+                            if is_cjk(ch) {
+                                reading.magnifier.chinese_char = ch.to_string();
+                                reading.magnifier.source_line = rows[i].text.clone();
+                            }
+                        }
+                    }
+                }
             }
         }
     });
@@ -1846,6 +1860,7 @@ pub fn render_sidebar(
             (SidebarSection::Bookmarks, "🔖"),
             (SidebarSection::Vocab, "📝"),
             (SidebarSection::Sentences, "💬"),
+            (SidebarSection::Magnifier, "🔎"),
         ];
         for &(section, icon) in &sections {
             let is_active = rs.sidebar_section == section;
@@ -2020,6 +2035,35 @@ pub fn render_sidebar(
                 rs.vocab_state.sentences_dirty = true;
             }
         }
+        SidebarSection::Magnifier => {
+            let mag = &rs.magnifier;
+            if mag.chinese_char.is_empty() {
+                ui.label("Move cursor over Chinese text to magnify");
+            } else {
+                ui.vertical_centered(|ui| {
+                    let font_id = egui::FontId::proportional(mag.font_size);
+                    ui.label(
+                        egui::RichText::new(&mag.chinese_char)
+                            .font(font_id)
+                            .color(egui::Color32::from_rgb(220, 80, 40)),
+                    );
+                });
+                ui.label(format!("— {}", &mag.source_line.chars().take(50).collect::<String>()));
+                // Adjust font size
+                ui.horizontal(|ui| {
+                    if ui.button("−").clicked() {
+                        let mag = &mut rs.magnifier;
+                        let m = &mut *mag;
+                        m.font_size = (m.font_size - 8.0).max(24.0);
+                    }
+                    if ui.button("+").clicked() {
+                        let mag = &mut rs.magnifier;
+                        let m = &mut *mag;
+                        m.font_size = (m.font_size + 8.0).min(200.0);
+                    }
+                });
+            }
+        }
     }
 
     // Manual add vocab dialog (for EPUB/TXT without word-position selection)
@@ -2057,4 +2101,13 @@ pub fn render_sidebar(
 
     // Fill remaining vertical space so sidebar background covers the full panel height
     ui.allocate_space(egui::vec2(0.0, ui.available_height().max(0.0)));
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(ch,
+        '\u{3400}'..='\u{4DBF}'   // CJK Extension A
+        | '\u{4E00}'..='\u{9FFF}'  // CJK Unified Ideographs
+        | '\u{F900}'..='\u{FAFF}'  // CJK Compatibility Ideographs
+        | '\u{2F800}'..='\u{2FA1F}' // CJK Compatibility Supplement
+    )
 }

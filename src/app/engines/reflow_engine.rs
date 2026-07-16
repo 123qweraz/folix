@@ -1109,10 +1109,6 @@ impl ReflowDocument {
                         } else {
                             src_i += pc.len_utf8();
                         }
-                        // Skip any trailing whitespace bytes
-                        while src_i < src_bytes.len() && src_bytes[src_i].is_ascii_whitespace() {
-                            src_i += 1;
-                        }
                     }
                 }
                 Ok(Event::Eof) => break,
