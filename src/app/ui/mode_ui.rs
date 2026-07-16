@@ -857,6 +857,10 @@ fn render_reflow_document(
                         if s_start < s_end {
                             let sel_text: String = block_text.chars().skip(s_start).take(s_end - s_start).collect();
                             if ui.button("Copy").clicked() { ui.ctx().copy_text(sel_text.clone()); ui.close_menu(); }
+                            if ui.button("Highlight").clicked() {
+                                sel.pending_highlight = Some((rows[i].ci, rows[i].bi, s_start, s_end, sel_text.clone()));
+                                ui.close_menu();
+                            }
                             if ui.button("Add to Vocabulary").clicked() { sel.pending_vocab = Some(sel_text.clone()); ui.close_menu(); }
                             if ui.button("Save Sentence").clicked() { sel.pending_sentence = Some(sel_text); ui.close_menu(); }
                         }

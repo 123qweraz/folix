@@ -1264,6 +1264,23 @@ impl FolixApp {
             tab.modes.reading.selection.char_focus = None;
         }
 
+        // Handle pending epub highlight from context menu
+        if let Some((ci, bi, cs, ce, text)) = tab.modes.reading.selection.pending_highlight.take() {
+            tab.modes.annotate.epub_highlights.push(EpubHighlight {
+                id: uuid::Uuid::new_v4().to_string(),
+                chapter_idx: ci,
+                block_idx: bi,
+                char_start: cs,
+                char_end: ce,
+                text,
+                color: tab.modes.annotate.current_color,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            });
+            tab.modes.annotate.epub_dirty_chapters.insert(ci);
+            tab.modes.reading.selection.char_anchor = None;
+            tab.modes.reading.selection.char_focus = None;
+        }
+
         if let Some(ref db) = self.db {
             crate::app::storage::sync_service::sync_dirty(db, tab);
         }

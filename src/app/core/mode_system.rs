@@ -98,6 +98,8 @@ pub struct SelectionState {
     pub pending_vocab: Option<String>,
     /// Pending sentence addition (text to save, set by context menu)
     pub pending_sentence: Option<String>,
+    /// Pending epub highlight: (chapter_idx, block_idx, char_start, char_end, text)
+    pub pending_highlight: Option<(usize, usize, usize, usize, String)>,
 }
 
 impl Default for SelectionState {
@@ -113,6 +115,7 @@ impl Default for SelectionState {
             selected_text: String::new(),
             pending_vocab: None,
             pending_sentence: None,
+            pending_highlight: None,
         }
     }
 }
