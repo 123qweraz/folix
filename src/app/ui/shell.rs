@@ -55,20 +55,7 @@ impl FolixApp {
     fn sync_progress(&self) {
         if let Some(ref db) = self.db {
             for tab in &self.state.tabs {
-                if let Some(ref book_id) = tab.book_id {
-                    if tab.modes.reading.layout.stream_jump_to.is_some() {
-                        continue;
-                    }
-                    let is_fixed = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
-                    let page = if is_fixed {
-                        tab.modes.page
-                    } else {
-                        tab.modes.reading.layout.current_line
-                    };
-                    if let Err(e) = db.save_progress(book_id, page, tab.modes.auto.progress as f64) {
-                        eprintln!("[warn] save_progress failed: {}", e);
-                    }
-                }
+                crate::app::storage::sync_service::sync_progress(db, tab);
             }
         }
     }
@@ -1270,52 +1257,8 @@ impl FolixApp {
             tab.modes.reading.selection.char_focus = None;
         }
 
-        // Sync annotations to database (only when dirty)
-        if is_deep && tab.modes.annotate.dirty {
-            if let Some(ref db) = self.db {
-                if let Some(book_id) = &tab.book_id {
-                    if let Err(e) = db.sync_annotations(book_id, &tab.modes.annotate.annotations) {
-                        eprintln!("[warn] sync_annotations failed: {}", e);
-                    }
-                    tab.modes.annotate.dirty = false;
-                }
-            }
-        }
-
-        // Sync vocabulary
-        if tab.modes.reading.vocab_state.vocab_dirty {
-            if let Some(ref db) = self.db {
-                if let Some(book_id) = &tab.book_id {
-                    if let Err(e) = db.sync_vocabulary(book_id, &tab.modes.reading.vocab_state.vocab) {
-                        eprintln!("[warn] sync_vocabulary failed: {}", e);
-                    }
-                    tab.modes.reading.vocab_state.vocab_dirty = false;
-                }
-            }
-        }
-
-        // Sync sentences
-        if tab.modes.reading.vocab_state.sentences_dirty {
-            if let Some(ref db) = self.db {
-                if let Some(book_id) = &tab.book_id {
-                    if let Err(e) = db.sync_sentences(book_id, &tab.modes.reading.vocab_state.sentences) {
-                        eprintln!("[warn] sync_sentences failed: {}", e);
-                    }
-                    tab.modes.reading.vocab_state.sentences_dirty = false;
-                }
-            }
-        }
-
-        // Sync bookmarks
-        if tab.modes.reading.bookmarks_dirty {
-            if let Some(ref db) = self.db {
-                if let Some(book_id) = &tab.book_id {
-                    if let Err(e) = db.sync_bookmarks(book_id, &tab.modes.reading.bookmarks) {
-                        eprintln!("[warn] sync_bookmarks failed: {}", e);
-                    }
-                    tab.modes.reading.bookmarks_dirty = false;
-                }
-            }
+        if let Some(ref db) = self.db {
+            crate::app::storage::sync_service::sync_dirty(db, tab);
         }
 
         // Render 摸鱼模式 viewport from current tab (light reading only)
