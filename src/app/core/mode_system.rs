@@ -255,6 +255,26 @@ pub enum AnnotationTool {
     Eraser,
 }
 
+/// A highlight on an EPUB/TXT reflow document, stored as character ranges
+/// and written into the chapter HTML as `<span class="flx-hl">`.
+#[derive(Clone)]
+pub struct EpubHighlight {
+    pub id: String,
+    /// Chapter index
+    pub chapter_idx: usize,
+    /// Text block index within the chapter
+    pub block_idx: usize,
+    /// Character offset within the block text (start, inclusive)
+    pub char_start: usize,
+    /// Character offset within the block text (end, exclusive)
+    pub char_end: usize,
+    /// The exact selected text (used for HTML matching on save)
+    pub text: String,
+    /// RGBA highlight color
+    pub color: [u8; 4],
+    pub created_at: String,
+}
+
 #[derive(Clone)]
 pub struct Annotation {
     pub id: String,
@@ -264,8 +284,6 @@ pub struct Annotation {
     pub rect: [f32; 4],
     pub note: Option<String>,
     pub color: [u8; 4],
-    /// For reflow (txt/epub) highlights: (chapter_idx, block_idx, char_start, char_end)
-    pub reflow_range: Option<(usize, usize, usize, usize)>,
 }
 
 pub const HIGHLIGHT_COLORS: [[u8; 4]; 8] = [
@@ -283,6 +301,10 @@ pub const HIGHLIGHT_COLORS: [[u8; 4]; 8] = [
 pub struct AnnotateState {
     pub tool: AnnotationTool,
     pub annotations: Vec<Annotation>,
+    /// EPUB/TXT highlights stored as character ranges (persisted into the EPUB file)
+    pub epub_highlights: Vec<EpubHighlight>,
+    /// Set of chapter indices whose epub_highlights have changed and need saving
+    pub epub_dirty_chapters: std::collections::HashSet<usize>,
     pub stroke_points: Vec<[f32; 2]>,
     pub selecting: bool,
     pub selection_anchor: Option<(f32, f32)>,
@@ -422,6 +444,8 @@ impl TabModes {
             annotate: AnnotateState {
                 tool: AnnotationTool::Highlight,
                 annotations: vec![],
+                epub_highlights: vec![],
+                epub_dirty_chapters: std::collections::HashSet::new(),
                 stroke_points: vec![],
                 selecting: false,
                 selection_anchor: None,

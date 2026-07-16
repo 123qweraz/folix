@@ -1,6 +1,6 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
-use crate::app::core::mode_system::{ViewMode, FitMode, ViewRotation, Annotation, AnnotationTool, EditState, ContentEditState, Bookmark, Vocabulary, Sentence_};
+use crate::app::core::mode_system::{ViewMode, FitMode, ViewRotation, Annotation, AnnotationTool, EpubHighlight, EditState, ContentEditState, Bookmark, Vocabulary, Sentence_};
 use crate::app::config::RecentFile;
 use crate::app::core::shortcuts::{key_from_str, ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
 use crate::app::engines::{ContentBlock, edit_operations};
@@ -225,25 +225,32 @@ impl FolixApp {
                                     let rect = rect_data.as_deref()
                                         .and_then(|s| serde_json::from_str::<[f32; 4]>(s).ok())
                                         .unwrap_or([0.0; 4]);
-                                    let reflow_range = if is_reflow_doc && kind == AnnotationTool::Highlight {
+                                    if is_reflow_doc && kind == AnnotationTool::Highlight {
                                         let ch = rect[0] as usize;
                                         let blk = rect[1] as usize;
                                         let cs = rect[2] as usize;
                                         let ce = rect[3] as usize;
-                                        Some((ch, blk, cs, ce))
+                                        tab.modes.annotate.epub_highlights.push(EpubHighlight {
+                                            id: uuid::Uuid::new_v4().to_string(),
+                                            chapter_idx: ch,
+                                            block_idx: blk,
+                                            char_start: cs,
+                                            char_end: ce,
+                                            text: note.clone().unwrap_or_default(),
+                                            color: [255, 255, 0, 120],
+                                            created_at: chrono::Utc::now().to_rfc3339(),
+                                        });
                                     } else {
-                                        None
-                                    };
-                                    tab.modes.annotate.annotations.push(Annotation {
-                                        id: uuid::Uuid::new_v4().to_string(),
-                                        doc_id: book_id.clone(),
-                                        kind,
-                                        page,
-                                        rect,
-                                        note,
-                                        color: [255, 255, 0, 120],
-                                        reflow_range,
-                                    });
+                                        tab.modes.annotate.annotations.push(Annotation {
+                                            id: uuid::Uuid::new_v4().to_string(),
+                                            doc_id: book_id.clone(),
+                                            kind,
+                                            page,
+                                            rect,
+                                            note,
+                                            color: [255, 255, 0, 120],
+                                        });
+                                    }
                                 }
                             }
                             // Load bookmarks
@@ -380,7 +387,6 @@ impl FolixApp {
                             rect: [x0, y0, x1, y1],
                             note: None,
                             color: tab.modes.annotate.current_color,
-                            reflow_range: None,
                         });
                         tab.modes.annotate.dirty = true;
                         tab.modes.reading.selection.selected_word_indices.clear();
@@ -409,16 +415,17 @@ impl FolixApp {
                                 })
                                 .unwrap_or_default();
                             drop(doc_guard);
-                            tab.modes.annotate.annotations.push(Annotation {
+                            tab.modes.annotate.epub_highlights.push(EpubHighlight {
                                 id: uuid::Uuid::new_v4().to_string(),
-                                doc_id: doc_id.to_string(),
-                                kind: AnnotationTool::Highlight,
-                                page: 0,
-                                rect: [a_ch as f32, a_blk as f32, cstart as f32, cend as f32],
-                                note: Some(sel_text.clone()),
+                                chapter_idx: a_ch,
+                                block_idx: a_blk,
+                                char_start: cstart,
+                                char_end: cend,
+                                text: sel_text.clone(),
                                 color: tab.modes.annotate.current_color,
-                                reflow_range: Some((a_ch, a_blk, cstart, cend)),
+                                created_at: chrono::Utc::now().to_rfc3339(),
                             });
+                            tab.modes.annotate.epub_dirty_chapters.insert(a_ch);
                             tab.modes.annotate.dirty = true;
                             tab.modes.reading.selection.char_anchor = None;
                             tab.modes.reading.selection.char_focus = None;

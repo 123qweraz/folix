@@ -754,32 +754,29 @@ fn render_reflow_document(
                 );
                 let resp = ui.interact(text_rect, egui::Id::new(("row", i)), egui::Sense::click_and_drag());
 
-                // Highlight rendering
+                // Highlight rendering from epub_highlights
                 if let Some(ann) = ann_ref {
-                    for h in &ann.annotations {
-                        if h.kind != AnnotationTool::Highlight { continue; }
-                        if let Some((h_ch, h_blk, h_cs, h_ce)) = h.reflow_range {
-                            if h_ch == rows[i].ci && h_blk == rows[i].bi {
-                                let row_start = rows[i].char_offset;
-                                let text_len = rows[i].text.chars().count();
-                                let row_end = row_start + text_len;
-                                let h_start = h_cs.max(row_start).min(row_end);
-                                let h_end = h_ce.max(row_start).min(row_end);
-                                if h_start < h_end {
-                                    let local_s = h_start - row_start;
-                                    let local_e = h_end - row_start;
-                                    let before: String = rows[i].text.chars().take(local_s).collect();
-                                    let overlap: String = rows[i].text.chars().skip(local_s).take(local_e - local_s).collect();
-                                    let before_w = ui.fonts(|f| f.layout_no_wrap(before, font_id.clone(), egui::Color32::WHITE).rect.width());
-                                    let overlap_w = ui.fonts(|f| f.layout_no_wrap(overlap, font_id.clone(), egui::Color32::WHITE).rect.width());
-                                    let c = h.color;
-                                    let hl_rect = egui::Rect::from_min_size(
-                                        egui::pos2(text_rect.left() + before_w, text_rect.top()),
-                                        egui::vec2(overlap_w, text_rect.height()),
-                                    );
-                                    ui.painter().rect_filled(hl_rect, 0.0, egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]));
-                                }
-                            }
+                    for h in &ann.epub_highlights {
+                        if h.chapter_idx != rows[i].ci { continue; }
+                        if h.block_idx != rows[i].bi { continue; }
+                        let row_start = rows[i].char_offset;
+                        let text_len = rows[i].text.chars().count();
+                        let row_end = row_start + text_len;
+                        let h_start = h.char_start.max(row_start).min(row_end);
+                        let h_end = h.char_end.max(row_start).min(row_end);
+                        if h_start < h_end {
+                            let local_s = h_start - row_start;
+                            let local_e = h_end - row_start;
+                            let before: String = rows[i].text.chars().take(local_s).collect();
+                            let overlap: String = rows[i].text.chars().skip(local_s).take(local_e - local_s).collect();
+                            let before_w = ui.fonts(|f| f.layout_no_wrap(before, font_id.clone(), egui::Color32::WHITE).rect.width());
+                            let overlap_w = ui.fonts(|f| f.layout_no_wrap(overlap, font_id.clone(), egui::Color32::WHITE).rect.width());
+                            let c = h.color;
+                            let hl_rect = egui::Rect::from_min_size(
+                                egui::pos2(text_rect.left() + before_w, text_rect.top()),
+                                egui::vec2(overlap_w, text_rect.height()),
+                            );
+                            ui.painter().rect_filled(hl_rect, 0.0, egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]));
                         }
                     }
                 }
@@ -1223,7 +1220,6 @@ fn render_image_page(
                         rect: [0.0; 4],
                         note: Some(data),
                         color: ann.current_color,
-                        reflow_range: None,
                     });
                     ann.dirty = true;
                     ann.stroke_points.clear();
