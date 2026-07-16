@@ -1281,6 +1281,19 @@ impl FolixApp {
             tab.modes.reading.selection.char_focus = None;
         }
 
+        // Save epub highlights to the zip file (auto-save after each highlight)
+        if !tab.modes.annotate.epub_dirty_chapters.is_empty() {
+            if let Some(ref doc) = tab.document {
+                let doc_guard = doc.lock();
+                if let Some(reflow) = doc_guard.as_reflow() {
+                    let highlights: Vec<EpubHighlight> = tab.modes.annotate.epub_highlights.clone();
+                    reflow.save_highlights(&highlights);
+                }
+                drop(doc_guard);
+            }
+            tab.modes.annotate.epub_dirty_chapters.clear();
+        }
+
         if let Some(ref db) = self.db {
             crate::app::storage::sync_service::sync_dirty(db, tab);
         }

@@ -4,6 +4,7 @@ pub mod image_engine;
 pub mod edit_operations;
 pub mod pdf_operations;
 
+use crate::app::core::mode_system::EpubHighlight;
 use egui::{TextureId, TextureHandle};
 
 #[derive(Clone)]
@@ -80,6 +81,8 @@ pub trait ReflowLayout: Document {
     fn load_chapter(&self, idx: usize, load_images: bool) -> Chapter;
     /// Fast path – returns only block types and character counts, no image loading.
     fn chapter_info(&self, idx: usize) -> ChapterInfo;
+    /// Write highlights as `<span>` tags directly into the EPUB HTML and save.
+    fn save_highlights(&self, _highlights: &[EpubHighlight]) {}
 }
 
 #[derive(Clone)]

@@ -1,6 +1,8 @@
 use super::{Document, ReflowLayout, TocEntry, StoredImage, ContentBlock, Chapter, BlockInfo, ChapterInfo};
+use crate::app::core::mode_system::EpubHighlight;
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
+use std::io::{Read, Write};
+use zip::write::SimpleFileOptions;
 
 #[derive(Clone)]
 enum RawBlock {
@@ -19,6 +21,8 @@ pub struct ReflowDocument {
     href_to_ci: HashMap<String, usize>,
     /// Lazy-loaded chapter HTML content (index → html). Read from zip on first access.
     chapter_html_cache: std::sync::Mutex<HashMap<usize, String>>,
+    /// Maps chapter index → zip entry path for writing highlights back.
+    chapter_paths: Vec<String>,
     /// Cache for parsed raw blocks (avoid re-parsing HTML for chapter_info / image upgrade).
     raw_block_cache: std::sync::Mutex<HashMap<usize, (Vec<RawBlock>, HashSet<String>)>>,
     chapter_cache: std::sync::Mutex<HashMap<usize, Vec<ContentBlock>>>,
@@ -116,6 +120,21 @@ impl ReflowDocument {
             }
         }
 
+        // Build chapter_idx → zip entry path mapping for save_highlights.
+        let pkg_dir = epub.package().directory().to_string();
+        let pkg_dir = pkg_dir.trim_start_matches('/').to_string();
+        let mut chapter_paths = Vec::with_capacity(spine_items.len());
+        for (_, href) in &spine_items {
+            let entry_path = if href.starts_with('/') {
+                href.trim_start_matches('/').to_string()
+            } else if pkg_dir.is_empty() {
+                href.clone()
+            } else {
+                format!("{}/{}", pkg_dir, href)
+            };
+            chapter_paths.push(entry_path);
+        }
+
         Some(Self {
             path: path.to_string(),
             doc_title,
@@ -123,6 +142,7 @@ impl ReflowDocument {
             epub: Some(std::sync::Mutex::new(epub)),
             spine_items,
             href_to_ci,
+            chapter_paths,
             chapter_html_cache,
             raw_block_cache,
             chapter_cache: std::sync::Mutex::new(HashMap::new()),
@@ -190,6 +210,7 @@ impl ReflowDocument {
             epub: None,
             spine_items: vec![],
             href_to_ci: HashMap::new(),
+            chapter_paths: vec![],
             chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
             raw_block_cache: std::sync::Mutex::new(HashMap::new()),
             chapter_cache: std::sync::Mutex::new(cache),
@@ -394,6 +415,7 @@ impl ReflowDocument {
             epub: None,
             spine_items: vec![],
             href_to_ci: HashMap::new(),
+            chapter_paths: vec![],
             chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
             raw_block_cache: std::sync::Mutex::new(HashMap::new()),
             chapter_cache: std::sync::Mutex::new(cache),
@@ -1031,6 +1053,210 @@ impl ReflowDocument {
         flush_text(&mut blocks, &mut current_text, heading_level, bold_depth, italic_depth, in_li);
 
         blocks
+    }
+
+    /// Walk HTML with quick-xml, inject `<span class="flx-hl">` around highlight ranges.
+    fn inject_highlight_spans(html: &str, highlights: &[&EpubHighlight]) -> String {
+        use quick_xml::escape::unescape;
+        use quick_xml::events::Event;
+        use quick_xml::Reader;
+
+        // Phase 1: build char_map[i] = byte offset in `html` of the i-th plain-text char.
+        let mut char_map: Vec<usize> = Vec::new();
+        let mut reader = Reader::from_str(html);
+        reader.config_mut().trim_text(false);
+        let mut buf = Vec::new();
+
+        loop {
+            let pos_before = reader.buffer_position() as usize;
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Text(_)) => {
+                    let pos_after = reader.buffer_position() as usize;
+                    if pos_after <= pos_before {
+                        buf.clear();
+                        continue;
+                    }
+                    let src_slice = &html[pos_before..pos_after];
+                    // Decode XML entities to get plain text
+                    let plain = match unescape(src_slice) {
+                        Ok(s) => s.into_owned(),
+                        Err(_) => continue,
+                    };
+                    let trimmed = plain.trim();
+                    if trimmed.is_empty() {
+                        buf.clear();
+                        continue;
+                    }
+                    // Walk the source slice byte-by-byte, mapping each decoded char
+                    let src_bytes = src_slice.as_bytes();
+                    let mut src_i = 0usize;
+                    // Skip leading whitespace
+                    while src_i < src_bytes.len() && src_bytes[src_i].is_ascii_whitespace() {
+                        src_i += 1;
+                    }
+                    for pc in trimmed.chars() {
+                        if src_i >= src_bytes.len() {
+                            break;
+                        }
+                        char_map.push(pos_before + src_i);
+                        // Advance past this character's encoded form
+                        if src_bytes[src_i] == b'&' {
+                            src_i += 1;
+                            while src_i < src_bytes.len() && src_bytes[src_i] != b';' {
+                                src_i += 1;
+                            }
+                            if src_i < src_bytes.len() { src_i += 1; }
+                        } else {
+                            src_i += pc.len_utf8();
+                        }
+                        // Skip any trailing whitespace bytes
+                        while src_i < src_bytes.len() && src_bytes[src_i].is_ascii_whitespace() {
+                            src_i += 1;
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        if char_map.is_empty() || highlights.is_empty() {
+            return html.to_string();
+        }
+
+        // Phase 2: convert each highlight to a byte range in the HTML
+        let mut ranges: Vec<(usize, usize, String)> = Vec::new();
+        for h in highlights {
+            if h.char_start >= h.char_end || h.char_end > char_map.len() {
+                continue;
+            }
+            let byte_start = char_map[h.char_start];
+            let byte_end = if h.char_end < char_map.len() {
+                char_map[h.char_end]
+            } else {
+                html.len()
+            };
+            if byte_start >= byte_end {
+                continue;
+            }
+            let rgba = format!("rgba({},{},{},{})", h.color[0], h.color[1], h.color[2], h.color[3]);
+            ranges.push((byte_start, byte_end, rgba));
+        }
+
+        if ranges.is_empty() {
+            return html.to_string();
+        }
+
+        // Sort by start, merge overlapping
+        ranges.sort_by_key(|r| r.0);
+        let mut merged: Vec<(usize, usize, String)> = Vec::new();
+        for (s, e, col) in ranges {
+            if let Some(last) = merged.last_mut() {
+                if s <= last.1 {
+                    last.1 = last.1.max(e);
+                    continue;
+                }
+            }
+            merged.push((s, e, col));
+        }
+
+        // Phase 3: build output with <span> inserted at byte ranges
+        let mut out = String::with_capacity(html.len() + merged.len() * 80);
+        let mut cursor = 0usize;
+        for (s, e, col) in &merged {
+            out.push_str(&html[cursor..*s]);
+            out.push_str(&format!("<span class=\"flx-hl\" style=\"background:{};\">", col));
+            out.push_str(&html[*s..*e]);
+            out.push_str("</span>");
+            cursor = *e;
+        }
+        out.push_str(&html[cursor..]);
+        out
+    }
+
+    pub fn save_highlights(&self, highlights: &[EpubHighlight]) {
+        // Collect modified chapters
+        let mut modified: HashMap<usize, Vec<&EpubHighlight>> = HashMap::new();
+        for h in highlights {
+            modified.entry(h.chapter_idx).or_default().push(h);
+        }
+
+        if modified.is_empty() {
+            return;
+        }
+
+        // Lock cache so we can read original HTML and update it.
+        let mut cache = self.chapter_html_cache.lock().unwrap();
+
+        // Build modified HTML for each dirty chapter
+        let mut patches: HashMap<String, String> = HashMap::new();
+        for (&ci, ch_highlights) in &modified {
+            if let Some(chapter_path) = self.chapter_paths.get(ci) {
+                let html = cache.get(&ci).cloned().unwrap_or_default();
+                let patched = Self::inject_highlight_spans(&html, ch_highlights);
+                patches.insert(chapter_path.clone(), patched);
+            }
+        }
+
+        if patches.is_empty() {
+            return;
+        }
+
+        // Open EPUB as zip, copy entries, patching modified chapters
+        let path = std::path::Path::new(&self.path);
+        let original_bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let original_len = original_bytes.len();
+        let cursor = std::io::Cursor::new(original_bytes);
+        let mut archive = match zip::ZipArchive::new(cursor) {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+
+        let mut out_buf = std::io::Cursor::new(Vec::with_capacity(original_len + 65536));
+        {
+            let mut writer = zip::ZipWriter::new(&mut out_buf);
+
+            for i in 0..archive.len() {
+                let file = match archive.by_index(i) {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
+                let name = file.name().to_string();
+
+                if let Some(patched_html) = patches.get(&name) {
+                    // Write patched HTML for a modified chapter
+                    drop(file);
+                    writer
+                        .start_file(&name, SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated))
+                        .ok();
+                    let _ = writer.write_all(patched_html.as_bytes());
+                    // Update cache so subsequent saves build on the patched version
+                    if let Some(ci) = self.chapter_paths.iter().position(|p| *p == name) {
+                        cache.insert(ci, patched_html.clone());
+                    }
+                } else {
+                    // Copy entry as-is (including the original mimetype, META-INF, etc.)
+                    if let Err(e) = writer.raw_copy_file(file) {
+                        eprintln!("zip warn: failed to copy entry '{}': {:?}", name, e);
+                    }
+                }
+            }
+
+            if let Err(e) = writer.finish() {
+                eprintln!("zip warn: finish failed: {:?}", e);
+                return;
+            }
+        }
+
+        drop(archive);
+
+        // Write modified zip back to disk
+        let bytes = out_buf.into_inner();
+        let _ = std::fs::write(path, bytes);
     }
 
     pub fn path(&self) -> &str {
