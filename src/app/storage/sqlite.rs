@@ -23,15 +23,6 @@ impl Database {
                 progress_pct REAL NOT NULL DEFAULT 0.0,
                 updated_at TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS annotations (
-                id TEXT PRIMARY KEY,
-                book_id TEXT NOT NULL,
-                page INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                rect_data TEXT,
-                note TEXT,
-                created_at TEXT NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS bookmarks (
                 id TEXT PRIMARY KEY,
                 book_id TEXT NOT NULL,
@@ -87,15 +78,6 @@ impl Database {
                 page INTEGER NOT NULL DEFAULT 0,
                 progress_pct REAL NOT NULL DEFAULT 0.0,
                 updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS annotations (
-                id TEXT PRIMARY KEY,
-                book_id TEXT NOT NULL,
-                page INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                rect_data TEXT,
-                note TEXT,
-                created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS bookmarks (
                 id TEXT PRIMARY KEY,
@@ -184,15 +166,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn add_annotation(&self, book_id: &str, page: usize, kind: &str, rect_data: Option<&str>, note: Option<&str>) -> Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
-        self.conn.lock().execute(
-            "INSERT INTO annotations (id, book_id, page, kind, rect_data, note, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![uuid::Uuid::new_v4().to_string(), book_id, page as i64, kind, rect_data, note, now],
-        )?;
-        Ok(())
-    }
-
     pub fn search(&self, book_id: &str, query: &str) -> Result<Vec<(usize, String)>> {
         let like_pattern = format!("%{}%", query);
         let conn = self.conn.lock();
@@ -222,31 +195,6 @@ impl Database {
             params![id, path, title, format, now],
         )?;
         Ok(id)
-    }
-
-    pub fn get_annotations(&self, book_id: &str) -> Result<Vec<(String, usize, String, Option<String>, Option<String>)>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, page, kind, rect_data, note FROM annotations WHERE book_id = ?1",
-        )?;
-        let rows = stmt.query_map(params![book_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)? as usize,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-            ))
-        })?;
-        rows.collect()
-    }
-
-    pub fn delete_book_annotations(&self, book_id: &str) -> Result<()> {
-        self.conn.lock().execute(
-            "DELETE FROM annotations WHERE book_id = ?1",
-            params![book_id],
-        )?;
-        Ok(())
     }
 
     // ── Vocabulary CRUD ──
@@ -326,32 +274,6 @@ impl Database {
     }
 
     // ── Transactional batch sync ──
-
-    pub fn sync_annotations(&self, book_id: &str, annotations: &[crate::app::core::mode_system::Annotation]) -> Result<()> {
-        let conn = self.conn.lock();
-        let tx = conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM annotations WHERE book_id = ?1", params![book_id])?;
-        let now = chrono::Utc::now().to_rfc3339();
-        let mut stmt = tx.prepare(
-            "INSERT INTO annotations (id, book_id, page, kind, rect_data, note, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
-        )?;
-        for ann in annotations {
-            let kind_str = format!("{:?}", ann.kind);
-            let rect_str = serde_json::to_string(&ann.rect).ok();
-            stmt.execute(params![
-                uuid::Uuid::new_v4().to_string(),
-                book_id,
-                ann.page as i64,
-                kind_str,
-                rect_str,
-                ann.note.as_deref(),
-                now,
-            ])?;
-        }
-        drop(stmt);
-        tx.commit()?;
-        Ok(())
-    }
 
     pub fn sync_vocabulary(&self, book_id: &str, vocab_list: &[crate::app::core::mode_system::Vocabulary]) -> Result<()> {
         let conn = self.conn.lock();

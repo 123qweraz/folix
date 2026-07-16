@@ -1,5 +1,5 @@
 use crate::app::engines::{DocumentHandle, ContentBlock, TextWordPosition};
-use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, AnnotateState, SelectionState, Annotation, AnnotationTool, Vocabulary, SidebarSection, MoYuState, LayoutRow};
+use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, SelectionState, Vocabulary, SidebarSection, MoYuState, LayoutRow};
 use std::sync::Arc;
 use std::collections::HashMap;
 use parking_lot::Mutex;
@@ -15,7 +15,6 @@ pub fn render_document(
     view_rotation: &mut ViewRotation,
     reading: &mut ReadingState,
     auto: Option<&mut AutoState>,
-    annotate: Option<&mut AnnotateState>,
     ctx: Option<egui::Context>,
     dark_mode: bool,
     image_cache: &mut HashMap<String, egui::TextureHandle>,
@@ -124,7 +123,7 @@ pub fn render_document(
         let doc_id = doc_path;
         match *reading_layout {
             ReadingLayout::Paged => {
-                render_paged(ui, document, *page, *scale, *view_rotation, &mut reading.selection, annotate, dark_mode, highlights, doc_id);
+                render_paged(ui, document, *page, *scale, *view_rotation, &mut reading.selection, dark_mode, highlights, doc_id);
             }
             ReadingLayout::Scroll => {
                 let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
@@ -133,13 +132,13 @@ pub fn render_document(
                     reading.layout.scroll_offset_y =
                         (reading.layout.scroll_offset_y + reading.layout.scroll_velocity * dt).max(0.0);
                 }
-                render_scroll(ui, document, page, *scale, *view_rotation, total, &mut reading.layout.scroll_offset_y, &mut reading.selection, annotate, dark_mode, highlights, doc_id);
+                render_scroll(ui, document, page, *scale, *view_rotation, total, &mut reading.layout.scroll_offset_y, &mut reading.selection, dark_mode, highlights, doc_id);
                 reading.layout.scroll_velocity = 0.0;
             }
         }
     } else {
         drop(doc);
-        render_reflow_document(ui, document, scale, reading, annotate, image_cache, doc_path);
+        render_reflow_document(ui, document, scale, reading, image_cache, doc_path);
     }
     eprintln!("[perf] frame: {:?}", _frame_timer.elapsed());
 }
@@ -149,7 +148,6 @@ fn render_reflow_document(
     document: &Arc<Mutex<DocumentHandle>>,
     scale: &mut f32,
     reading: &mut ReadingState,
-    annotate: Option<&mut AnnotateState>,
     image_cache: &mut HashMap<String, egui::TextureHandle>,
     doc_path: Option<&str>,
 ) {
@@ -526,7 +524,6 @@ fn render_reflow_document(
         let base_y = content_origin;
         let alloc_w = response.rect.width();
         let content_left = base_x + x_off;
-        let ann_ref = annotate.as_ref();
 
         // Paint pass
         for i in first..last.min(rows.len()) {
@@ -754,33 +751,6 @@ fn render_reflow_document(
                 );
                 let resp = ui.interact(text_rect, egui::Id::new(("row", i)), egui::Sense::click_and_drag());
 
-                // Highlight rendering from epub_highlights
-                if let Some(ann) = ann_ref {
-                    for h in &ann.epub_highlights {
-                        if h.chapter_idx != rows[i].ci { continue; }
-                        if h.block_idx != rows[i].bi { continue; }
-                        let row_start = rows[i].char_offset;
-                        let text_len = rows[i].text.chars().count();
-                        let row_end = row_start + text_len;
-                        let h_start = h.char_start.max(row_start).min(row_end);
-                        let h_end = h.char_end.max(row_start).min(row_end);
-                        if h_start < h_end {
-                            let local_s = h_start - row_start;
-                            let local_e = h_end - row_start;
-                            let before: String = rows[i].text.chars().take(local_s).collect();
-                            let overlap: String = rows[i].text.chars().skip(local_s).take(local_e - local_s).collect();
-                            let before_w = ui.fonts(|f| f.layout_no_wrap(before, font_id.clone(), egui::Color32::WHITE).rect.width());
-                            let overlap_w = ui.fonts(|f| f.layout_no_wrap(overlap, font_id.clone(), egui::Color32::WHITE).rect.width());
-                            let c = h.color;
-                            let hl_rect = egui::Rect::from_min_size(
-                                egui::pos2(text_rect.left() + before_w, text_rect.top()),
-                                egui::vec2(overlap_w, text_rect.height()),
-                            );
-                            ui.painter().rect_filled(hl_rect, 0.0, egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]));
-                        }
-                    }
-                }
-
                 // Selection rendering
                 if sel.selecting && sel.char_anchor.is_some() {
                     let (a_ch, a_blk, a_pos) = sel.char_anchor.unwrap();
@@ -857,10 +827,6 @@ fn render_reflow_document(
                         if s_start < s_end {
                             let sel_text: String = block_text.chars().skip(s_start).take(s_end - s_start).collect();
                             if ui.button("Copy").clicked() { ui.ctx().copy_text(sel_text.clone()); ui.close_menu(); }
-                            if ui.button("Highlight").clicked() {
-                                sel.pending_highlight = Some((rows[i].ci, rows[i].bi, s_start, s_end, sel_text.clone()));
-                                ui.close_menu();
-                            }
                             if ui.button("Add to Vocabulary").clicked() { sel.pending_vocab = Some(sel_text.clone()); ui.close_menu(); }
                             if ui.button("Save Sentence").clicked() { sel.pending_sentence = Some(sel_text); ui.close_menu(); }
                         }
@@ -929,7 +895,6 @@ fn render_paged(
     scale: f32,
     view_rotation: ViewRotation,
     selection: &mut SelectionState,
-    annotate: Option<&mut AnnotateState>,
     dark_mode: bool,
     highlights: &std::collections::HashMap<usize, Vec<usize>>,
     doc_id: Option<&str>,
@@ -937,8 +902,7 @@ fn render_paged(
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
-            let need_words = annotate.is_some()
-                || !selection.selected_word_indices.is_empty();
+            let need_words = !selection.selected_word_indices.is_empty();
             let all_words = if need_words {
                 let d = doc.lock();
                 if let Some(fixed) = d.as_fixed() {
@@ -951,7 +915,7 @@ fn render_paged(
             } else {
                 HashMap::new()
             };
-            render_image_page(ui, doc, page, scale, view_rotation, &all_words, selection, annotate, dark_mode, highlights, doc_id);
+            render_image_page(ui, doc, page, scale, view_rotation, &all_words, selection, dark_mode, highlights, doc_id);
         });
 }
 
@@ -964,7 +928,6 @@ fn render_scroll(
     total: usize,
     out_scroll_y: &mut f32,
     selection: &mut SelectionState,
-    mut annotate: Option<&mut AnnotateState>,
     dark_mode: bool,
     highlights: &std::collections::HashMap<usize, Vec<usize>>,
     doc_id: Option<&str>,
@@ -1003,11 +966,10 @@ fn render_scroll(
     };
     let scroll_target = jump_y.unwrap_or(prev_scroll_y);
 
-    // Only extract text positions when selection or annotation is active.
+    // Only extract text positions when selection is active.
     // During auto-play (Light mode) there's no selection, so skip to avoid
     // the expensive MuPDF text extraction on each page's first appearance.
-    let need_words = annotate.is_some()
-        || !selection.selected_word_indices.is_empty();
+    let need_words = !selection.selected_word_indices.is_empty();
     let all_words: HashMap<usize, Vec<TextWordPosition>> = if need_words {
         let d = doc.lock();
         if let Some(fixed) = d.as_fixed() {
@@ -1032,8 +994,7 @@ fn render_scroll(
 
         for (i, &(_pw, ph, py)) in layouts.iter().enumerate() {
             if py + ph >= scroll_target && py <= approx_bottom {
-                let an = annotate.as_mut().map(|r| &mut **r);
-                render_image_page(ui, doc, i, scale, view_rotation, &all_words, selection, an, dark_mode, highlights, doc_id);
+                render_image_page(ui, doc, i, scale, view_rotation, &all_words, selection, dark_mode, highlights, doc_id);
             } else {
                 ui.allocate_exact_size(egui::vec2(ui.available_width(), ph), egui::Sense::hover());
             }
@@ -1076,10 +1037,9 @@ fn render_image_page(
     view_rotation: ViewRotation,
     all_words: &HashMap<usize, Vec<TextWordPosition>>,
     selection: &mut SelectionState,
-    mut annotate: Option<&mut AnnotateState>,
     _dark_mode: bool,
     highlights: &std::collections::HashMap<usize, Vec<usize>>,
-    doc_id: Option<&str>,
+    _doc_id: Option<&str>,
 ) {
     // Acquire texture (from GPU cache or render + upload)
     let (tex_id, tex_size) = {
@@ -1184,10 +1144,7 @@ fn render_image_page(
 
     let words = all_words.get(&page_idx);
 
-    // --- Interaction (selection in all modes, tool-specific overrides) ---
-    let tool = annotate.as_ref().map(|a| a.tool.clone());
-
-    // Render text selection overlay (always, regardless of tool)
+    // Render text selection overlay
     if let Some(words_data) = words {
         if !selection.selected_word_indices.is_empty() && selection.page == page_idx {
             for &idx in &selection.selected_word_indices {
@@ -1206,359 +1163,122 @@ fn render_image_page(
         }
     }
 
-    // Dispatch interaction based on active tool
-    if tool == Some(AnnotationTool::Pen) {
-        if response.drag_started() {
-            if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
-                if let Some(ann) = annotate.as_mut() {
-                    ann.stroke_points.clear();
-                    ann.stroke_points.push([rx, ry]);
-                }
-            }
-        }
+    // Text selection interaction
+    let shift_held = ui.input(|i| i.modifiers.shift);
 
-        if let Some(ann) = annotate.as_mut() {
-            if response.dragged() {
-                if let Some(mouse_pos) = response.interact_pointer_pos() {
-                    let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
-                    ann.stroke_points.push([rx, ry]);
-                }
-            }
-
-            if response.drag_stopped() {
-                if !ann.stroke_points.is_empty() {
-                    let pts = ann.stroke_points.clone();
-                    let data = serde_json::to_string(&pts).unwrap_or_default();
-                    ann.annotations.push(Annotation {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        doc_id: doc_id.unwrap_or("").to_string(),
-                        kind: AnnotationTool::Pen,
-                        page: page_idx,
-                        rect: [0.0; 4],
-                        note: Some(data),
-                        color: ann.current_color,
-                    });
-                    ann.dirty = true;
-                    ann.stroke_points.clear();
-                }
-            }
-
-            if !ann.stroke_points.is_empty() {
-                let points: Vec<egui::Pos2> = ann.stroke_points.iter().map(|&[x, y]| {
-                    let (sx, sy) = doc_to_screen(x, y);
-                    egui::pos2(sx, sy)
-                }).collect();
-                if points.len() > 1 {
-                    for w in points.windows(2) {
-                        ui.painter().line_segment(
-                            [w[0], w[1]],
-                            egui::Stroke::new(3.0, egui::Color32::from_rgba_premultiplied(255, 100, 50, 200)),
-                        );
-                    }
-                }
-            }
-        }
-    } else if tool == Some(AnnotationTool::Eraser) {
-        let mut erase_pos: Option<(f32, f32)> = None;
-        if response.drag_started() {
-            if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
-                if let Some(ann) = annotate.as_mut() {
-                    ann.selection_anchor = Some((rx, ry));
-                }
-            }
-        }
-        if response.drag_stopped() {
-            if let Some(ann) = annotate.as_mut() {
-                if let (Some(mouse_pos), Some(anchor)) = (response.interact_pointer_pos(), ann.selection_anchor) {
-                    let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
-                    let dx = rx - anchor.0;
-                    let dy = ry - anchor.1;
-                    if (dx * dx + dy * dy).sqrt() < 8.0 {
-                        erase_pos = Some((rx, ry));
-                    }
-                }
-                ann.selection_anchor = None;
-            }
-        }
-        if let Some((rx, ry)) = erase_pos {
-            if let Some(ann) = annotate.as_mut() {
-                let hit = ann.annotations.iter().position(|a| {
-                    if a.page != page_idx { return false; }
-                    match a.kind {
-                        AnnotationTool::Highlight => {
-                            rx >= a.rect[0] && rx <= a.rect[2] && ry >= a.rect[1] && ry <= a.rect[3]
-                        }
-                        AnnotationTool::Pen => {
-                            if let Some(data) = &a.note {
-                                if let Ok(pts) = serde_json::from_str::<Vec<[f32; 2]>>(data) {
-                                    let th = 15.0;
-                                    pts.iter().any(|&[x, y]| {
-                                        let ddx = x - rx;
-                                        let ddy = y - ry;
-                                        (ddx * ddx + ddy * ddy).sqrt() < th
-                                    })
-                                } else { false }
-                            } else { false }
-                        }
-                        AnnotationTool::Note => {
-                            let ddx = a.rect[0] - rx;
-                            let ddy = a.rect[1] - ry;
-                            (ddx * ddx + ddy * ddy).sqrt() < 25.0
-                        }
-                        AnnotationTool::Eraser => false,
-                    }
-                });
-                if let Some(idx) = hit {
-                    ann.annotations.remove(idx);
-                    ann.dirty = true;
-                }
-            }
-        }
-    } else {
-        // --- Text selection (Highlight / None / Note tools) ---
-        let shift_held = ui.input(|i| i.modifiers.shift);
-
-        if response.double_clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let (rx, ry) = screen_to_doc(pos.x, pos.y);
-                if let Some(words_data) = words {
-                    if let Some(idx) = find_word_at(words_data, rx, ry) {
-                        let w = &words_data[idx];
-                        selection.selected_word_indices = vec![idx];
-                        selection.anchor = Some((w.x0, w.y0));
-                        selection.focus = Some((w.x1, w.y1));
-                        selection.page = page_idx;
-                        selection.selecting = false;
-                    }
-                }
-            }
-        }
-
-        if !shift_held && response.clicked() && !response.double_clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let (rx, ry) = screen_to_doc(pos.x, pos.y);
-                if let Some(words_data) = words {
-                    if let Some(idx) = find_word_at(words_data, rx, ry) {
-                        let w = &words_data[idx];
-                        selection.selected_word_indices = vec![idx];
-                        selection.anchor = Some((w.x0, w.y0));
-                        selection.focus = Some((w.x1, w.y1));
-                        selection.page = page_idx;
-                    } else {
-                        selection.selected_word_indices.clear();
-                        selection.anchor = None;
-                        selection.focus = None;
-                    }
+    if response.double_clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let (rx, ry) = screen_to_doc(pos.x, pos.y);
+            if let Some(words_data) = words {
+                if let Some(idx) = find_word_at(words_data, rx, ry) {
+                    let w = &words_data[idx];
+                    selection.selected_word_indices = vec![idx];
+                    selection.anchor = Some((w.x0, w.y0));
+                    selection.focus = Some((w.x1, w.y1));
+                    selection.page = page_idx;
                     selection.selecting = false;
                 }
             }
         }
+    }
 
-        if shift_held && response.clicked() && !response.double_clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let (rx, ry) = screen_to_doc(pos.x, pos.y);
+    if !shift_held && response.clicked() && !response.double_clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let (rx, ry) = screen_to_doc(pos.x, pos.y);
+            if let Some(words_data) = words {
+                if let Some(idx) = find_word_at(words_data, rx, ry) {
+                    let w = &words_data[idx];
+                    selection.selected_word_indices = vec![idx];
+                    selection.anchor = Some((w.x0, w.y0));
+                    selection.focus = Some((w.x1, w.y1));
+                    selection.page = page_idx;
+                } else {
+                    selection.selected_word_indices.clear();
+                    selection.anchor = None;
+                    selection.focus = None;
+                }
+                selection.selecting = false;
+            }
+        }
+    }
+
+    if shift_held && response.clicked() && !response.double_clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let (rx, ry) = screen_to_doc(pos.x, pos.y);
+            if let Some(words_data) = words {
+                if let Some(idx) = find_word_at(words_data, rx, ry) {
+                    if selection.page == page_idx {
+                        if let Some(pos) = selection.selected_word_indices.iter().position(|&i| i == idx) {
+                            selection.selected_word_indices.remove(pos);
+                        } else {
+                            selection.selected_word_indices.push(idx);
+                        }
+                    } else {
+                        selection.selected_word_indices = vec![idx];
+                        selection.page = page_idx;
+                    }
+                }
+                selection.selecting = false;
+            }
+        }
+    }
+
+    if !shift_held && !response.double_clicked() && response.drag_started() {
+        let ctrl_held = ui.input(|i| i.modifiers.ctrl);
+        if let Some(mouse_pos) = response.interact_pointer_pos() {
+            let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
+            selection.selecting = true;
+            selection.anchor = Some((rx, ry));
+            selection.focus = Some((rx, ry));
+            selection.page = page_idx;
+            if !ctrl_held {
                 if let Some(words_data) = words {
-                    if let Some(idx) = find_word_at(words_data, rx, ry) {
-                        if selection.page == page_idx {
-                            if let Some(pos) = selection.selected_word_indices.iter().position(|&i| i == idx) {
-                                selection.selected_word_indices.remove(pos);
-                            } else {
+                    selection.selected_word_indices = find_words_in_range(words_data, rx, ry, rx, ry);
+                }
+            }
+        }
+    }
+
+    if selection.selecting && selection.page == page_idx && response.dragged() {
+        let ctrl_held = ui.input(|i| i.modifiers.ctrl);
+        if let Some(mouse_pos) = response.interact_pointer_pos() {
+            let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
+            selection.focus = Some((rx, ry));
+            if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
+                if let Some(words_data) = words {
+                    let range_words = find_words_in_range(
+                        words_data,
+                        anchor.0.min(focus.0),
+                        anchor.1.min(focus.1),
+                        anchor.0.max(focus.0),
+                        anchor.1.max(focus.1),
+                    );
+                    if ctrl_held {
+                        for &idx in &range_words {
+                            if !selection.selected_word_indices.contains(&idx) {
                                 selection.selected_word_indices.push(idx);
                             }
-                        } else {
-                            selection.selected_word_indices = vec![idx];
-                            selection.page = page_idx;
                         }
-                    }
-                    selection.selecting = false;
-                }
-            }
-        }
-
-        if !shift_held && !response.double_clicked() && response.drag_started() {
-            let ctrl_held = ui.input(|i| i.modifiers.ctrl);
-            if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
-                selection.selecting = true;
-                selection.anchor = Some((rx, ry));
-                selection.focus = Some((rx, ry));
-                selection.page = page_idx;
-                if !ctrl_held {
-                    if let Some(words_data) = words {
-                        selection.selected_word_indices = find_words_in_range(words_data, rx, ry, rx, ry);
-                    }
-                }
-            }
-        }
-
-        if selection.selecting && selection.page == page_idx && response.dragged() {
-            let ctrl_held = ui.input(|i| i.modifiers.ctrl);
-            if let Some(mouse_pos) = response.interact_pointer_pos() {
-                let (rx, ry) = screen_to_doc(mouse_pos.x, mouse_pos.y);
-                selection.focus = Some((rx, ry));
-                if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
-                    if let Some(words_data) = words {
-                        let range_words = find_words_in_range(
-                            words_data,
-                            anchor.0.min(focus.0),
-                            anchor.1.min(focus.1),
-                            anchor.0.max(focus.0),
-                            anchor.1.max(focus.1),
-                        );
-                        if ctrl_held {
-                            for &idx in &range_words {
-                                if !selection.selected_word_indices.contains(&idx) {
-                                    selection.selected_word_indices.push(idx);
-                                }
-                            }
-                        } else {
-                            selection.selected_word_indices = range_words;
-                        }
-                    }
-                }
-            }
-        }
-
-        if response.drag_stopped() {
-            selection.selecting = false;
-        }
-
-        if selection.selecting && selection.page == page_idx {
-            if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
-                let (from_x, from_y) = doc_to_screen(anchor.0, anchor.1);
-                let (to_x, to_y) = doc_to_screen(focus.0, focus.1);
-                ui.painter().line_segment(
-                    [egui::pos2(from_x, from_y), egui::pos2(to_x, to_y)],
-                    egui::Stroke::new(2.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 200)),
-                );
-            }
-        }
-
-        if tool == Some(AnnotationTool::Note) && !shift_held && response.clicked() && !response.double_clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let (rx, ry) = screen_to_doc(pos.x, pos.y);
-                if let Some(ann) = annotate.as_mut() {
-                    let hit = ann.annotations.iter().position(|a| {
-                        a.page == page_idx && a.kind == AnnotationTool::Highlight &&
-                        rx >= a.rect[0] && rx <= a.rect[2] && ry >= a.rect[1] && ry <= a.rect[3]
-                    });
-                    if let Some(idx) = hit {
-                        ann.editing_note_id = Some(ann.annotations[idx].id.clone());
-                        ann.note_text_buffer = ann.annotations[idx].note.clone().unwrap_or_default();
+                    } else {
+                        selection.selected_word_indices = range_words;
                     }
                 }
             }
         }
     }
 
-    if let Some(ann) = annotate.as_mut() {
-        if let Some(ref edit_id) = ann.editing_note_id.clone() {
-            let mut keep = true;
-            egui::Window::new("Edit Note")
-                .open(&mut keep)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ui.ctx(), |ui| {
-                    ui.label("Note text:");
-                    ui.add_space(4.0);
-                    ui.add(egui::TextEdit::multiline(&mut ann.note_text_buffer)
-                        .desired_width(200.0)
-                        .desired_rows(4));
-                    ui.add_space(8.0);
-                    if ui.button("Save").clicked() {
-                        if let Some(a) = ann.annotations.iter_mut().find(|a| a.id == *edit_id) {
-                            a.note = if ann.note_text_buffer.is_empty() {
-                                None
-                            } else {
-                                Some(ann.note_text_buffer.clone())
-                            };
-                            ann.dirty = true;
-                        }
-                        ann.editing_note_id = None;
-                        ann.note_text_buffer.clear();
-                    }
-                });
-            if !keep {
-                ann.editing_note_id = None;
-                ann.note_text_buffer.clear();
-            }
-        }
+    if response.drag_stopped() {
+        selection.selecting = false;
     }
 
-    if let Some(ann) = annotate.as_ref() {
-        for ann_item in &ann.annotations {
-            if ann_item.page != page_idx { continue; }
-            match ann_item.kind {
-                AnnotationTool::Highlight => {
-                    let [x0, y0, x1, y1] = ann_item.rect;
-                    let c = ann_item.color;
-                    let (sx0, sy0) = doc_to_screen(x0, y0);
-                    let (sx1, sy1) = doc_to_screen(x1, y1);
-                    let r = egui::Rect::from_min_max(
-                        egui::pos2(sx0, sy0), egui::pos2(sx1, sy1),
-                    );
-                    ui.painter().rect_filled(r, 0.0, egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]));
-                }
-                AnnotationTool::Pen => {
-                    if let Some(data) = &ann_item.note {
-                        if let Ok(pts) = serde_json::from_str::<Vec<[f32; 2]>>(data) {
-                            let points: Vec<egui::Pos2> = pts.iter().map(|&[x, y]| {
-                                let (sx, sy) = doc_to_screen(x, y);
-                                egui::pos2(sx, sy)
-                            }).collect();
-                            for w in points.windows(2) {
-                                ui.painter().line_segment(
-                                    [w[0], w[1]],
-                                    egui::Stroke::new(3.0, egui::Color32::from_rgba_premultiplied(255, 100, 50, 200)),
-                                );
-                            }
-                        }
-                    }
-                }
-                AnnotationTool::Note => {
-                    let (cx, cy) = doc_to_screen(ann_item.rect[0], ann_item.rect[1]);
-                    let size = 12.0;
-                    ui.painter().circle_filled(
-                        egui::pos2(cx, cy), size,
-                        egui::Color32::from_rgba_premultiplied(255, 200, 50, 200),
-                    );
-                    ui.painter().text(
-                        egui::pos2(cx, cy),
-                        egui::Align2::CENTER_CENTER, "📌",
-                        egui::FontId::proportional(14.0),
-                        egui::Color32::WHITE,
-                    );
-                    if let Some(text) = &ann_item.note {
-                        if !text.is_empty() {
-                            let line_count = text.lines().count() as f32;
-                            let text_rect = egui::Rect::from_min_size(
-                                egui::pos2(cx + size + 4.0, cy - 8.0),
-                                egui::vec2(180.0, 16.0 * line_count + 8.0),
-                            ).intersect(egui::Rect::from_min_max(
-                                egui::pos2(image_rect.left(), image_rect.top()),
-                                egui::pos2(image_rect.right(), image_rect.bottom()),
-                            ));
-                            ui.painter().rect_filled(
-                                text_rect, 4.0,
-                                egui::Color32::from_rgba_premultiplied(255, 240, 180, 220),
-                            );
-                            ui.painter().rect_stroke(
-                                text_rect, 4.0,
-                                egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(200, 160, 40, 200)),
-                                egui::StrokeKind::Inside,
-                            );
-                            ui.painter().text(
-                                egui::pos2(text_rect.left() + 4.0, text_rect.top() + 4.0),
-                                egui::Align2::LEFT_TOP, text,
-                                egui::FontId::proportional(12.0),
-                                egui::Color32::BLACK,
-                            );
-                        }
-                    }
-                }
-                AnnotationTool::Eraser => {}
-            }
+    if selection.selecting && selection.page == page_idx {
+        if let (Some(anchor), Some(focus)) = (selection.anchor, selection.focus) {
+            let (from_x, from_y) = doc_to_screen(anchor.0, anchor.1);
+            let (to_x, to_y) = doc_to_screen(focus.0, focus.1);
+            ui.painter().line_segment(
+                [egui::pos2(from_x, from_y), egui::pos2(to_x, to_y)],
+                egui::Stroke::new(2.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 200)),
+            );
         }
     }
 

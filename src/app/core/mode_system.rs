@@ -98,8 +98,6 @@ pub struct SelectionState {
     pub pending_vocab: Option<String>,
     /// Pending sentence addition (text to save, set by context menu)
     pub pending_sentence: Option<String>,
-    /// Pending epub highlight: (chapter_idx, block_idx, char_start, char_end, text)
-    pub pending_highlight: Option<(usize, usize, usize, usize, String)>,
 }
 
 impl Default for SelectionState {
@@ -115,7 +113,6 @@ impl Default for SelectionState {
             selected_text: String::new(),
             pending_vocab: None,
             pending_sentence: None,
-            pending_highlight: None,
         }
     }
 }
@@ -266,75 +263,6 @@ impl MoYuState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum AnnotationTool {
-    Highlight,
-    Pen,
-    Note,
-    Eraser,
-}
-
-/// A highlight on an EPUB/TXT reflow document, stored as character ranges
-/// and written into the chapter HTML as `<span class="flx-hl">`.
-#[derive(Clone)]
-pub struct EpubHighlight {
-    pub id: String,
-    /// Chapter index
-    pub chapter_idx: usize,
-    /// Text block index within the chapter
-    pub block_idx: usize,
-    /// Character offset within the block text (start, inclusive)
-    pub char_start: usize,
-    /// Character offset within the block text (end, exclusive)
-    pub char_end: usize,
-    /// The exact selected text (used for HTML matching on save)
-    pub text: String,
-    /// RGBA highlight color
-    pub color: [u8; 4],
-    pub created_at: String,
-}
-
-#[derive(Clone)]
-pub struct Annotation {
-    pub id: String,
-    pub doc_id: String,
-    pub kind: AnnotationTool,
-    pub page: usize,
-    pub rect: [f32; 4],
-    pub note: Option<String>,
-    pub color: [u8; 4],
-}
-
-pub const HIGHLIGHT_COLORS: [[u8; 4]; 8] = [
-    [255, 255, 0, 120],   // yellow
-    [255, 150, 50, 120],  // orange
-    [255, 100, 100, 120], // red
-    [100, 200, 255, 120], // blue
-    [100, 255, 100, 120], // green
-    [200, 100, 255, 120], // purple
-    [255, 255, 255, 120], // white
-    [80, 80, 80, 120],    // gray
-];
-
-#[derive(Clone)]
-pub struct AnnotateState {
-    pub tool: AnnotationTool,
-    pub annotations: Vec<Annotation>,
-    /// EPUB/TXT highlights stored as character ranges (persisted into the EPUB file)
-    pub epub_highlights: Vec<EpubHighlight>,
-    /// Set of chapter indices whose epub_highlights have changed and need saving
-    pub epub_dirty_chapters: std::collections::HashSet<usize>,
-    pub stroke_points: Vec<[f32; 2]>,
-    pub selecting: bool,
-    pub selection_anchor: Option<(f32, f32)>,
-    pub selection_focus: Option<(f32, f32)>,
-    pub selection_page: usize,
-    pub editing_note_id: Option<String>,
-    pub note_text_buffer: String,
-    pub current_color: [u8; 4],
-    pub dirty: bool,
-}
-
 #[derive(Clone)]
 pub struct PageEditState;
 
@@ -391,7 +319,6 @@ pub struct TabModes {
     pub reading: ReadingState,
     pub auto: AutoState,
     pub mo_yu: MoYuState,
-    pub annotate: AnnotateState,
     pub edit: EditState,
     pub active: ModeKind,
     pub reflow_font_size: f32,
@@ -461,21 +388,6 @@ impl TabModes {
                 progress: 0.0,
             },
             mo_yu: MoYuState::new(),
-            annotate: AnnotateState {
-                tool: AnnotationTool::Highlight,
-                annotations: vec![],
-                epub_highlights: vec![],
-                epub_dirty_chapters: std::collections::HashSet::new(),
-                stroke_points: vec![],
-                selecting: false,
-                selection_anchor: None,
-                selection_focus: None,
-                selection_page: 0,
-                editing_note_id: None,
-                note_text_buffer: String::new(),
-                current_color: HIGHLIGHT_COLORS[0],
-                dirty: false,
-            },
             edit: EditState::Page(PageEditState),
             active: ModeKind::LightReading,
             reflow_font_size: 16.0,

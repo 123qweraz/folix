@@ -1,9 +1,9 @@
 use crate::app::core::{AppState, ModeKind, TabModes, ReadingLayout, document_manager::DocumentManager};
 use crate::app::core::app_state::TabContent;
-use crate::app::core::mode_system::{ViewMode, FitMode, ViewRotation, Annotation, AnnotationTool, EpubHighlight, EditState, ContentEditState, Bookmark, Vocabulary, Sentence_};
+use crate::app::core::mode_system::{ViewMode, FitMode, ViewRotation, EditState, ContentEditState, Bookmark, Vocabulary, Sentence_};
 use crate::app::config::RecentFile;
 use crate::app::core::shortcuts::{key_from_str, ShortcutAction as SA, ALL_ACTIONS, AVAILABLE_KEYS};
-use crate::app::engines::{ContentBlock, edit_operations};
+use crate::app::engines::edit_operations;
 use crate::app::platform::font_loader::FontLoader;
 use crate::app::storage::sqlite::Database;
 use super::{mode_ui, pdf_toolbox};
@@ -153,8 +153,7 @@ impl FolixApp {
             ("toggle_mode", "Light"),
             ("play_pause", "Light"),
             ("speed_control", "Light"),
-            ("select_tool", "Deep"),
-            ("undo", "Deep"),
+
         ];
         for (id, scope) in &features {
             self.state.feature_system.register(id, scope);
@@ -212,47 +211,6 @@ impl FolixApp {
                             else { "txt" };
                         if let Ok(book_id) = db.ensure_book(&path_str, &title, format) {
                             tab.book_id = Some(book_id.clone());
-                            // Load annotations from DB
-                            let is_reflow_doc = format == "epub" || format == "txt";
-                            if let Ok(rows) = db.get_annotations(&book_id) {
-                                for (_, page, kind_str, rect_data, note) in rows {
-                                    let kind = match kind_str.as_str() {
-                                        "Pen" => crate::app::core::mode_system::AnnotationTool::Pen,
-                                        "Note" => crate::app::core::mode_system::AnnotationTool::Note,
-                                        "Eraser" => crate::app::core::mode_system::AnnotationTool::Eraser,
-                                        _ => crate::app::core::mode_system::AnnotationTool::Highlight,
-                                    };
-                                    let rect = rect_data.as_deref()
-                                        .and_then(|s| serde_json::from_str::<[f32; 4]>(s).ok())
-                                        .unwrap_or([0.0; 4]);
-                                    if is_reflow_doc && kind == AnnotationTool::Highlight {
-                                        let ch = rect[0] as usize;
-                                        let blk = rect[1] as usize;
-                                        let cs = rect[2] as usize;
-                                        let ce = rect[3] as usize;
-                                        tab.modes.annotate.epub_highlights.push(EpubHighlight {
-                                            id: uuid::Uuid::new_v4().to_string(),
-                                            chapter_idx: ch,
-                                            block_idx: blk,
-                                            char_start: cs,
-                                            char_end: ce,
-                                            text: note.clone().unwrap_or_default(),
-                                            color: [255, 255, 0, 120],
-                                            created_at: chrono::Utc::now().to_rfc3339(),
-                                        });
-                                    } else {
-                                        tab.modes.annotate.annotations.push(Annotation {
-                                            id: uuid::Uuid::new_v4().to_string(),
-                                            doc_id: book_id.clone(),
-                                            kind,
-                                            page,
-                                            rect,
-                                            note,
-                                            color: [255, 255, 0, 120],
-                                        });
-                                    }
-                                }
-                            }
                             // Load bookmarks
                             if let Ok(rows) = db.list_bookmarks(&book_id) {
                                 for (_, page, label) in rows {
@@ -359,83 +317,6 @@ impl FolixApp {
         }
     }
 
-    fn apply_highlight_selection(tab: &mut crate::app::core::app_state::OpenTab) {
-        let doc_id = tab.book_id.as_deref().unwrap_or("");
-        if let Some(ref doc) = tab.document {
-            let is_fixed = doc.lock().is_fixed();
-            if is_fixed {
-                let has_sel = !tab.modes.reading.selection.selected_word_indices.is_empty()
-                    && tab.modes.reading.selection.page == tab.modes.page;
-                if has_sel {
-                    let page = tab.modes.page;
-                    let words = doc.lock().as_fixed().map(|f| f.page_text_positions(page)).unwrap_or_default();
-                    let indices = &tab.modes.reading.selection.selected_word_indices;
-                    let mut x0 = f32::MAX; let mut y0 = f32::MAX;
-                    let mut x1 = f32::MIN; let mut y1 = f32::MIN;
-                    for &idx in indices {
-                        if let Some(w) = words.get(idx) {
-                            x0 = x0.min(w.x0); y0 = y0.min(w.y0);
-                            x1 = x1.max(w.x1); y1 = y1.max(w.y1);
-                        }
-                    }
-                    if x0 != f32::MAX {
-                        tab.modes.annotate.annotations.push(Annotation {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            doc_id: doc_id.to_string(),
-                            kind: AnnotationTool::Highlight,
-                            page,
-                            rect: [x0, y0, x1, y1],
-                            note: None,
-                            color: tab.modes.annotate.current_color,
-                        });
-                        tab.modes.annotate.dirty = true;
-                        tab.modes.reading.selection.selected_word_indices.clear();
-                        tab.modes.reading.selection.anchor = None;
-                        tab.modes.reading.selection.focus = None;
-                    }
-                }
-            } else {
-                // Reflow document highlight using character-based selection
-                let sel = &tab.modes.reading.selection;
-                if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
-                    let (a_ch, a_blk, a_pos) = anchor;
-                    let (f_ch, f_blk, f_pos) = focus;
-                    if a_ch == f_ch && a_blk == f_blk {
-                        let cstart = a_pos.min(f_pos);
-                        let cend = a_pos.max(f_pos);
-                        if cstart < cend {
-                            // Get the highlighted text from the document
-                            let doc_guard = doc.lock();
-                            let reflow = doc_guard.as_reflow().unwrap();
-                            let chapter = reflow.load_chapter(a_ch, false);
-                            let sel_text: String = chapter.blocks.get(a_blk)
-                                .and_then(|b| match b {
-                                    ContentBlock::Text { text: t, .. } => Some(t.chars().skip(cstart).take(cend - cstart).collect()),
-                                    _ => None,
-                                })
-                                .unwrap_or_default();
-                            drop(doc_guard);
-                            tab.modes.annotate.epub_highlights.push(EpubHighlight {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                chapter_idx: a_ch,
-                                block_idx: a_blk,
-                                char_start: cstart,
-                                char_end: cend,
-                                text: sel_text.clone(),
-                                color: tab.modes.annotate.current_color,
-                                created_at: chrono::Utc::now().to_rfc3339(),
-                            });
-                            tab.modes.annotate.epub_dirty_chapters.insert(a_ch);
-                            tab.modes.annotate.dirty = true;
-                            tab.modes.reading.selection.char_anchor = None;
-                            tab.modes.reading.selection.char_focus = None;
-                            tab.modes.reading.selection.selected_text.clear();
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 impl eframe::App for FolixApp {
@@ -577,12 +458,6 @@ impl eframe::App for FolixApp {
                         tab.modes.auto.progress = 0.0;
                     }
                 }
-            }
-        }
-
-        if self.shortcut(ctx, SA::HighlightSel) {
-            if let Some(tab) = self.state.current_tab_mut() {
-                Self::apply_highlight_selection(tab);
             }
         }
 
@@ -1080,8 +955,6 @@ impl FolixApp {
                         ui.end_row();
                         ui.checkbox(&mut self.state.settings.show_toolbar_auto, crate::app::i18n::tr(lng, "▶ Auto-read"));
                         ui.end_row();
-                        ui.checkbox(&mut self.state.settings.show_toolbar_annotate, crate::app::i18n::tr(lng, "🖊 Annotate"));
-                        ui.end_row();
                         ui.checkbox(&mut self.state.settings.show_toolbar_edit, crate::app::i18n::tr(lng, "✏ Page Edit"));
                         ui.end_row();
                     });
@@ -1217,8 +1090,6 @@ impl FolixApp {
         let document = self.state.tabs[idx].document.as_ref().unwrap().clone();
         let tab = &mut self.state.tabs[idx];
         let ctx = ui.ctx().clone();
-        let is_light = tab.modes.active == ModeKind::LightReading;
-        let is_deep = tab.modes.active == ModeKind::DeepReading;
         let dark_mode = self.state.settings.dark_mode;
         let doc_path = tab.path.as_deref();
         mode_ui::render_document(
@@ -1229,8 +1100,7 @@ impl FolixApp {
             &mut tab.modes.fit_mode,
             &mut tab.modes.view_rotation,
             &mut tab.modes.reading,
-            if is_light { Some(&mut tab.modes.auto) } else { None },
-            if is_deep { Some(&mut tab.modes.annotate) } else { None },
+            None,
             Some(ctx.clone()),
             dark_mode,
             &mut self.image_texture_cache,
@@ -1262,36 +1132,6 @@ impl FolixApp {
             tab.modes.reading.selection.selected_word_indices.clear();
             tab.modes.reading.selection.char_anchor = None;
             tab.modes.reading.selection.char_focus = None;
-        }
-
-        // Handle pending epub highlight from context menu
-        if let Some((ci, bi, cs, ce, text)) = tab.modes.reading.selection.pending_highlight.take() {
-            tab.modes.annotate.epub_highlights.push(EpubHighlight {
-                id: uuid::Uuid::new_v4().to_string(),
-                chapter_idx: ci,
-                block_idx: bi,
-                char_start: cs,
-                char_end: ce,
-                text,
-                color: tab.modes.annotate.current_color,
-                created_at: chrono::Utc::now().to_rfc3339(),
-            });
-            tab.modes.annotate.epub_dirty_chapters.insert(ci);
-            tab.modes.reading.selection.char_anchor = None;
-            tab.modes.reading.selection.char_focus = None;
-        }
-
-        // Save epub highlights to the zip file (auto-save after each highlight)
-        if !tab.modes.annotate.epub_dirty_chapters.is_empty() {
-            if let Some(ref doc) = tab.document {
-                let doc_guard = doc.lock();
-                if let Some(reflow) = doc_guard.as_reflow() {
-                    let highlights: Vec<EpubHighlight> = tab.modes.annotate.epub_highlights.clone();
-                    reflow.save_highlights(&highlights);
-                }
-                drop(doc_guard);
-            }
-            tab.modes.annotate.epub_dirty_chapters.clear();
         }
 
         if let Some(ref db) = self.db {
@@ -1600,24 +1440,6 @@ impl FolixApp {
                             }
                         }
                         ModeKind::DeepReading => {
-                            // PDF: Sel / Pen / Eraser tool buttons
-                            if is_fixed_doc {
-                                let tool = &tab.modes.annotate.tool;
-                                let is_sel = *tool == AnnotationTool::Highlight;
-                                let is_pen = *tool == AnnotationTool::Pen;
-                                let is_eraser = *tool == AnnotationTool::Eraser;
-                                if ui.selectable_label(is_sel, crate::app::i18n::tr(lng, "Sel")).clicked() {
-                                    tab.modes.annotate.tool = AnnotationTool::Highlight;
-                                }
-                                if ui.selectable_label(is_pen, crate::app::i18n::tr(lng, "Pen")).clicked() {
-                                    tab.modes.annotate.tool = AnnotationTool::Pen;
-                                }
-                                if ui.selectable_label(is_eraser, crate::app::i18n::tr(lng, "Eraser")).clicked() {
-                                    tab.modes.annotate.tool = AnnotationTool::Eraser;
-                                }
-                                ui.separator();
-                            }
-
                             // EPUB: magnifier toggle
                             if !is_fixed_doc {
                                 let mag = &mut tab.modes.reading.magnifier;
@@ -1625,53 +1447,6 @@ impl FolixApp {
                                     mag.active = !mag.active;
                                 }
                                 ui.separator();
-                            }
-
-                            // Highlight Selected button
-                            if let Some(ref doc) = tab.document {
-                                let is_fixed = doc.lock().is_fixed();
-                                let has_fixed_sel = is_fixed
-                                    && !tab.modes.reading.selection.selected_word_indices.is_empty()
-                                    && tab.modes.reading.selection.page == tab.modes.page;
-                                let has_reflow_sel = !is_fixed
-                                    && tab.modes.reading.selection.char_anchor.is_some()
-                                    && tab.modes.reading.selection.char_focus.is_some();
-                                let enabled = has_fixed_sel || has_reflow_sel;
-                                if ui.add_enabled(enabled, egui::Button::new(crate::app::i18n::tr(lng, "High"))).clicked() {
-                                    Self::apply_highlight_selection(tab);
-                                }
-                            }
-
-                            // Note on last highlight button
-                            if ui.button(crate::app::i18n::tr(lng, "Note")).clicked() {
-                                let page = tab.modes.page;
-                                if let Some(last) = tab.modes.annotate.annotations.iter().rev().find(|a| {
-                                    a.page == page && a.kind == AnnotationTool::Highlight
-                                }) {
-                                    tab.modes.annotate.editing_note_id = Some(last.id.clone());
-                                    tab.modes.annotate.note_text_buffer = last.note.clone().unwrap_or_default();
-                                }
-                            }
-
-                            ui.separator();
-                            // Color swatches
-                            for &c in &crate::app::core::mode_system::HIGHLIGHT_COLORS {
-                                let c32 = egui::Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]);
-                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
-                                let fill = if tab.modes.annotate.current_color == c { c32 } else { c32.gamma_multiply(0.6) };
-                                ui.painter().rect_filled(rect, 3.0, fill);
-                                if resp.clicked() {
-                                    tab.modes.annotate.current_color = c;
-                                }
-                            }
-                            ui.separator();
-                            if ui.button(crate::app::i18n::tr(lng, "Undo")).clicked() {
-                                tab.modes.annotate.annotations.pop();
-                                tab.modes.annotate.dirty = true;
-                            }
-                            if ui.button(crate::app::i18n::tr(lng, "Clr")).clicked() {
-                                tab.modes.annotate.annotations.clear();
-                                tab.modes.annotate.dirty = true;
                             }
                         }
                         ModeKind::PageEdit => {

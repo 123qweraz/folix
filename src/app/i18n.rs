@@ -13,7 +13,6 @@ static ZH_CN: &[(&str, &str)] = &[
 
     // Mode names
     ("Basic", "基础浏览"),
-    ("Annotate", "标注工具"),
     ("Page Edit", "页面编辑"),
     ("Content", "内容"),
 
@@ -45,7 +44,6 @@ static ZH_CN: &[(&str, &str)] = &[
     ("Page", "页"),
     ("📄 Page", "📄 页码"),
     ("▶ Auto-read", "▶ 自动阅读"),
-    ("🖊 Annotate", "🖊 标注"),
     ("✏ Page Edit", "✏ 页面编辑"),
     ("Dark Mode (Night)", "深色模式（夜间）"),
     ("Language", "语言"),
@@ -68,13 +66,6 @@ static ZH_CN: &[(&str, &str)] = &[
     // Toolbar
     ("Zoom", "缩放"),
     ("Speed:", "速度："),
-    ("Sel", "选择"),
-    ("Pen", "画笔"),
-    ("Eraser", "橡皮"),
-    ("High", "高亮"),
-    ("Note", "备注"),
-    ("Undo", "撤销"),
-    ("Clr", "清除"),
     ("↻ CW", "↻ 右转"),
     ("↻ CCW", "↻ 左转"),
     ("Del", "删除"),
@@ -94,11 +85,7 @@ static ZH_CN: &[(&str, &str)] = &[
     ("🔖 Bookmarks", "🔖 书签"),
     ("+ Add Bookmark", "+ 添加书签"),
 
-    // Edit note
-    ("Edit Note", "编辑备注"),
-    ("Note text:", "备注文本："),
     ("Save", "保存"),
-    ("📋 Copy", "📋 复制"),
 
     // PDF operations
     ("PDF Operations", "PDF 操作"),

@@ -1,6 +1,6 @@
 use super::sqlite::Database;
 use crate::app::core::app_state::OpenTab;
-use crate::app::core::mode_system::{Annotation, Bookmark, Sentence_, Vocabulary};
+use crate::app::core::mode_system::{Bookmark, Sentence_, Vocabulary};
 
 pub fn sync_tab(db: &Database, tab: &mut OpenTab) {
     sync_progress(db, &*tab);
@@ -26,19 +26,10 @@ pub fn sync_progress(db: &Database, tab: &OpenTab) {
 
 pub fn sync_dirty(db: &Database, tab: &mut OpenTab) {
     if let Some(ref book_id) = tab.book_id {
-        sync_annotations(db, book_id, &mut tab.modes.annotate.annotations, &mut tab.modes.annotate.dirty);
         sync_vocabulary(db, book_id, &mut tab.modes.reading.vocab_state.vocab, &mut tab.modes.reading.vocab_state.vocab_dirty);
         sync_sentences(db, book_id, &mut tab.modes.reading.vocab_state.sentences, &mut tab.modes.reading.vocab_state.sentences_dirty);
         sync_bookmarks(db, book_id, &mut tab.modes.reading.bookmarks, &mut tab.modes.reading.bookmarks_dirty);
     }
-}
-
-fn sync_annotations(db: &Database, book_id: &str, annotations: &[Annotation], dirty: &mut bool) {
-    if !*dirty { return; }
-    if let Err(e) = db.sync_annotations(book_id, annotations) {
-        eprintln!("[warn] sync_annotations failed: {}", e);
-    }
-    *dirty = false;
 }
 
 fn sync_vocabulary(db: &Database, book_id: &str, vocab: &[Vocabulary], dirty: &mut bool) {
