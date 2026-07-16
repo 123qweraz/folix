@@ -89,8 +89,8 @@ pub struct Chapter {
 }
 
 pub enum DocumentHandle {
-    Fixed(Box<dyn FixedLayout>),
-    Reflow(Box<dyn ReflowLayout>),
+    Fixed(Box<dyn FixedLayout + Send + Sync>),
+    Reflow(Box<dyn ReflowLayout + Send + Sync>),
 }
 
 impl DocumentHandle {
