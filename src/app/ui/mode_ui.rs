@@ -867,11 +867,9 @@ fn render_reflow_document(
     reading.layout.scroll_velocity = 0.0;
 
     if let Some(target) = reading.layout.stream_jump_to.take() {
-        if target > 0 && !reading.layout.layout_cache_rows.is_empty() {
+        if !reading.layout.layout_cache_rows.is_empty() {
             jump_to_line(reading, target);
             reading.layout.pending_scroll_y = Some(reading.layout.scroll_offset_y);
-        } else {
-            reading.layout.stream_jump_to = Some(target);
         }
     }
 }
@@ -1606,17 +1604,19 @@ pub fn render_sidebar(
                             let target_page = entry.page_index;
                             let selected = *page == target_page;
                             if ui.selectable_label(selected, &entry.label).clicked() {
-                                rs.layout.stream_jump_to = Some(target_page);
-                                rs.layout.stream_page_end = rs.layout.stream_page_end.max(target_page);
                                 *page = target_page;
                                 if document.lock().is_fixed() {
+                                    rs.layout.stream_jump_to = Some(target_page);
+                                    rs.layout.stream_page_end = rs.layout.stream_page_end.max(target_page);
                                     rs.layout.scroll_offset_y = 0.0;
                                 } else {
-                                    rs.layout.scroll_offset_y = rs.layout.layout_cache_rows.iter()
+                                    let y = rs.layout.layout_cache_rows.iter()
                                         .zip(rs.layout.layout_cache_starts.iter())
                                         .find(|(row, _)| row.ci == target_page)
                                         .map(|(_, &y)| y)
                                         .unwrap_or(0.0);
+                                    rs.layout.pending_scroll_y = Some(y);
+                                    rs.layout.scroll_offset_y = y;
                                 }
                             }
                         }
