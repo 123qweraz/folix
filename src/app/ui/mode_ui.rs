@@ -188,7 +188,15 @@ fn render_reflow_document(
                             reflow.load_chapter(ci, true)
                         })).unwrap_or_else(|_| {
                             eprintln!("[reflow] PANIC loading chapter {} images, falling back to text-only", ci);
-                            reflow.load_chapter(ci, false)
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                reflow.load_chapter(ci, false)
+                            })).unwrap_or_else(|_| {
+                                eprintln!("[reflow] PANIC also in text-only fallback for chapter {}", ci);
+                                crate::app::engines::Chapter {
+                                    title: String::new(),
+                                    blocks: vec![],
+                                }
+                            })
                         });
                         let img_cnt = ch.blocks.iter().filter(|b| matches!(b, ContentBlock::Image(_))).count();
                         eprintln!("[perf] loaded ch{} images: {:?} imgs={}", ci, t0.elapsed(), img_cnt);
@@ -336,14 +344,14 @@ fn render_reflow_document(
                             ContentBlock::Image(img) => {
                                 let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
                                 let aspect = img.width as f32 / img.height.max(1) as f32;
-                                max_w / aspect + 8.0
+                                max_w / aspect.max(0.01) + 8.0
                             }
                         };
                     }
                     ph_cnt += 1;
                 }
             }
-            let ph = if ph_cnt > 0 { (ph_sum / ph_cnt as f32).max(200.0) } else { 600.0 };
+            let ph = if ph_cnt > 0 && ph_sum.is_finite() { (ph_sum / ph_cnt as f32).max(200.0) } else { 600.0 };
 
             for (ci, chapter_opt) in reading.layout.chapter_cache.iter().enumerate() {
                 if ci > 0 {
@@ -391,7 +399,7 @@ fn render_reflow_document(
                             new_rows.push(LayoutRow {
                                 line_no: global_line + 1, ci, bi, it: 2,
                                 text: String::new(),
-                                height: max_w / aspect + 8.0,
+                                height: max_w / aspect.max(0.01) + 8.0,
                                 char_offset: 0,
                                 galley: None,
                                 layout_gen: gen,
@@ -482,7 +490,7 @@ fn render_reflow_document(
                         if let Some(ContentBlock::Image(img)) = ch.blocks.get(row.bi) {
                             let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
                             let aspect = img.width as f32 / img.height.max(1) as f32;
-                            row.height = max_w / aspect + 8.0;
+                            row.height = max_w / aspect.max(0.01) + 8.0;
                         }
                     }
                     row.galley = None;
@@ -682,7 +690,7 @@ fn render_reflow_document(
                             }
                         };
                         let (native_w, native_h) = decoded.dimensions();
-                        let aspect = native_w as f32 / native_h as f32;
+                        let aspect = native_w as f32 / native_h.max(1) as f32;
                         let display_w = (img_max_w.min(native_w as f32)).ceil() as u32;
                         let display_h = (display_w as f32 / aspect).ceil() as u32;
                         let resized = if display_w < native_w {

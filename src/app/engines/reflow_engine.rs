@@ -716,7 +716,7 @@ impl ReflowDocument {
                                     .with_guessed_format()
                                     .ok()
                                     .and_then(|r| r.into_dimensions().ok())
-                                    .unwrap_or((0, 0));
+                                    .unwrap_or((1, 1));
                                 eprintln!("[img] loaded {} ({}x{}) {} bytes", img_href, w, h, bytes.len());
                                 image_cache.insert(img_href.clone(), StoredImage {
                                     raw_bytes: bytes,
