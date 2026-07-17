@@ -540,7 +540,7 @@ fn render_reflow_document(
                         ui.visuals().widgets.noninteractive.bg_stroke,
                     );
                 }
-                1 => {
+                 1 => {
                     if reading.layout.show_line_numbers {
                         painter.text(
                             egui::pos2(content_left + 4.0, rect.top()),
@@ -549,15 +549,14 @@ fn render_reflow_document(
                             font_id.clone(),
                             egui::Color32::GRAY,
                         );
-                    }
-
-                    if let Some(galley) = &rows[i].galley {
-                        let text_x = content_left + gutter_w;
-                        painter.add(egui::Shape::galley(
-                            egui::pos2(text_x, rect.top()),
-                            galley.clone(),
-                            text_color,
-                        ));
+                        if let Some(galley) = &rows[i].galley {
+                            let text_x = content_left + gutter_w;
+                            painter.add(egui::Shape::galley(
+                                egui::pos2(text_x, rect.top()),
+                                galley.clone(),
+                                text_color,
+                            ));
+                        }
                     }
                 }
                 3 => {
@@ -725,6 +724,7 @@ fn render_reflow_document(
         if !reading.layout.show_line_numbers {
             let sel = &mut reading.selection;
             for i in first..last.min(rows.len()) {
+                // --- Link rows: keep existing click handling ---
                 if rows[i].it == 4 {
                     let text_rect = egui::Rect::from_min_size(
                         egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
@@ -744,73 +744,46 @@ fn render_reflow_document(
                     }
                     continue;
                 }
+                // --- Text rows: use native selectable Label ---
                 if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
                 let text_rect = egui::Rect::from_min_size(
                     egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
                     egui::vec2(text_avail_w, rows[i].height),
                 );
-                let resp = ui.interact(text_rect, egui::Id::new(("row", i)), egui::Sense::click_and_drag());
+                let label_fs = heading_font_size(rows[i].heading_level, font_size);
+                let label_text = egui::RichText::new(&rows[i].text)
+                    .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
+                let resp = ui.put(text_rect, egui::Label::new(label_text).selectable(true));
 
-                // Selection rendering
-                if sel.selecting && sel.char_anchor.is_some() {
-                    let (a_ch, a_blk, a_pos) = sel.char_anchor.unwrap();
-                    let (f_ch, f_blk, f_pos) = sel.char_focus.unwrap_or((a_ch, a_blk, a_pos));
-                    if (a_ch == rows[i].ci && a_blk == rows[i].bi) || (f_ch == rows[i].ci && f_blk == rows[i].bi) {
-                        let row_start = rows[i].char_offset;
-                        let text_len = rows[i].text.chars().count();
-                        let row_end = row_start + text_len;
-                        let s_start = (if a_ch == rows[i].ci && a_blk == rows[i].bi { a_pos } else { 0 }).max(row_start).min(row_end);
-                        let s_end = (if f_ch == rows[i].ci && f_blk == rows[i].bi { f_pos } else { row_end }).max(row_start).min(row_end);
-                        let s_low = s_start.min(s_end);
-                        let s_high = s_start.max(s_end);
-                        if s_low < s_high {
-                            let local_s = s_low - row_start;
-                            let local_e = s_high - row_start;
-                            let before_text: String = rows[i].text.chars().take(local_s).collect();
-                            let sel_text: String = rows[i].text.chars().skip(local_s).take(local_e - local_s).collect();
-                            let before_w = ui.fonts(|f| f.layout_no_wrap(before_text, font_id.clone(), egui::Color32::WHITE).rect.width());
-                            let sel_w = ui.fonts(|f| f.layout_no_wrap(sel_text, font_id.clone(), egui::Color32::WHITE).rect.width());
-                            let sel_rect = egui::Rect::from_min_size(
-                                egui::pos2(text_rect.left() + before_w, text_rect.top()),
-                                egui::vec2(sel_w, text_rect.height()),
-                            );
-                            ui.painter().rect_filled(sel_rect, 0.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 100));
+                // Character position helper (uses Y position for wrapped text)
+                let char_pos = |pos: egui::Pos2| -> usize {
+                    let local_x = pos.x - (content_left + gutter_w);
+                    rows[i].char_offset
+                        + if let Some(galley) = &rows[i].galley {
+                            let local_y = pos.y - text_rect.top();
+                            galley.cursor_from_pos(egui::vec2(local_x.max(0.0), local_y.max(0.0))).ccursor.index
+                        } else {
+                            ((local_x / text_rect.width().max(1.0)).clamp(0.0, 1.0) * rows[i].text.chars().count() as f32) as usize
                         }
-                    }
-                }
-
-                let char_pos_from_mouse = |mouse_x: f32, row: &LayoutRow| -> usize {
-                    if let Some(galley) = &row.galley {
-                        let local_x = mouse_x - (content_left + gutter_w);
-                        let cursor = galley.cursor_from_pos(egui::vec2(local_x.max(0.0), 0.0));
-                        row.char_offset + cursor.ccursor.index
-                    } else {
-                        let local_x = mouse_x - text_rect.left();
-                        let ratio = (local_x / text_rect.width().max(1.0)).clamp(0.0, 1.0);
-                        row.char_offset + (ratio * row.text.chars().count() as f32) as usize
-                    }
                 };
 
-                if resp.clicked() {
-                    if let Some(mouse_pos) = resp.interact_pointer_pos() {
-                        let abs_char = char_pos_from_mouse(mouse_pos.x, &rows[i]);
+                // Track selection for context menu
+                if resp.drag_started() {
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        let abs_char = char_pos(pos);
                         sel.char_anchor = Some((rows[i].ci, rows[i].bi, abs_char));
                         sel.char_focus = Some((rows[i].ci, rows[i].bi, abs_char));
                         sel.selected_text = String::new();
                         sel.selected_word_indices.clear();
-                        sel.selecting = true;
+                    }
+                }
+                if resp.dragged() {
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        sel.char_focus = Some((rows[i].ci, rows[i].bi, char_pos(pos)));
                     }
                 }
 
-                if resp.dragged() && sel.selecting {
-                    if let Some(mouse_pos) = resp.interact_pointer_pos() {
-                        let abs_char = char_pos_from_mouse(mouse_pos.x, &rows[i]);
-                        sel.char_focus = Some((rows[i].ci, rows[i].bi, abs_char));
-                    }
-                }
-
-                if resp.drag_stopped() { sel.selecting = false; }
-
+                // Context menu (uses tracked selection, may be stale if Label cleared it on right-click)
                 resp.context_menu(|ui| {
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
                         let (a_ch, a_blk, a_pos) = anchor;
@@ -835,8 +808,8 @@ fn render_reflow_document(
 
                 // Magnifier: track character under mouse when active
                 if reading.magnifier.active {
-                    if let Some(mouse_pos) = resp.interact_pointer_pos() {
-                        let abs_char = char_pos_from_mouse(mouse_pos.x, &rows[i]);
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        let abs_char = char_pos(pos);
                         let local_idx = abs_char.saturating_sub(rows[i].char_offset);
                         if let Some(ch) = rows[i].text.chars().nth(local_idx) {
                             if is_cjk(ch) {
