@@ -772,10 +772,18 @@ fn render_reflow_document(
                     egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
                     egui::vec2(text_avail_w, rows[i].height),
                 );
-                let label_fs = heading_font_size(rows[i].heading_level, font_size);
-                let label_text = egui::RichText::new(&rows[i].text)
-                    .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
-                let resp = ui.put(text_rect, egui::Label::new(label_text).selectable(true).halign(egui::Align::LEFT));
+                let resp = if let Some(galley) = &rows[i].galley {
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                        ui.add(egui::Label::new(galley.clone()).selectable(true))
+                    }).inner
+                } else {
+                    let label_fs = heading_font_size(rows[i].heading_level, font_size);
+                    let label_text = egui::RichText::new(&rows[i].text)
+                        .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                        ui.add(egui::Label::new(label_text).selectable(true))
+                    }).inner
+                };
 
                 // Character position helper (uses Y position for wrapped text)
                 let char_pos = |pos: egui::Pos2| -> usize {
