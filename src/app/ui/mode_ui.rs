@@ -753,7 +753,7 @@ fn render_reflow_document(
                 let label_fs = heading_font_size(rows[i].heading_level, font_size);
                 let label_text = egui::RichText::new(&rows[i].text)
                     .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
-                let resp = ui.put(text_rect, egui::Label::new(label_text).selectable(true));
+                let resp = ui.put(text_rect, egui::Label::new(label_text).selectable(true).halign(egui::Align::LEFT));
 
                 // Character position helper (uses Y position for wrapped text)
                 let char_pos = |pos: egui::Pos2| -> usize {
