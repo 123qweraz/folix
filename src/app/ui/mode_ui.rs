@@ -273,8 +273,6 @@ fn render_reflow_document(
         }
     };
 
-    let line_spacing_ratio = settings.reading_line_height / 1.4;
-
     // Lazy update: recompute galley for rows that scrolled into view
     if reading.layout.layout_cache_gen > 0 {
         let gen = reading.layout.layout_cache_gen;
@@ -293,13 +291,7 @@ fn render_reflow_document(
                     row.text.clone(),
                     actual_fid,
                     text_avail_w));
-                let g = if (line_spacing_ratio - 1.0).abs() > 0.01 {
-                    let mut g = (*g).clone();
-                    apply_line_spacing(&mut g, line_spacing_ratio);
-                    Arc::new(g)
-                } else {
-                    g
-                };
+                let g = apply_line_spacing(g, actual_fs, settings.reading_line_height);
                 row.height = g.rect.height().max(1.0);
                 row.galley = Some(g);
                 any_change = true;
@@ -318,6 +310,7 @@ fn render_reflow_document(
     // ---- Cache selection ----
     let cache_hit = reading.layout.layout_cache_font_size == font_size
         && reading.layout.layout_cache_avail_w == text_block_w
+        && reading.layout.layout_cache_line_spacing == settings.reading_line_height
         && reading.layout.layout_cache_show_ln == reading.layout.show_line_numbers
         && !reading.layout.layout_cache_rows.is_empty();
 
@@ -339,6 +332,7 @@ fn render_reflow_document(
         reading.layout.layout_cache_gen = reading.layout.layout_cache_gen.wrapping_add(1);
         reading.layout.layout_cache_font_size = font_size;
         reading.layout.layout_cache_avail_w = text_block_w;
+        reading.layout.layout_cache_line_spacing = settings.reading_line_height;
         reading.layout.layout_cache_show_ln = reading.layout.show_line_numbers;
         let gen = reading.layout.layout_cache_gen;
 
@@ -488,13 +482,7 @@ fn render_reflow_document(
                             row.text.clone(),
                             actual_fid,
                             text_avail_w));
-                        let g = if (line_spacing_ratio - 1.0).abs() > 0.01 {
-                            let mut g = (*g).clone();
-                            apply_line_spacing(&mut g, line_spacing_ratio);
-                            Arc::new(g)
-                        } else {
-                            g
-                        };
+                        let g = apply_line_spacing(g, actual_fs, settings.reading_line_height);
                         row.height = g.rect.height().max(1.0);
                         row.galley = Some(g);
                     } else {
@@ -896,7 +884,18 @@ fn render_reflow_document(
     }
 }
 
-fn apply_line_spacing(galley: &mut egui::Galley, ratio: f32) {
+fn apply_line_spacing(g: Arc<egui::Galley>, font_size: f32, line_height: f32) -> Arc<egui::Galley> {
+    let natural_ratio = if !g.rows.is_empty() {
+        g.rows[0].rect.height() / font_size
+    } else {
+        1.18
+    };
+    let target_ratio = line_height;
+    let ratio = target_ratio / natural_ratio;
+    if (ratio - 1.0).abs() <= 0.01 {
+        return g;
+    }
+    let mut galley = (*g).clone();
     let mut y = 0.0;
     for row in &mut galley.rows {
         let old_h = row.rect.height();
@@ -907,6 +906,7 @@ fn apply_line_spacing(galley: &mut egui::Galley, ratio: f32) {
     }
     galley.rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(galley.rect.width(), y));
     galley.mesh_bounds = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(galley.mesh_bounds.width(), y));
+    Arc::new(galley)
 }
 
 pub fn jump_to_line(reading: &mut ReadingState, target: usize) {

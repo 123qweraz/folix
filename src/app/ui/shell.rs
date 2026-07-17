@@ -1538,8 +1538,8 @@ impl FolixApp {
                     let s = &mut self.state.settings;
                     ui.add(egui::Slider::new(&mut s.reading_font_size, 10.0..=32.0)
                         .text(crate::app::i18n::tr(lng, "Font Size")));
-                    ui.add(egui::Slider::new(&mut s.reading_line_height, 1.0..=3.0)
-                        .step_by(0.1)
+                            ui.add(egui::Slider::new(&mut s.reading_line_height, 0.8..=3.0)
+                                .step_by(0.1)
                         .text(crate::app::i18n::tr(lng, "Line Height")));
                     ui.add(egui::Slider::new(&mut s.reading_margin_h, 0.0..=80.0)
                         .step_by(4.0)
