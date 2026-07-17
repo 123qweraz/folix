@@ -74,9 +74,6 @@ impl FolixApp {
     fn configure_fonts(ctx: &egui::Context) {
         let loader = FontLoader::new();
         let font_paths = loader.load_system_fonts();
-        if font_paths.is_empty() {
-            return;
-        }
 
         let mut fonts = egui::FontDefinitions::default();
 
@@ -140,6 +137,18 @@ impl FolixApp {
                 }
                 Err(e) => {
                     eprintln!("Failed to load font {:?}: {}", path, e);
+                }
+            }
+        }
+
+        // Ensure custom bold/italic font families exist even when no system CJK fonts were loaded,
+        // so that font_family_for_row in mode_ui.rs doesn't panic with unbound font family.
+        let prop_list = fonts.families.get(&egui::FontFamily::Proportional).cloned();
+        if let Some(list) = prop_list {
+            for name in &["italic", "bold", "bold_italic"] {
+                let family = egui::FontFamily::Name((*name).into());
+                if !fonts.families.contains_key(&family) {
+                    fonts.families.insert(family, list.clone());
                 }
             }
         }
