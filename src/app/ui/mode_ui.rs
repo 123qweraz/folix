@@ -156,7 +156,16 @@ fn render_reflow_document(
         if let Some(reflow) = doc_handle.as_reflow() {
             let n = reflow.chapter_count();
             for ci in 0..n {
-                reading.layout.chapter_cache.push(Some(reflow.load_chapter(ci, false)));
+                let ch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    reflow.load_chapter(ci, false)
+                })).unwrap_or_else(|_| {
+                    eprintln!("[reflow] PANIC loading chapter {} text, using empty chapter", ci);
+                    crate::app::engines::Chapter {
+                        title: String::new(),
+                        blocks: vec![],
+                    }
+                });
+                reading.layout.chapter_cache.push(Some(ch));
             }
         }
         reading.layout.next_img_load_ci = 0;
@@ -175,7 +184,12 @@ fn render_reflow_document(
                     });
                     if has_empty_images {
                         let t0 = std::time::Instant::now();
-                        let ch = reflow.load_chapter(ci, true);
+                        let ch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            reflow.load_chapter(ci, true)
+                        })).unwrap_or_else(|_| {
+                            eprintln!("[reflow] PANIC loading chapter {} images, falling back to text-only", ci);
+                            reflow.load_chapter(ci, false)
+                        });
                         let img_cnt = ch.blocks.iter().filter(|b| matches!(b, ContentBlock::Image(_))).count();
                         eprintln!("[perf] loaded ch{} images: {:?} imgs={}", ci, t0.elapsed(), img_cnt);
                         reading.layout.chapter_cache[ci] = Some(ch);
@@ -603,7 +617,7 @@ fn render_reflow_document(
                     }
                 }
                 _ => {
-                    let ch = &chapter_cache_ref[rows[i].ci];
+                    let Some(ch) = chapter_cache_ref.get(rows[i].ci) else { continue; };
                     let img_data = ch.as_ref().and_then(|ch| {
                         if rows[i].bi < ch.blocks.len() {
                             if let ContentBlock::Image(img) = &ch.blocks[rows[i].bi] { Some(img) } else { None }
@@ -653,7 +667,7 @@ fn render_reflow_document(
                     let doc_prefix = doc_path.unwrap_or("_");
                     let key = format!("{}_epub_img_{}_{}", doc_prefix, rows[i].ci, rows[i].bi);
                     if !image_cache.contains_key(&key) {
-                        let img = img_data.unwrap();
+                        let Some(img) = img_data else { continue; };
                         let decoded = match image::load_from_memory(&img.raw_bytes) {
                             Ok(d) => d.into_rgba8(),
                             Err(_) => {
@@ -690,7 +704,7 @@ fn render_reflow_document(
                         image_cache.insert(key.clone(), tex);
                         evict_cache(image_cache, 128);
                     }
-                    let texture = image_cache.get(&key).unwrap();
+                    let Some(texture) = image_cache.get(&key) else { continue; };
 
                     if reading.layout.show_line_numbers {
                         painter.text(
@@ -702,7 +716,7 @@ fn render_reflow_document(
                         );
                     }
 
-                    let Some(ch) = chapter_cache_ref[rows[i].ci].as_ref() else { continue; };
+                    let Some(ch) = chapter_cache_ref.get(rows[i].ci).and_then(|c| c.as_ref()) else { continue; };
                     let Some(ContentBlock::Image(img)) = ch.blocks.get(rows[i].bi) else { continue; };
                     let aspect = img.width as f32 / img.height.max(1) as f32;
                     let img_w = img_max_w.min(img.width.max(1) as f32);

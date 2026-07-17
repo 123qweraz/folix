@@ -1,6 +1,7 @@
 use super::{Document, ReflowLayout, TocEntry, StoredImage, ContentBlock, Chapter, BlockInfo, ChapterInfo};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
+use parking_lot::Mutex;
 
 #[derive(Clone)]
 enum RawBlock {
@@ -13,18 +14,18 @@ pub struct ReflowDocument {
     path: String,
     doc_title: String,
     toc: Vec<TocEntry>,
-    epub: Option<std::sync::Mutex<rbook::Epub>>,
+    epub: Option<Mutex<rbook::Epub>>,
     spine_items: Vec<(String, String)>, // (id, href)
     /// Maps normalized href path → spine index for link target resolution.
     href_to_ci: HashMap<String, usize>,
     /// Lazy-loaded chapter HTML content (index → html). Read from zip on first access.
-    chapter_html_cache: std::sync::Mutex<HashMap<usize, String>>,
+    chapter_html_cache: Mutex<HashMap<usize, String>>,
     /// Maps chapter index → zip entry path for writing highlights back.
     chapter_paths: Vec<String>,
     /// Cache for parsed raw blocks (avoid re-parsing HTML for chapter_info / image upgrade).
-    raw_block_cache: std::sync::Mutex<HashMap<usize, (Vec<RawBlock>, HashSet<String>)>>,
-    chapter_cache: std::sync::Mutex<HashMap<usize, Vec<ContentBlock>>>,
-    image_cache: std::sync::Mutex<HashMap<String, StoredImage>>,
+    raw_block_cache: Mutex<HashMap<usize, (Vec<RawBlock>, HashSet<String>)>>,
+    chapter_cache: Mutex<HashMap<usize, Vec<ContentBlock>>>,
+    image_cache: Mutex<HashMap<String, StoredImage>>,
 }
 
 impl ReflowDocument {
@@ -105,16 +106,16 @@ impl ReflowDocument {
         }
 
         // Preload all chapter HTML + parse raw blocks into cache (like TXT pre-caches everything)
-        let chapter_html_cache = std::sync::Mutex::new(HashMap::new());
-        let raw_block_cache = std::sync::Mutex::new(HashMap::new());
+        let chapter_html_cache = Mutex::new(HashMap::new());
+        let raw_block_cache = Mutex::new(HashMap::new());
         for (i, (_, href)) in spine_items.iter().enumerate() {
             let path = if href.starts_with('/') { href.clone() } else { format!("/{}", href) };
             if let Ok(bytes) = epub.read_resource_bytes(&path) {
                 let html = String::from_utf8_lossy(&bytes).into_owned();
-                chapter_html_cache.lock().unwrap().insert(i, html.clone());
+                chapter_html_cache.lock().insert(i, html.clone());
                 let mut referenced = HashSet::new();
                 let raw_blocks = Self::extract_raw_blocks(&html, href, &mut referenced);
-                raw_block_cache.lock().unwrap().insert(i, (raw_blocks, referenced));
+                raw_block_cache.lock().insert(i, (raw_blocks, referenced));
             }
         }
 
@@ -137,14 +138,14 @@ impl ReflowDocument {
             path: path.to_string(),
             doc_title,
             toc,
-            epub: Some(std::sync::Mutex::new(epub)),
+            epub: Some(Mutex::new(epub)),
             spine_items,
             href_to_ci,
             chapter_paths,
             chapter_html_cache,
             raw_block_cache,
-            chapter_cache: std::sync::Mutex::new(HashMap::new()),
-            image_cache: std::sync::Mutex::new(HashMap::new()),
+            chapter_cache: Mutex::new(HashMap::new()),
+            image_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -209,10 +210,10 @@ impl ReflowDocument {
             spine_items: vec![],
             href_to_ci: HashMap::new(),
             chapter_paths: vec![],
-            chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
-            raw_block_cache: std::sync::Mutex::new(HashMap::new()),
-            chapter_cache: std::sync::Mutex::new(cache),
-            image_cache: std::sync::Mutex::new(HashMap::new()),
+            chapter_html_cache: Mutex::new(HashMap::new()),
+            raw_block_cache: Mutex::new(HashMap::new()),
+            chapter_cache: Mutex::new(cache),
+            image_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -414,10 +415,10 @@ impl ReflowDocument {
             spine_items: vec![],
             href_to_ci: HashMap::new(),
             chapter_paths: vec![],
-            chapter_html_cache: std::sync::Mutex::new(HashMap::new()),
-            raw_block_cache: std::sync::Mutex::new(HashMap::new()),
-            chapter_cache: std::sync::Mutex::new(cache),
-            image_cache: std::sync::Mutex::new(HashMap::new()),
+            chapter_html_cache: Mutex::new(HashMap::new()),
+            raw_block_cache: Mutex::new(HashMap::new()),
+            chapter_cache: Mutex::new(cache),
+            image_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -639,14 +640,14 @@ impl ReflowDocument {
 
     /// Get chapter HTML, lazily loading from zip on first access.
     fn get_chapter_html(&self, chapter_idx: usize) -> Option<String> {
-        let mut cache = self.chapter_html_cache.lock().unwrap();
+        let mut cache = self.chapter_html_cache.lock();
         if let Some(html) = cache.get(&chapter_idx) {
             return Some(html.clone());
         }
         let (_, href) = self.spine_items.get(chapter_idx)?;
         let path = if href.starts_with('/') { href.clone() } else { format!("/{}", href) };
         let epub_guard = self.epub.as_ref()?;
-        let bytes = epub_guard.lock().unwrap().read_resource_bytes(&path).ok()?;
+        let bytes = epub_guard.lock().read_resource_bytes(&path).ok()?;
         let html = String::from_utf8_lossy(&bytes).into_owned();
         cache.insert(chapter_idx, html.clone());
         Some(html)
@@ -657,7 +658,7 @@ impl ReflowDocument {
     /// Results are cached in `raw_block_cache` to avoid re-parsing.
     fn parse_chapter_raw_blocks(&self, chapter_idx: usize) -> (Vec<RawBlock>, HashSet<String>) {
         {
-            let cache = self.raw_block_cache.lock().unwrap();
+            let cache = self.raw_block_cache.lock();
             if let Some(result) = cache.get(&chapter_idx) {
                 return (result.0.clone(), result.1.clone());
             }
@@ -676,7 +677,7 @@ impl ReflowDocument {
         let mut referenced = HashSet::new();
         let raw_blocks = Self::extract_raw_blocks(&html, href, &mut referenced);
         let result = (raw_blocks, referenced);
-        self.raw_block_cache.lock().unwrap().insert(chapter_idx, result.clone());
+        self.raw_block_cache.lock().insert(chapter_idx, result.clone());
         result
     }
 
@@ -686,7 +687,7 @@ impl ReflowDocument {
     fn load_chapter_blocks(&self, chapter_idx: usize, load_images: bool) -> Vec<ContentBlock> {
         // Cache is only populated for full-load (load_images=true) chapters
         if load_images {
-            let cache = self.chapter_cache.lock().unwrap();
+            let cache = self.chapter_cache.lock();
             if let Some(blocks) = cache.get(&chapter_idx) {
                 return blocks.clone();
             }
@@ -696,9 +697,9 @@ impl ReflowDocument {
 
         if load_images {
             // Load image bytes for referenced images
-            let epub_guard = self.epub.as_ref().map(|m| m.lock().unwrap());
+            let epub_guard = self.epub.as_ref().map(|m| m.lock());
             {
-                let mut image_cache = self.image_cache.lock().unwrap();
+                let mut image_cache = self.image_cache.lock();
                 if let Some(ref epub) = epub_guard {
                     for img_href in &referenced {
                         if image_cache.contains_key(img_href) {
@@ -732,7 +733,7 @@ impl ReflowDocument {
             }
 
             // Convert RawBlocks → ContentBlocks with real images
-            let image_cache = self.image_cache.lock().unwrap();
+            let image_cache = self.image_cache.lock();
             let blocks: Vec<ContentBlock> = raw_blocks.into_iter()
                 .filter_map(|rb| match rb {
                     RawBlock::Text { text: t, heading_level, bold, italic, list_item } => {
@@ -752,7 +753,7 @@ impl ReflowDocument {
                 .collect();
 
             {
-                let mut cache = self.chapter_cache.lock().unwrap();
+                let mut cache = self.chapter_cache.lock();
                 cache.insert(chapter_idx, blocks.clone());
             }
 
@@ -1062,7 +1063,7 @@ impl ReflowDocument {
 impl ReflowLayout for ReflowDocument {
     fn chapter_count(&self) -> usize {
         if self.spine_items.is_empty() {
-            let cache = self.chapter_cache.lock().unwrap();
+            let cache = self.chapter_cache.lock();
             let n = cache.len();
             if n > 0 { n } else { 1 }
         } else {
@@ -1084,7 +1085,7 @@ impl ReflowLayout for ReflowDocument {
 
     fn load_chapter(&self, idx: usize, load_images: bool) -> Chapter {
         if self.spine_items.is_empty() {
-            let cache = self.chapter_cache.lock().unwrap();
+            let cache = self.chapter_cache.lock();
             return cache.get(&idx).cloned().map(|blocks| Chapter {
                 title: self.toc.get(idx).map(|t| t.label.clone()).unwrap_or_default(),
                 blocks,
@@ -1102,7 +1103,7 @@ impl ReflowLayout for ReflowDocument {
         let title = self.toc.get(idx).map(|t| t.label.clone()).unwrap_or_default();
         if self.spine_items.is_empty() {
             // For text/docx files, use cached chapter data
-            let cache = self.chapter_cache.lock().unwrap();
+            let cache = self.chapter_cache.lock();
             let blocks: Vec<BlockInfo> = cache.get(&idx).map(|blocks| {
                 blocks.iter().map(|b| match b {
                     ContentBlock::Text { text: t, .. } => BlockInfo { is_image: false, char_count: t.chars().count() },
