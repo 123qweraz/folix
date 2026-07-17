@@ -273,6 +273,8 @@ fn render_reflow_document(
         }
     };
 
+    let line_spacing_ratio = settings.reading_line_height / 1.4;
+
     // Lazy update: recompute galley for rows that scrolled into view
     if reading.layout.layout_cache_gen > 0 {
         let gen = reading.layout.layout_cache_gen;
@@ -291,8 +293,15 @@ fn render_reflow_document(
                     row.text.clone(),
                     actual_fid,
                     text_avail_w));
+                let g = if (line_spacing_ratio - 1.0).abs() > 0.01 {
+                    let mut g = (*g).clone();
+                    apply_line_spacing(&mut g, line_spacing_ratio);
+                    Arc::new(g)
+                } else {
+                    g
+                };
                 row.height = g.rect.height().max(1.0);
-                row.galley = Some(g.into());
+                row.galley = Some(g);
                 any_change = true;
             }
         }
@@ -376,7 +385,7 @@ fn render_reflow_document(
                             for (li, src_line) in lines.iter().enumerate() {
                                 let lno = global_line + 1;
                                 let actual_fs = heading_font_size(*heading_level, font_size);
-                                let actual_lh = actual_fs * 1.4;
+                                let actual_lh = actual_fs * settings.reading_line_height;
                                 let h = if src_line.is_empty() { actual_lh } else { cpl_heuristic(src_line, text_avail_w, actual_fs, actual_lh) };
                                 new_rows.push(LayoutRow {
                                     line_no: lno, ci, bi, it: 1,
@@ -479,11 +488,18 @@ fn render_reflow_document(
                             row.text.clone(),
                             actual_fid,
                             text_avail_w));
+                        let g = if (line_spacing_ratio - 1.0).abs() > 0.01 {
+                            let mut g = (*g).clone();
+                            apply_line_spacing(&mut g, line_spacing_ratio);
+                            Arc::new(g)
+                        } else {
+                            g
+                        };
                         row.height = g.rect.height().max(1.0);
-                        row.galley = Some(g.into());
+                        row.galley = Some(g);
                     } else {
                         let actual_fs = heading_font_size(row.heading_level, font_size);
-                        let actual_lh = actual_fs * 1.4;
+                        let actual_lh = actual_fs * settings.reading_line_height;
                         row.height = cpl_heuristic(&row.text, text_avail_w, actual_fs, actual_lh);
                         row.galley = None;
                     }
@@ -878,6 +894,19 @@ fn render_reflow_document(
             reading.layout.pending_scroll_y = Some(reading.layout.scroll_offset_y);
         }
     }
+}
+
+fn apply_line_spacing(galley: &mut egui::Galley, ratio: f32) {
+    let mut y = 0.0;
+    for row in &mut galley.rows {
+        let old_h = row.rect.height();
+        let new_h = old_h * ratio;
+        row.rect.set_height(new_h);
+        row.rect = row.rect.translate(egui::vec2(0.0, y - row.rect.top()));
+        y = row.rect.bottom();
+    }
+    galley.rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(galley.rect.width(), y));
+    galley.mesh_bounds = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(galley.mesh_bounds.width(), y));
 }
 
 pub fn jump_to_line(reading: &mut ReadingState, target: usize) {
