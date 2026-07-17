@@ -211,6 +211,7 @@ pub struct VocabState {
 pub struct ReadingState {
     pub view_mode: ViewMode,
     pub show_sidebar: bool,
+    pub show_reading_settings: bool,
     pub sidebar_width: f32,
     pub sidebar_section: SidebarSection,
     pub show_goto_dialog: bool,
@@ -341,6 +342,7 @@ impl TabModes {
             reading: ReadingState {
                 view_mode: ViewMode::Text,
                 show_sidebar: false,
+                show_reading_settings: false,
                 sidebar_width: 260.0,
                 sidebar_section: SidebarSection::TOC,
                 show_goto_dialog: false,

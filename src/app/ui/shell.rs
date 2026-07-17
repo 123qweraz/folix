@@ -1114,6 +1114,7 @@ impl FolixApp {
             dark_mode,
             &mut self.image_texture_cache,
             doc_path,
+            &self.state.settings,
         );
 
         // Handle pending vocabulary/sentence additions from context menu
@@ -1447,6 +1448,14 @@ impl FolixApp {
                                     tab.modes.mo_yu.positioned = false;
                                 }
                             }
+
+                            // Reading settings toggle (reflow documents only)
+                            if !is_fixed_doc {
+                                ui.separator();
+                                if ui.selectable_label(tab.modes.reading.show_reading_settings, crate::app::i18n::tr(lng, "Aa")).clicked() {
+                                    tab.modes.reading.show_reading_settings = !tab.modes.reading.show_reading_settings;
+                                }
+                            }
                         }
                         ModeKind::DeepReading => {
                             // EPUB: magnifier toggle
@@ -1513,6 +1522,36 @@ impl FolixApp {
                     }
                 });
             });
+
+        // ── Reading settings popup ──
+        let show_popup = self.state.tabs.get(self.state.active_tab)
+            .map(|t| t.has_document() && t.modes.reading.show_reading_settings)
+            .unwrap_or(false);
+        if show_popup {
+            let mut open = true;
+            egui::Window::new(crate::app::i18n::tr(lng, "Reading Settings"))
+                .id("reading_settings_popup".into())
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 40.0))
+                .auto_sized()
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    let s = &mut self.state.settings;
+                    ui.add(egui::Slider::new(&mut s.reading_font_size, 10.0..=32.0)
+                        .text(crate::app::i18n::tr(lng, "Font Size")));
+                    ui.add(egui::Slider::new(&mut s.reading_line_height, 1.0..=3.0)
+                        .step_by(0.1)
+                        .text(crate::app::i18n::tr(lng, "Line Height")));
+                    ui.add(egui::Slider::new(&mut s.reading_margin_h, 0.0..=80.0)
+                        .step_by(4.0)
+                        .text(crate::app::i18n::tr(lng, "Margin")));
+                    ui.add(egui::Slider::new(&mut s.reading_max_text_width, 400.0..=1200.0)
+                        .step_by(40.0)
+                        .text(crate::app::i18n::tr(lng, "Max Width")));
+                });
+            if let Some(tab) = self.state.current_tab_mut() {
+                tab.modes.reading.show_reading_settings = open;
+            }
+        }
 
         if let Some(path) = needs_reload {
             self.reload_document(&path);

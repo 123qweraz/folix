@@ -191,6 +191,14 @@ static ZH_CN: &[(&str, &str)] = &[
     ("Tools", "工具"),
     // Tools
     ("Line Numbers", "行号"),
+
+    // Reading settings
+    ("Aa", "Aa"),
+    ("Reading Settings", "阅读排版"),
+    ("Font Size", "字体大小"),
+    ("Line Height", "行间距"),
+    ("Margin", "页边距"),
+    ("Max Width", "最大宽度"),
 ];
 
 pub fn tr(lang: &str, text: &'static str) -> &'static str {

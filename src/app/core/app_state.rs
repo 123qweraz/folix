@@ -31,6 +31,11 @@ pub struct AppSettings {
     pub language: String,
     #[serde(skip)]
     pub editing_shortcut: Option<usize>,
+    // Reading settings (reflow layout)
+    pub reading_font_size: f32,
+    pub reading_line_height: f32,
+    pub reading_margin_h: f32,
+    pub reading_max_text_width: f32,
 }
 
 impl Default for AppSettings {
@@ -49,6 +54,10 @@ impl Default for AppSettings {
             shortcuts: default_shortcuts(),
             language: "zh-CN".into(),
             editing_shortcut: None,
+            reading_font_size: 16.0,
+            reading_line_height: 1.4,
+            reading_margin_h: 16.0,
+            reading_max_text_width: 720.0,
         }
     }
 }

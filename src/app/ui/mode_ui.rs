@@ -1,4 +1,5 @@
 use crate::app::engines::{DocumentHandle, ContentBlock, TextWordPosition};
+use crate::app::core::app_state::AppSettings;
 use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, SelectionState, Vocabulary, SidebarSection, MoYuState, LayoutRow};
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ pub fn render_document(
     dark_mode: bool,
     image_cache: &mut HashMap<String, egui::TextureHandle>,
     doc_path: Option<&str>,
+    settings: &AppSettings,
 ) {
     let _frame_timer = std::time::Instant::now();
 
@@ -138,7 +140,7 @@ pub fn render_document(
         }
     } else {
         drop(doc);
-        render_reflow_document(ui, document, scale, reading, image_cache, doc_path);
+        render_reflow_document(ui, document, scale, reading, image_cache, doc_path, settings);
     }
     eprintln!("[perf] frame: {:?}", _frame_timer.elapsed());
 }
@@ -150,6 +152,7 @@ fn render_reflow_document(
     reading: &mut ReadingState,
     image_cache: &mut HashMap<String, egui::TextureHandle>,
     doc_path: Option<&str>,
+    settings: &AppSettings,
 ) {
     if reading.layout.chapter_cache.is_empty() {
         let doc_handle = document.lock();
@@ -223,18 +226,18 @@ fn render_reflow_document(
     reading.layout.scroll_offset_y = init_offset;
     sa = sa.vertical_scroll_offset(init_offset);
 
-    let font_size = 16.0 * *scale;
+    let font_size = settings.reading_font_size * *scale;
 
     let output;
     // ---- Unified virtual scrolling (layout cache + painter + interaction) ----
     let full_w = ui.available_width().max(1.0);
-    let mw = reading.layout.max_text_width;
-    let avail_w = if mw > 0.0 { full_w.min(mw) } else { full_w };
-    let x_off = ((full_w - avail_w) * 0.5).max(0.0);
+    let mw = settings.reading_max_text_width;
+    let text_block_w = if mw > 0.0 { full_w.min(mw) } else { full_w };
+    let x_off = ((full_w - text_block_w) * 0.5).max(0.0);
     let gutter_w = if reading.layout.show_line_numbers { 65.0 } else { 0.0 };
-    let text_avail_w = (avail_w - gutter_w).max(1.0);
+    let text_avail_w = (text_block_w - gutter_w - settings.reading_margin_h * 2.0).max(1.0);
     let font_id = egui::FontId::proportional(font_size);
-    let line_h = font_size * 1.4;
+    let line_h = font_size * settings.reading_line_height;
 
     // ---- Layout cache management with partial rebuild + resize throttle ----
     let rows: &[LayoutRow];
@@ -305,7 +308,7 @@ fn render_reflow_document(
 
     // ---- Cache selection ----
     let cache_hit = reading.layout.layout_cache_font_size == font_size
-        && reading.layout.layout_cache_avail_w == avail_w
+        && reading.layout.layout_cache_avail_w == text_block_w
         && reading.layout.layout_cache_show_ln == reading.layout.show_line_numbers
         && !reading.layout.layout_cache_rows.is_empty();
 
@@ -315,10 +318,10 @@ fn render_reflow_document(
     } else if reading.layout.layout_cache_font_size == font_size
         && reading.layout.layout_cache_show_ln == reading.layout.show_line_numbers
         && !reading.layout.layout_cache_rows.is_empty()
-        && reading.layout.layout_cache_pending_avail_w != avail_w
+        && reading.layout.layout_cache_pending_avail_w != text_block_w
     {
         // Resize throttle: skip rebuild during active drag
-        reading.layout.layout_cache_pending_avail_w = avail_w;
+        reading.layout.layout_cache_pending_avail_w = text_block_w;
         rows = &reading.layout.layout_cache_rows;
         row_starts = &reading.layout.layout_cache_starts;
     } else {
@@ -326,7 +329,7 @@ fn render_reflow_document(
         reading.layout.layout_cache_pending_avail_w = 0.0;
         reading.layout.layout_cache_gen = reading.layout.layout_cache_gen.wrapping_add(1);
         reading.layout.layout_cache_font_size = font_size;
-        reading.layout.layout_cache_avail_w = avail_w;
+        reading.layout.layout_cache_avail_w = text_block_w;
         reading.layout.layout_cache_show_ln = reading.layout.show_line_numbers;
         let gen = reading.layout.layout_cache_gen;
 
@@ -342,7 +345,7 @@ fn render_reflow_document(
                         ph_sum += match b {
                             ContentBlock::Text { text: t, .. } | ContentBlock::Link { text: t, .. } => cpl_heuristic(t, text_avail_w, font_size, line_h),
                             ContentBlock::Image(img) => {
-                                let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
+                                let max_w = (text_block_w.min(600.0)).min(img.width.max(1) as f32);
                                 let aspect = img.width as f32 / img.height.max(1) as f32;
                                 max_w / aspect.max(0.01) + 8.0
                             }
@@ -394,7 +397,7 @@ fn render_reflow_document(
                             }
                         }
                         ContentBlock::Image(img) => {
-                            let max_w = avail_w.min(600.0);
+                            let max_w = text_block_w.min(600.0);
                             let aspect = img.width as f32 / img.height.max(1) as f32;
                             new_rows.push(LayoutRow {
                                 line_no: global_line + 1, ci, bi, it: 2,
@@ -488,7 +491,7 @@ fn render_reflow_document(
                 2 => {
                     if let Some(Some(ch)) = reading.layout.chapter_cache.get(row.ci) {
                         if let Some(ContentBlock::Image(img)) = ch.blocks.get(row.bi) {
-                            let max_w = (avail_w.min(600.0)).min(img.width.max(1) as f32);
+                            let max_w = (text_block_w.min(600.0)).min(img.width.max(1) as f32);
                             let aspect = img.width as f32 / img.height.max(1) as f32;
                             row.height = max_w / aspect.max(0.01) + 8.0;
                         }
@@ -519,7 +522,7 @@ fn render_reflow_document(
 
     let chapter_cache_ref = &reading.layout.chapter_cache;
     let text_color = ui.style().visuals.text_color();
-    let img_max_w = (avail_w - gutter_w).min(600.0);
+    let img_max_w = (text_block_w - gutter_w).min(600.0);
 
     output = sa.show(ui, |ui| {
         let total_h = reading.layout.total_height;
@@ -545,7 +548,7 @@ fn render_reflow_document(
         let base_x = response.rect.left();
         let base_y = content_origin;
         let alloc_w = response.rect.width();
-        let content_left = base_x + x_off;
+        let content_left = base_x + x_off + settings.reading_margin_h;
 
         // Paint pass
         for i in first..last.min(rows.len()) {
