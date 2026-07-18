@@ -179,6 +179,7 @@ pub struct LayoutState {
     pub layout_cache_font_size: f32,
     pub layout_cache_avail_w: f32,
     pub layout_cache_line_spacing: f32,
+    pub layout_cache_margin_h: f32,
     pub layout_cache_show_ln: bool,
     /// Debounce: set to avail_w when a resize is detected, cleared on rebuild.
     pub layout_cache_pending_avail_w: f32,
@@ -365,6 +366,7 @@ impl TabModes {
                     layout_cache_font_size: 0.0,
                     layout_cache_avail_w: 0.0,
                     layout_cache_line_spacing: 0.0,
+                    layout_cache_margin_h: 0.0,
                     layout_cache_show_ln: false,
                     layout_cache_pending_avail_w: 0.0,
                     layout_cache_gen: 0,

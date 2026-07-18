@@ -312,6 +312,7 @@ fn render_reflow_document(
     let cache_hit = reading.layout.layout_cache_font_size == font_size
         && reading.layout.layout_cache_avail_w == text_block_w
         && reading.layout.layout_cache_line_spacing == settings.reading_line_height
+        && reading.layout.layout_cache_margin_h == settings.reading_margin_h
         && reading.layout.layout_cache_show_ln == reading.layout.show_line_numbers
         && !reading.layout.layout_cache_rows.is_empty();
 
@@ -322,6 +323,7 @@ fn render_reflow_document(
         && reading.layout.layout_cache_show_ln == reading.layout.show_line_numbers
         && !reading.layout.layout_cache_rows.is_empty()
         && reading.layout.layout_cache_pending_avail_w != text_block_w
+        && reading.layout.layout_cache_margin_h == settings.reading_margin_h
     {
         // Resize throttle: skip rebuild during active drag
         reading.layout.layout_cache_pending_avail_w = text_block_w;
@@ -334,6 +336,7 @@ fn render_reflow_document(
         reading.layout.layout_cache_font_size = font_size;
         reading.layout.layout_cache_avail_w = text_block_w;
         reading.layout.layout_cache_line_spacing = settings.reading_line_height;
+        reading.layout.layout_cache_margin_h = settings.reading_margin_h;
         reading.layout.layout_cache_show_ln = reading.layout.show_line_numbers;
         let gen = reading.layout.layout_cache_gen;
 
