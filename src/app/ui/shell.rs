@@ -332,12 +332,8 @@ impl eframe::App for FolixApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let lng_s = self.state.settings.language.clone();
         let lng = &lng_s;
-        // Apply dark/light theme
-        ctx.set_visuals(if self.state.settings.dark_mode {
-            egui::Visuals::dark()
-        } else {
-            egui::Visuals::light()
-        });
+        // Apply custom theme
+        ctx.set_visuals(custom_visuals(self.state.settings.dark_mode, self.state.settings.background_color));
 
         // Handle dropped files
         let dropped_files: Vec<String> = ctx.input(|i| {
@@ -528,9 +524,12 @@ impl eframe::App for FolixApp {
             t.has_document() && (t.modes.active == ModeKind::LightReading || t.modes.active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
         });
 
-        let panel_resp = egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_document_view(ui);
-        });
+        let panel_resp = egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(&ctx.style())
+                .inner_margin(egui::Margin::symmetric(4, 4)))
+            .show(ctx, |ui| {
+                self.render_document_view(ui);
+            });
 
         // Left-click on the document panel toggles UI visibility
         if panel_resp.response.clicked() {
@@ -1224,7 +1223,12 @@ impl FolixApp {
         let show_page = self.state.settings.show_toolbar_page;
 
         // ── Row 1: mode tabs only ──
-        egui::TopBottomPanel::bottom("toolbar_row1").show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("toolbar_row1")
+            .frame(egui::Frame::side_top_panel(&ctx.style())
+                .corner_radius(egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }))
+            .show(ctx, |ui| {
+            let icon_fs = self.state.settings.toolbar_icon_size;
+            ui.style_mut().override_font_id = Some(egui::FontId::proportional(icon_fs));
             ui.horizontal(|ui| {
                 let tab = self.state.current_tab_mut();
                 if tab.is_none() { return; }
@@ -1298,7 +1302,12 @@ impl FolixApp {
         });
 
         // ── Row 2: nav + view + page + mode-specific controls ──
-        egui::TopBottomPanel::bottom("toolbar_row2").show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("toolbar_row2")
+            .frame(egui::Frame::side_top_panel(&ctx.style())
+                .corner_radius(egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }))
+            .show(ctx, |ui| {
+            let icon_fs = self.state.settings.toolbar_icon_size;
+            ui.style_mut().override_font_id = Some(egui::FontId::proportional(icon_fs));
             ui.horizontal(|ui| {
                 let tab = self.state.current_tab_mut();
                 if tab.is_none() { return; }
@@ -1590,6 +1599,34 @@ impl Drop for FolixApp {
     fn drop(&mut self) {
         self.sync_progress();
     }
+}
+
+fn custom_visuals(dark_mode: bool, bg: [u8; 4]) -> egui::Visuals {
+    let mut v = if dark_mode {
+        let mut v = egui::Visuals::dark();
+        v.panel_fill = egui::Color32::from_rgb(30, 30, 36);
+        v.window_fill = egui::Color32::from_rgb(30, 30, 36);
+        v.widgets.inactive.bg_fill = egui::Color32::from_rgb(50, 50, 58);
+        v.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(50, 50, 58);
+        v.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(65, 65, 74);
+        v
+    } else {
+        let mut v = egui::Visuals::light();
+        let bg_c = egui::Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]);
+        v.panel_fill = bg_c;
+        v.window_fill = bg_c;
+        v
+    };
+    v.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
+    v.widgets.hovered.corner_radius = egui::CornerRadius::same(8);
+    v.widgets.active.corner_radius = egui::CornerRadius::same(6);
+    v.widgets.noninteractive.corner_radius = egui::CornerRadius::same(4);
+    v.widgets.open.corner_radius = egui::CornerRadius::same(4);
+    v.window_corner_radius = egui::CornerRadius::same(8);
+    v.menu_corner_radius = egui::CornerRadius::same(6);
+    v.slider_trailing_fill = true;
+    v.handle_shape = egui::style::HandleShape::Circle;
+    v
 }
 
 fn page_count_for_tab(tab: &crate::app::core::app_state::OpenTab) -> usize {
