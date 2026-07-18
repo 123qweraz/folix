@@ -242,6 +242,7 @@ fn render_reflow_document(
     // ---- Layout cache management with partial rebuild + resize throttle ----
     let rows: &[LayoutRow];
     let row_starts: &[f32];
+    let target_line = reading.layout.current_line.max(1);
 
     // Helper: compute cpl-based height estimate for non-visible text rows
     let cpl_heuristic = |text: &str, ta_w: f32, fs: f32, lh: f32| -> f32 {
@@ -450,15 +451,6 @@ fn render_reflow_document(
             reading.layout.layout_cache_starts = new_starts;
         }
 
-        let top_idx = if reading.layout.layout_cache_rows.len() > 0 {
-            reading.layout.layout_cache_starts
-                .partition_point(|&y| y <= reading.layout.scroll_offset_y)
-                .saturating_sub(1)
-                .min(reading.layout.layout_cache_rows.len().saturating_sub(1))
-        } else {
-            0
-        };
-
         let approx_vh = ui.available_height();
         let margin = approx_vh * 0.5;
         let cull_min = (reading.layout.scroll_offset_y - margin).max(0.0);
@@ -512,14 +504,21 @@ fn render_reflow_document(
             reading.layout.layout_cache_starts[i] = acc_y;
             acc_y += reading.layout.layout_cache_rows[i].height;
         }
-        if top_idx < reading.layout.layout_cache_rows.len() {
-            reading.layout.scroll_offset_y = reading.layout.layout_cache_starts[top_idx];
-        }
         reading.layout.total_height = acc_y;
+
+        // Scroll to the saved line number (stable across font/line_height changes)
+        reading.layout.scroll_offset_y = reading.layout.layout_cache_starts.iter()
+            .zip(reading.layout.layout_cache_rows.iter())
+            .find(|(_, r)| r.line_no >= target_line)
+            .map(|(&y, _)| y)
+            .unwrap_or(0.0);
 
         rows = &reading.layout.layout_cache_rows;
         row_starts = &reading.layout.layout_cache_starts;
     }
+
+    // Sync ScrollArea with the (possibly updated) scroll offset
+    sa = sa.vertical_scroll_offset(reading.layout.scroll_offset_y);
 
     reading.layout.total_height = row_starts.last().map_or(0.0, |&last| last)
         + rows.last().map_or(0.0, |r| r.height);
