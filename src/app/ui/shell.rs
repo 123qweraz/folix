@@ -532,11 +532,11 @@ impl eframe::App for FolixApp {
 
         let cp_frame = if dark_mode {
             egui::Frame::central_panel(&ctx.style())
-                .inner_margin(egui::Margin::symmetric(16, 8))
+                .inner_margin(egui::Margin { left: 100, right: 100, top: 0, bottom: 0 })
         } else {
             egui::Frame::central_panel(&ctx.style())
                 .fill(reader_bg)
-                .inner_margin(egui::Margin::symmetric(16, 8))
+                .inner_margin(egui::Margin { left: 100, right: 100, top: 0, bottom: 0 })
         };
 
         let panel_resp = egui::CentralPanel::default()
