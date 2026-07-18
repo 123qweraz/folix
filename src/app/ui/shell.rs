@@ -524,27 +524,9 @@ impl eframe::App for FolixApp {
             t.has_document() && (t.modes.active == ModeKind::LightReading || t.modes.active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
         });
 
-        let dark_mode = self.state.settings.dark_mode;
-        let rb = self.state.settings.reader_bg_color;
-        let reader_bg = egui::Color32::from_rgba_unmultiplied(rb[0], rb[1], rb[2], rb[3]);
-        let tb = self.state.settings.background_color;
-        let text_bg = egui::Color32::from_rgba_unmultiplied(tb[0], tb[1], tb[2], tb[3]);
-
-        let cp_frame = if dark_mode {
-            egui::Frame::central_panel(&ctx.style())
-                .inner_margin(egui::Margin { left: 100, right: 100, top: 0, bottom: 0 })
-        } else {
-            egui::Frame::central_panel(&ctx.style())
-                .fill(reader_bg)
-                .inner_margin(egui::Margin { left: 100, right: 100, top: 0, bottom: 0 })
-        };
-
         let panel_resp = egui::CentralPanel::default()
-            .frame(cp_frame)
+            .frame(egui::Frame::central_panel(&ctx.style()))
             .show(ctx, |ui| {
-                if !dark_mode {
-                    ui.painter().rect_filled(ui.max_rect(), 0.0, text_bg);
-                }
                 self.render_document_view(ui);
             });
 
@@ -1129,25 +1111,58 @@ impl FolixApp {
         });
 
         let document = self.state.tabs[idx].document.as_ref().unwrap().clone();
+        let is_reflow = { !document.lock().is_fixed() };
         let tab = &mut self.state.tabs[idx];
         let ctx = ui.ctx().clone();
         let dark_mode = self.state.settings.dark_mode;
         let doc_path = tab.path.as_deref();
-        mode_ui::render_document(
-            ui, &document,
-            &mut tab.modes.page,
-            &mut tab.modes.scale,
-            &mut tab.modes.reading_layout,
-            &mut tab.modes.fit_mode,
-            &mut tab.modes.view_rotation,
-            &mut tab.modes.reading,
-            None,
-            Some(ctx.clone()),
-            dark_mode,
-            &mut self.image_texture_cache,
-            doc_path,
-            &self.state.settings,
-        );
+
+        if is_reflow && !dark_mode {
+            let rb = self.state.settings.reader_bg_color;
+            let reader_bg = egui::Color32::from_rgba_unmultiplied(rb[0], rb[1], rb[2], rb[3]);
+            let tb = self.state.settings.background_color;
+            let text_bg = egui::Color32::from_rgba_unmultiplied(tb[0], tb[1], tb[2], tb[3]);
+
+            let full_rect = ui.max_rect();
+            ui.painter().rect_filled(full_rect, 0.0, reader_bg);
+            let mut text_rect = full_rect;
+            let margin_side = 400.0f32;
+            text_rect.min.x += margin_side;
+            text_rect.max.x -= margin_side;
+            ui.painter().rect_filled(text_rect, 0.0, text_bg);
+            let mut inner_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
+            mode_ui::render_document(
+                &mut inner_ui, &document,
+                &mut tab.modes.page,
+                &mut tab.modes.scale,
+                &mut tab.modes.reading_layout,
+                &mut tab.modes.fit_mode,
+                &mut tab.modes.view_rotation,
+                &mut tab.modes.reading,
+                None,
+                Some(ctx.clone()),
+                dark_mode,
+                &mut self.image_texture_cache,
+                doc_path,
+                &self.state.settings,
+            );
+        } else {
+            mode_ui::render_document(
+                ui, &document,
+                &mut tab.modes.page,
+                &mut tab.modes.scale,
+                &mut tab.modes.reading_layout,
+                &mut tab.modes.fit_mode,
+                &mut tab.modes.view_rotation,
+                &mut tab.modes.reading,
+                None,
+                Some(ctx.clone()),
+                dark_mode,
+                &mut self.image_texture_cache,
+                doc_path,
+                &self.state.settings,
+            );
+        }
 
         // Handle pending vocabulary/sentence additions from context menu
         if let Some(word) = tab.modes.reading.selection.pending_vocab.take() {
