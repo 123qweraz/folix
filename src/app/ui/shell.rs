@@ -524,10 +524,25 @@ impl eframe::App for FolixApp {
             t.has_document() && (t.modes.active == ModeKind::LightReading || t.modes.active == ModeKind::DeepReading) && t.modes.reading.show_sidebar
         });
 
+        let dark_mode = self.state.settings.dark_mode;
+        let bg = self.state.settings.background_color;
+        let bg_color = egui::Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]);
+
+        let cp_frame = if dark_mode {
+            egui::Frame::central_panel(&ctx.style())
+                .inner_margin(egui::Margin::symmetric(4, 4))
+        } else {
+            egui::Frame::central_panel(&ctx.style())
+                .fill(egui::Color32::from_rgb(235, 235, 238))
+                .inner_margin(egui::Margin::symmetric(4, 4))
+        };
+
         let panel_resp = egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(&ctx.style())
-                .inner_margin(egui::Margin::symmetric(4, 4)))
+            .frame(cp_frame)
             .show(ctx, |ui| {
+                if !dark_mode {
+                    ui.painter().rect_filled(ui.max_rect(), 0.0, bg_color);
+                }
                 self.render_document_view(ui);
             });
 
