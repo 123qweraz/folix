@@ -37,7 +37,8 @@ static ZH_CN: &[(&str, &str)] = &[
     // Settings
     ("Appearance", "外观"),
     ("Toolbar Icon Size:", "工具栏图标大小："),
-    ("Background Color:", "背景颜色："),
+    ("Reader Background:", "阅读器背景："),
+    ("Text Area Background:", "文字区背景："),
     ("Toolbars:", "工具栏："),
     ("📖 Nav  ◀▶ ▲▼", "📖 导航  ◀▶ ▲▼"),
     ("🔍 View  Zoom+Layout", "🔍 视图  缩放+布局"),

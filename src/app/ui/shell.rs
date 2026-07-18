@@ -525,23 +525,25 @@ impl eframe::App for FolixApp {
         });
 
         let dark_mode = self.state.settings.dark_mode;
-        let bg = self.state.settings.background_color;
-        let bg_color = egui::Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]);
+        let rb = self.state.settings.reader_bg_color;
+        let reader_bg = egui::Color32::from_rgba_unmultiplied(rb[0], rb[1], rb[2], rb[3]);
+        let tb = self.state.settings.background_color;
+        let text_bg = egui::Color32::from_rgba_unmultiplied(tb[0], tb[1], tb[2], tb[3]);
 
         let cp_frame = if dark_mode {
             egui::Frame::central_panel(&ctx.style())
-                .inner_margin(egui::Margin::symmetric(4, 4))
+                .inner_margin(egui::Margin::symmetric(16, 8))
         } else {
             egui::Frame::central_panel(&ctx.style())
-                .fill(egui::Color32::from_rgb(235, 235, 238))
-                .inner_margin(egui::Margin::symmetric(4, 4))
+                .fill(reader_bg)
+                .inner_margin(egui::Margin::symmetric(16, 8))
         };
 
         let panel_resp = egui::CentralPanel::default()
             .frame(cp_frame)
             .show(ctx, |ui| {
                 if !dark_mode {
-                    ui.painter().rect_filled(ui.max_rect(), 0.0, bg_color);
+                    ui.painter().rect_filled(ui.max_rect(), 0.0, text_bg);
                 }
                 self.render_document_view(ui);
             });
@@ -933,19 +935,35 @@ impl FolixApp {
                         ui.add(egui::Slider::new(&mut self.state.settings.toolbar_icon_size, 12.0..=32.0));
                         ui.end_row();
 
-                        ui.label(crate::app::i18n::tr(lng, "Background Color:"));
-                        let mut color = [
+                        ui.label(crate::app::i18n::tr(lng, "Reader Background:"));
+                        let mut rc = [
+                            self.state.settings.reader_bg_color[0] as f32 / 255.0,
+                            self.state.settings.reader_bg_color[1] as f32 / 255.0,
+                            self.state.settings.reader_bg_color[2] as f32 / 255.0,
+                            self.state.settings.reader_bg_color[3] as f32 / 255.0,
+                        ];
+                        ui.color_edit_button_rgba_unmultiplied(&mut rc);
+                        self.state.settings.reader_bg_color = [
+                            (rc[0] * 255.0) as u8,
+                            (rc[1] * 255.0) as u8,
+                            (rc[2] * 255.0) as u8,
+                            (rc[3] * 255.0) as u8,
+                        ];
+                        ui.end_row();
+
+                        ui.label(crate::app::i18n::tr(lng, "Text Area Background:"));
+                        let mut tc = [
                             self.state.settings.background_color[0] as f32 / 255.0,
                             self.state.settings.background_color[1] as f32 / 255.0,
                             self.state.settings.background_color[2] as f32 / 255.0,
                             self.state.settings.background_color[3] as f32 / 255.0,
                         ];
-                        ui.color_edit_button_rgba_unmultiplied(&mut color);
+                        ui.color_edit_button_rgba_unmultiplied(&mut tc);
                         self.state.settings.background_color = [
-                            (color[0] * 255.0) as u8,
-                            (color[1] * 255.0) as u8,
-                            (color[2] * 255.0) as u8,
-                            (color[3] * 255.0) as u8,
+                            (tc[0] * 255.0) as u8,
+                            (tc[1] * 255.0) as u8,
+                            (tc[2] * 255.0) as u8,
+                            (tc[3] * 255.0) as u8,
                         ];
                         ui.end_row();
                     });
