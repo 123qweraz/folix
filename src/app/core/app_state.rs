@@ -37,6 +37,7 @@ pub struct AppSettings {
     pub reading_line_height: f32,
     pub reading_margin_h: f32,
     pub reading_max_text_width: f32,
+    pub reading_side_margin_pct: f32,
 }
 
 impl Default for AppSettings {
@@ -60,6 +61,7 @@ impl Default for AppSettings {
             reading_line_height: 1.4,
             reading_margin_h: 16.0,
             reading_max_text_width: 720.0,
+            reading_side_margin_pct: 0.25,
         }
     }
 }

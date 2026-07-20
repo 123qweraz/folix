@@ -1127,7 +1127,7 @@ impl FolixApp {
             let mut text_rect = full_rect;
             if full_rect.width() >= 1000.0 {
                 ui.painter().rect_filled(full_rect, 0.0, reader_bg);
-                let margin_side = full_rect.width() * 0.25;
+                let margin_side = full_rect.width() * self.state.settings.reading_side_margin_pct;
                 text_rect.min.x += margin_side;
                 text_rect.max.x -= margin_side;
             }
@@ -1711,6 +1711,9 @@ impl FolixApp {
                     ui.add(egui::Slider::new(&mut s.reading_max_text_width, 400.0..=1200.0)
                         .step_by(40.0)
                         .text(crate::app::i18n::tr(lng, "Max Width")));
+                    ui.add(egui::Slider::new(&mut s.reading_side_margin_pct, 0.05..=0.40)
+                        .step_by(0.05)
+                        .text(crate::app::i18n::tr(lng, "Side Margin")));
                 });
             if let Some(tab) = self.state.current_tab_mut() {
                 tab.modes.reading.show_reading_settings = open;
