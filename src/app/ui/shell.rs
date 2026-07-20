@@ -1284,7 +1284,9 @@ impl FolixApp {
                     let mut found = None;
                     for row in &tab.modes.reading.layout.layout_cache_rows {
                         if row.ci == mo_page && (row.it == 1 || row.it == 4) {
-                            let rc = row.text.chars().count();
+                            let rc = row.text.chars()
+                                .filter(|c| !matches!(c, '。' | '！' | '？' | '，' | '；' | '.' | '!' | '?' | ',' | ';' | '\n'))
+                                .count();
                             if line_cum + rc > cum_chars {
                                 found = Some(row.line_no);
                                 break;

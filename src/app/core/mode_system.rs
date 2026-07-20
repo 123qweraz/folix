@@ -253,6 +253,8 @@ pub struct MoYuState {
     pub main_line: usize,
     /// Global line number of the first line in the current chapter.
     pub base_line: usize,
+    /// Current global line number for display.
+    pub display_line_no: usize,
 }
 
 impl MoYuState {
@@ -270,6 +272,7 @@ impl MoYuState {
             positioned: false,
             main_line: 0,
             base_line: 0,
+            display_line_no: 0,
         }
     }
 }

@@ -1506,6 +1506,45 @@ pub fn render_mo_yu_ui(
         }
     }
 
+    // Compute current global line number for display
+    {
+        let cum_chars: usize = mo_yu.sentences.iter()
+            .take(mo_yu.sentence_idx)
+            .map(|s| s.chars().count())
+            .sum();
+        let mut non_delim = 0usize;
+        let mut line_idx = 0usize;
+        if let Some(ref doc) = document {
+            let doc_guard = doc.lock();
+            if let Some(reflow) = doc_guard.as_reflow() {
+                let text = reflow.chapter_text(mo_yu.page);
+                for line in text.lines() {
+                    let lc = line.chars()
+                        .filter(|c| !matches!(c, '。' | '！' | '？' | '，' | '；' | '.' | '!' | '?' | ',' | ';'))
+                        .count();
+                    if non_delim + lc > cum_chars {
+                        break;
+                    }
+                    non_delim += lc;
+                    line_idx += 1;
+                }
+            } else if let Some(fixed) = doc_guard.as_fixed() {
+                let text = fixed.page_text(mo_yu.page);
+                for line in text.lines() {
+                    let lc = line.chars()
+                        .filter(|c| !matches!(c, '。' | '！' | '？' | '，' | '；' | '.' | '!' | '?' | ',' | ';'))
+                        .count();
+                    if non_delim + lc > cum_chars {
+                        break;
+                    }
+                    non_delim += lc;
+                    line_idx += 1;
+                }
+            }
+        }
+        mo_yu.display_line_no = mo_yu.base_line + line_idx;
+    }
+
     let sentence = mo_yu.sentences.get(mo_yu.sentence_idx)
         .map(|s| s.as_str())
         .unwrap_or("");
@@ -1535,6 +1574,12 @@ pub fn render_mo_yu_ui(
             egui::CornerRadius::same(2),
             egui::Color32::from_gray(128),
         );
+
+        // Line number label
+        let ln_label = format!("{}", mo_yu.display_line_no);
+        ui.add(egui::Label::new(
+            egui::RichText::new(ln_label).size(12.0).color(egui::Color32::from_gray(160)),
+        ).selectable(false));
 
         // Measure text & available width
         let avail_w = ui.available_width().max(10.0);
