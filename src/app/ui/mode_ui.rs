@@ -1422,26 +1422,57 @@ pub fn render_mo_yu_ui(
     // Re-extract sentences if empty
     if mo_yu.sentences.is_empty() {
         if let Some(ref doc) = document {
-            let doc = doc.lock();
-            let text = if let Some(fixed) = doc.as_fixed() {
-                fixed.page_text(mo_yu.page)
-            } else if let Some(reflow) = doc.as_reflow() {
-                let mut all = String::new();
-                for i in 0..reflow.chapter_count() {
-                    all.push_str(&reflow.chapter_text(i));
-                    all.push('\n');
+            let doc_guard = doc.lock();
+            if let Some(reflow) = doc_guard.as_reflow() {
+                let n = reflow.chapter_count();
+                if n == 0 {
+                    return;
                 }
-                all
-            } else {
-                String::new()
-            };
-            drop(doc);
-            let sentences = split_sentences(&text);
-            if !sentences.is_empty() {
-                mo_yu.sentences = sentences;
-                mo_yu.sentence_idx = 0;
-                mo_yu.timer = 0.0;
-                mo_yu.scroll_x = 0.0;
+                mo_yu.page = mo_yu.page.min(n - 1);
+                let text = reflow.chapter_text(mo_yu.page);
+                drop(doc_guard);
+                let sentences = split_sentences(&text);
+                if !sentences.is_empty() {
+                    mo_yu.sentences = sentences;
+                    mo_yu.sentence_idx = 0;
+                    if mo_yu.pending_seek_chars > 0 {
+                        let mut cum = 0usize;
+                        for (i, s) in mo_yu.sentences.iter().enumerate() {
+                            if cum >= mo_yu.pending_seek_chars {
+                                mo_yu.sentence_idx = i;
+                                break;
+                            }
+                            cum += s.chars().count();
+                        }
+                        mo_yu.pending_seek_chars = 0;
+                    }
+                    mo_yu.timer = 0.0;
+                    mo_yu.scroll_x = 0.0;
+                } else {
+                    // skip empty chapter
+                    mo_yu.page = (mo_yu.page + 1) % n;
+                }
+            } else if let Some(fixed) = doc_guard.as_fixed() {
+                let text = fixed.page_text(mo_yu.page);
+                drop(doc_guard);
+                let sentences = split_sentences(&text);
+                if !sentences.is_empty() {
+                    mo_yu.sentences = sentences;
+                    mo_yu.sentence_idx = 0;
+                    if mo_yu.pending_seek_chars > 0 {
+                        let mut cum = 0usize;
+                        for (i, s) in mo_yu.sentences.iter().enumerate() {
+                            if cum >= mo_yu.pending_seek_chars {
+                                mo_yu.sentence_idx = i;
+                                break;
+                            }
+                            cum += s.chars().count();
+                        }
+                        mo_yu.pending_seek_chars = 0;
+                    }
+                    mo_yu.timer = 0.0;
+                    mo_yu.scroll_x = 0.0;
+                }
             }
         }
     }
@@ -1529,7 +1560,25 @@ pub fn render_mo_yu_ui(
             mo_yu.scroll_x = 0.0;
             mo_yu.sentence_idx += 1;
             if mo_yu.sentence_idx >= mo_yu.sentences.len() {
-                mo_yu.page += 1;
+                // Advance to next page/chapter
+                if let Some(ref doc) = document {
+                    let doc_guard = doc.lock();
+                    let max_page = if let Some(reflow) = doc_guard.as_reflow() {
+                        reflow.chapter_count().saturating_sub(1)
+                    } else if doc_guard.is_fixed() {
+                        doc_guard.as_fixed().map(|f| f.page_count().saturating_sub(1)).unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    drop(doc_guard);
+                    if mo_yu.page >= max_page {
+                        mo_yu.page = 0;
+                    } else {
+                        mo_yu.page += 1;
+                    }
+                } else {
+                    mo_yu.page = 0;
+                }
                 mo_yu.sentences.clear();
                 mo_yu.sentence_idx = 0;
             }

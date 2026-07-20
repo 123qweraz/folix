@@ -247,6 +247,10 @@ pub struct MoYuState {
     pub page: usize,
     pub scroll_x: f32,
     pub positioned: bool,
+    /// Main reader's current_line at activation (reflow) or page (fixed).
+    pub main_line: usize,
+    /// Character offset within the current chapter — used to seek to the right sentence on first load.
+    pub pending_seek_chars: usize,
 }
 
 impl MoYuState {
@@ -262,6 +266,8 @@ impl MoYuState {
             page: 0,
             scroll_x: 0.0,
             positioned: false,
+            main_line: 0,
+            pending_seek_chars: 0,
         }
     }
 }

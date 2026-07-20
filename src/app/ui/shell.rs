@@ -1196,12 +1196,13 @@ impl FolixApp {
         }
 
         // Render 摸鱼模式 viewport from current tab (light reading only)
-        {
+        // Keep idx + is_light in scope for post-viewport sync.
+        let (mo_yu_idx, mo_yu_was_shown) = {
             let idx = self.state.active_tab;
             let is_light = self.state.tabs.get(idx)
                 .map(|t| t.modes.active == ModeKind::LightReading)
                 .unwrap_or(false);
-            if is_light {
+            let shown = if is_light {
                 let show = self.state.tabs[idx].modes.mo_yu.visible;
                 if show {
                     let doc = self.state.tabs[idx].document.clone();
@@ -1255,6 +1256,36 @@ impl FolixApp {
                             }
                         },
                     );
+                }
+                show
+            } else {
+                false
+            };
+            (idx, shown)
+        };
+
+        // Sync mo_yu.page → main view (page/scroll position)
+        if mo_yu_was_shown {
+            let tab = &mut self.state.tabs[mo_yu_idx];
+            if tab.has_document() {
+                let mo_page = tab.modes.mo_yu.page;
+                let is_fixed = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
+                if is_fixed {
+                    if tab.modes.page != mo_page {
+                        tab.modes.page = mo_page;
+                        tab.modes.mo_yu.sentences.clear();
+                    }
+                } else {
+                    let target_y = tab.modes.reading.layout.layout_cache_starts.iter()
+                        .zip(tab.modes.reading.layout.layout_cache_rows.iter())
+                        .find(|(_, r)| r.ci >= mo_page)
+                        .map(|(&y, _)| y)
+                        .unwrap_or(0.0);
+                    if (tab.modes.reading.layout.scroll_offset_y - target_y).abs() > 1.0 {
+                        tab.modes.reading.layout.pending_scroll_y = Some(target_y);
+                        tab.modes.reading.layout.scroll_offset_y = target_y;
+                        tab.modes.mo_yu.sentences.clear();
+                    }
                 }
             }
         }
@@ -1498,11 +1529,36 @@ impl FolixApp {
                             if ui.selectable_label(mo_yu_visible, mo_yu_label).clicked() {
                                 tab.modes.mo_yu.visible = !tab.modes.mo_yu.visible;
                                 if tab.modes.mo_yu.visible {
-                                    tab.modes.mo_yu.page = tab.modes.page;
+                                    tab.modes.mo_yu.main_line = tab.modes.reading.layout.current_line;
                                     tab.modes.mo_yu.sentences.clear();
                                     tab.modes.mo_yu.playing = true;
                                     tab.modes.mo_yu.timer = 0.0;
                                     tab.modes.mo_yu.positioned = false;
+                                    if is_fixed_doc {
+                                        tab.modes.mo_yu.page = tab.modes.page;
+                                        tab.modes.mo_yu.pending_seek_chars = 0;
+                                    } else {
+                                        let target = tab.modes.reading.layout.current_line;
+                                        let rows = &tab.modes.reading.layout.layout_cache_rows;
+                                        let mut found_ci = 0usize;
+                                        let mut seek = 0usize;
+                                        for row in rows {
+                                            if row.line_no >= target {
+                                                found_ci = row.ci;
+                                                break;
+                                            }
+                                            if row.ci == found_ci && row.it == 1 {
+                                                seek += row.text.chars().count() + 1;
+                                            } else if row.ci != found_ci {
+                                                found_ci = row.ci;
+                                            }
+                                        }
+                                        if found_ci == 0 && !rows.is_empty() {
+                                            found_ci = rows.last().unwrap().ci;
+                                        }
+                                        tab.modes.mo_yu.page = found_ci;
+                                        tab.modes.mo_yu.pending_seek_chars = seek;
+                                    }
                                 }
                             }
 
