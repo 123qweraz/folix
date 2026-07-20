@@ -1124,11 +1124,13 @@ impl FolixApp {
             let text_bg = egui::Color32::from_rgba_unmultiplied(tb[0], tb[1], tb[2], tb[3]);
 
             let full_rect = ui.max_rect();
-            ui.painter().rect_filled(full_rect, 0.0, reader_bg);
             let mut text_rect = full_rect;
-            let margin_side = full_rect.width() * 0.25;
-            text_rect.min.x += margin_side;
-            text_rect.max.x -= margin_side;
+            if full_rect.width() >= 1000.0 {
+                ui.painter().rect_filled(full_rect, 0.0, reader_bg);
+                let margin_side = full_rect.width() * 0.25;
+                text_rect.min.x += margin_side;
+                text_rect.max.x -= margin_side;
+            }
             ui.painter().rect_filled(text_rect, 0.0, text_bg);
             let mut inner_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
             mode_ui::render_document(
