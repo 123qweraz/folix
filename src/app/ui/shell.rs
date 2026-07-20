@@ -1295,23 +1295,6 @@ impl FolixApp {
                     tab.modes.reading.layout.mo_yu_playing_line = found;
                 }
 
-                // ── 摸鱼 → main: sync page / scroll ──
-                if is_fixed {
-                    if tab.modes.page != mo_page {
-                        tab.modes.page = mo_page;
-                    }
-                } else {
-                    let target_y = tab.modes.reading.layout.layout_cache_starts.iter()
-                        .zip(tab.modes.reading.layout.layout_cache_rows.iter())
-                        .find(|(_, r)| r.ci >= mo_page)
-                        .map(|(&y, _)| y)
-                        .unwrap_or(0.0);
-                    if (tab.modes.reading.layout.scroll_offset_y - target_y).abs() > 1.0 {
-                        tab.modes.reading.layout.pending_scroll_y = Some(target_y);
-                        tab.modes.reading.layout.scroll_offset_y = target_y;
-                    }
-                }
-
                 // ── main → 摸鱼: follow user manual scroll ──
                 let current_line = tab.modes.reading.layout.current_line;
                 let current_page = tab.modes.page;
@@ -1333,7 +1316,7 @@ impl FolixApp {
                     }
                     if main_ci != mo_page {
                         let base_line = tab.modes.reading.layout.layout_cache_rows.iter()
-                            .find(|r| r.ci == main_ci)
+                            .find(|r| r.ci == main_ci && (r.it == 1 || r.it == 4))
                             .map(|r| r.line_no)
                             .unwrap_or(0);
                         tab.modes.mo_yu.page = main_ci;
