@@ -1612,23 +1612,28 @@ impl FolixApp {
                                         tab.modes.mo_yu.page = tab.modes.page;
                                         tab.modes.mo_yu.pending_seek_chars = 0;
                                     } else {
-                                        let target = tab.modes.reading.layout.current_line;
+                                        let target = tab.modes.reading.layout.current_line.max(1);
                                         let rows = &tab.modes.reading.layout.layout_cache_rows;
+                                        // First pass: find target chapter
                                         let mut found_ci = 0usize;
-                                        let mut seek = 0usize;
                                         for row in rows {
                                             if row.line_no >= target {
                                                 found_ci = row.ci;
                                                 break;
                                             }
-                                            if row.ci == found_ci && row.it == 1 {
-                                                seek += row.text.chars().count() + 1;
-                                            } else if row.ci != found_ci {
-                                                found_ci = row.ci;
-                                            }
                                         }
                                         if found_ci == 0 && !rows.is_empty() {
                                             found_ci = rows.last().unwrap().ci;
+                                        }
+                                        // Second pass: count chars in found_ci before target line
+                                        let mut seek = 0usize;
+                                        for row in rows {
+                                            if row.ci == found_ci && row.line_no >= target {
+                                                break;
+                                            }
+                                            if row.ci == found_ci && (row.it == 1 || row.it == 4) {
+                                                seek += row.text.chars().count() + 1;
+                                            }
                                         }
                                         tab.modes.mo_yu.page = found_ci;
                                         tab.modes.mo_yu.pending_seek_chars = seek;
