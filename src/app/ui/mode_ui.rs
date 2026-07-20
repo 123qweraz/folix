@@ -242,7 +242,8 @@ fn render_reflow_document(
     // ---- Layout cache management with partial rebuild + resize throttle ----
     let rows: &[LayoutRow];
     let row_starts: &[f32];
-    let target_line = reading.layout.current_line.max(1);
+    let target_line = reading.layout.stream_jump_to
+        .unwrap_or(reading.layout.current_line.max(1));
 
     // Helper: compute cpl-based height estimate for non-visible text rows
     let cpl_heuristic = |text: &str, ta_w: f32, fs: f32, lh: f32| -> f32 {

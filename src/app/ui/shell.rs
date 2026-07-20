@@ -1601,7 +1601,7 @@ impl FolixApp {
                                     if is_fixed_doc {
                                         tab.modes.mo_yu.page = tab.modes.page;
                                         tab.modes.mo_yu.base_line = 0;
-                                        tab.modes.mo_yu.main_line = 0;
+                                        tab.modes.mo_yu.main_line = tab.modes.reading.layout.current_line;
                                     } else {
                                         let target = tab.modes.reading.layout.current_line.max(1);
                                         let rows = &tab.modes.reading.layout.layout_cache_rows;
@@ -1616,7 +1616,7 @@ impl FolixApp {
                                             found_ci = rows.last().unwrap().ci;
                                         }
                                         let base_line = rows.iter()
-                                            .find(|r| r.ci == found_ci)
+                                            .find(|r| r.ci == found_ci && (r.it == 1 || r.it == 4))
                                             .map(|r| r.line_no)
                                             .unwrap_or(0);
                                         tab.modes.mo_yu.page = found_ci;
