@@ -573,12 +573,17 @@ fn render_reflow_document(
                 }
                  1 => {
                     if reading.layout.show_line_numbers {
+                        let ln_color = if reading.layout.mo_yu_playing_line == Some(rows[i].line_no) {
+                            egui::Color32::from_rgb(255, 140, 0)
+                        } else {
+                            egui::Color32::GRAY
+                        };
                         painter.text(
                             egui::pos2(content_left + 4.0, rect.top()),
                             egui::Align2::LEFT_TOP,
                             format!("{:>6}│ ", rows[i].line_no),
                             font_id.clone(),
-                            egui::Color32::GRAY,
+                            ln_color,
                         );
                         if let Some(galley) = &rows[i].galley {
                             let text_x = content_left + gutter_w;
@@ -609,12 +614,17 @@ fn render_reflow_document(
                 }
                 4 => {
                     if reading.layout.show_line_numbers {
+                        let ln_color = if reading.layout.mo_yu_playing_line == Some(rows[i].line_no) {
+                            egui::Color32::from_rgb(255, 140, 0)
+                        } else {
+                            egui::Color32::GRAY
+                        };
                         painter.text(
                             egui::pos2(content_left + 4.0, rect.top()),
                             egui::Align2::LEFT_TOP,
                             format!("{:>6}│ ", rows[i].line_no),
                             font_id.clone(),
-                            egui::Color32::GRAY,
+                            ln_color,
                         );
                     }
                     let link_color = egui::Color32::from_rgb(30, 100, 220);

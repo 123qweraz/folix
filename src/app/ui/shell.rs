@@ -1264,16 +1264,41 @@ impl FolixApp {
             (idx, shown)
         };
 
-        // Sync mo_yu.page → main view (page/scroll position)
+        // Bidirectional sync between 摸鱼 mode and main view
         if mo_yu_was_shown {
             let tab = &mut self.state.tabs[mo_yu_idx];
             if tab.has_document() {
-                let mo_page = tab.modes.mo_yu.page;
                 let is_fixed = tab.document.as_ref().map(|d| d.lock().is_fixed()).unwrap_or(true);
+                let mo_page = tab.modes.mo_yu.page;
+
+                // ── mo_yu_playing_line: which line number to highlight ──
+                if is_fixed {
+                    tab.modes.reading.layout.mo_yu_playing_line = None;
+                } else {
+                    let sentence_idx = tab.modes.mo_yu.sentence_idx;
+                    let cum_chars: usize = tab.modes.mo_yu.sentences.iter()
+                        .take(sentence_idx)
+                        .map(|s| s.chars().count())
+                        .sum();
+                    let mut line_cum = 0usize;
+                    let mut found = None;
+                    for row in &tab.modes.reading.layout.layout_cache_rows {
+                        if row.ci == mo_page && (row.it == 1 || row.it == 4) {
+                            let rc = row.text.chars().count();
+                            if line_cum + rc > cum_chars {
+                                found = Some(row.line_no);
+                                break;
+                            }
+                            line_cum += rc + 1;
+                        }
+                    }
+                    tab.modes.reading.layout.mo_yu_playing_line = found;
+                }
+
+                // ── 摸鱼 → main: sync page / scroll ──
                 if is_fixed {
                     if tab.modes.page != mo_page {
                         tab.modes.page = mo_page;
-                        tab.modes.mo_yu.sentences.clear();
                     }
                 } else {
                     let target_y = tab.modes.reading.layout.layout_cache_starts.iter()
@@ -1284,9 +1309,58 @@ impl FolixApp {
                     if (tab.modes.reading.layout.scroll_offset_y - target_y).abs() > 1.0 {
                         tab.modes.reading.layout.pending_scroll_y = Some(target_y);
                         tab.modes.reading.layout.scroll_offset_y = target_y;
-                        tab.modes.mo_yu.sentences.clear();
                     }
                 }
+
+                // ── main → 摸鱼: follow user manual scroll ──
+                let current_line = tab.modes.reading.layout.current_line;
+                let current_page = tab.modes.page;
+                if is_fixed {
+                    if current_page != mo_page {
+                        tab.modes.mo_yu.page = current_page;
+                        tab.modes.mo_yu.sentences.clear();
+                        tab.modes.mo_yu.sentence_idx = 0;
+                        tab.modes.mo_yu.timer = 0.0;
+                    }
+                } else if tab.modes.mo_yu.playing && !tab.modes.mo_yu.sentences.is_empty() {
+                    // Only follow when sentences are loaded (avoid chasing during chapter transitions)
+                    let mut main_ci = mo_page;
+                    for row in &tab.modes.reading.layout.layout_cache_rows {
+                        if row.line_no >= current_line {
+                            main_ci = row.ci;
+                            break;
+                        }
+                    }
+                    if main_ci != mo_page {
+                        tab.modes.mo_yu.page = main_ci;
+                        tab.modes.mo_yu.pending_seek_chars = 0;
+                        // compute char offset within the new chapter
+                        let main_line = current_line;
+                        let mut seek = 0usize;
+                        for row in &tab.modes.reading.layout.layout_cache_rows {
+                            if row.ci != main_ci {
+                                if row.line_no > 0 { continue; }
+                            }
+                            if row.line_no >= main_line && row.ci == main_ci {
+                                break;
+                            }
+                            if row.ci == main_ci && (row.it == 1 || row.it == 4) {
+                                seek += row.text.chars().count() + 1;
+                            }
+                        }
+                        tab.modes.mo_yu.pending_seek_chars = seek;
+                        tab.modes.mo_yu.sentences.clear();
+                        tab.modes.mo_yu.sentence_idx = 0;
+                        tab.modes.mo_yu.timer = 0.0;
+                    }
+                } else if !tab.modes.mo_yu.playing {
+                    tab.modes.reading.layout.mo_yu_playing_line = None;
+                }
+            }
+        } else {
+            // MoYu not shown — clear highlight
+            if let Some(tab) = self.state.tabs.get_mut(mo_yu_idx) {
+                tab.modes.reading.layout.mo_yu_playing_line = None;
             }
         }
     }

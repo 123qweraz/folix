@@ -197,6 +197,8 @@ pub struct LayoutState {
     pub next_img_load_ci: usize,
     pub scroll_offset_y: f32,
     pub total_height: f32,
+    /// Line number highlighted by 摸鱼 mode (None = no highlight).
+    pub mo_yu_playing_line: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -383,6 +385,7 @@ impl TabModes {
                     next_img_load_ci: 0,
                     scroll_offset_y: 0.0,
                     total_height: 0.0,
+                    mo_yu_playing_line: None,
                 },
                 vocab_state: VocabState {
                     show_add_vocab_dialog: false,
