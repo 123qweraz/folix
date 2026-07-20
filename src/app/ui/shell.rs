@@ -1712,7 +1712,7 @@ impl FolixApp {
                         .step_by(40.0)
                         .text(crate::app::i18n::tr(lng, "Max Width")));
                     ui.add(egui::Slider::new(&mut s.reading_side_margin_pct, 0.05..=0.40)
-                        .step_by(0.05)
+                        .step_by(0.01)
                         .text(crate::app::i18n::tr(lng, "Side Margin")));
                 });
             if let Some(tab) = self.state.current_tab_mut() {
