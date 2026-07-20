@@ -856,7 +856,7 @@ fn render_reflow_document(
 
                 // Track selection for context menu
                 if resp.drag_started() {
-                    if let Some(pos) = resp.interact_pointer_pos() {
+                    if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
                         let abs_char = char_pos(pos);
                         sel.char_anchor = Some((rows[i].ci, rows[i].bi, abs_char));
                         sel.char_focus = Some((rows[i].ci, rows[i].bi, abs_char));
@@ -864,7 +864,7 @@ fn render_reflow_document(
                         sel.selected_word_indices.clear();
                     }
                 }
-                if resp.dragged() {
+                if resp.dragged() && sel.char_anchor.is_some() {
                     if let Some(pos) = resp.interact_pointer_pos() {
                         sel.char_focus = Some((rows[i].ci, rows[i].bi, char_pos(pos)));
                     }
