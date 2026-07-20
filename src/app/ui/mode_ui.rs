@@ -1445,16 +1445,23 @@ pub fn render_mo_yu_ui(
                 if !sentences.is_empty() {
                     mo_yu.sentences = sentences;
                     mo_yu.sentence_idx = 0;
-                    if mo_yu.pending_seek_chars > 0 {
-                        let mut cum = 0usize;
-                        for (i, s) in mo_yu.sentences.iter().enumerate() {
-                            if cum + s.chars().count() > mo_yu.pending_seek_chars {
-                                mo_yu.sentence_idx = i;
+                    if mo_yu.main_line > mo_yu.base_line {
+                        let local_line = mo_yu.main_line - mo_yu.base_line;
+                        let mut prefix_end = 0;
+                        let mut nl_seen = 0;
+                        for (i, c) in text.char_indices() {
+                            if nl_seen == local_line {
+                                prefix_end = i;
                                 break;
                             }
-                            cum += s.chars().count();
+                            if c == '\n' {
+                                nl_seen += 1;
+                            }
                         }
-                        mo_yu.pending_seek_chars = 0;
+                        if prefix_end == 0 && local_line > 0 {
+                            prefix_end = text.len();
+                        }
+                        mo_yu.sentence_idx = split_sentences(&text[..prefix_end]).len();
                     }
                     mo_yu.timer = 0.0;
                     mo_yu.scroll_x = 0.0;
@@ -1469,16 +1476,23 @@ pub fn render_mo_yu_ui(
                 if !sentences.is_empty() {
                     mo_yu.sentences = sentences;
                     mo_yu.sentence_idx = 0;
-                    if mo_yu.pending_seek_chars > 0 {
-                        let mut cum = 0usize;
-                        for (i, s) in mo_yu.sentences.iter().enumerate() {
-                            if cum + s.chars().count() > mo_yu.pending_seek_chars {
-                                mo_yu.sentence_idx = i;
+                    if mo_yu.main_line > mo_yu.base_line {
+                        let local_line = mo_yu.main_line - mo_yu.base_line;
+                        let mut prefix_end = 0;
+                        let mut nl_seen = 0;
+                        for (i, c) in text.char_indices() {
+                            if nl_seen == local_line {
+                                prefix_end = i;
                                 break;
                             }
-                            cum += s.chars().count();
+                            if c == '\n' {
+                                nl_seen += 1;
+                            }
                         }
-                        mo_yu.pending_seek_chars = 0;
+                        if prefix_end == 0 && local_line > 0 {
+                            prefix_end = text.len();
+                        }
+                        mo_yu.sentence_idx = split_sentences(&text[..prefix_end]).len();
                     }
                     mo_yu.timer = 0.0;
                     mo_yu.scroll_x = 0.0;

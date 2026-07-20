@@ -1332,23 +1332,13 @@ impl FolixApp {
                         }
                     }
                     if main_ci != mo_page {
+                        let base_line = tab.modes.reading.layout.layout_cache_rows.iter()
+                            .find(|r| r.ci == main_ci)
+                            .map(|r| r.line_no)
+                            .unwrap_or(0);
                         tab.modes.mo_yu.page = main_ci;
-                        tab.modes.mo_yu.pending_seek_chars = 0;
-                        // compute char offset within the new chapter
-                        let main_line = current_line;
-                        let mut seek = 0usize;
-                        for row in &tab.modes.reading.layout.layout_cache_rows {
-                            if row.ci != main_ci {
-                                if row.line_no > 0 { continue; }
-                            }
-                            if row.line_no >= main_line && row.ci == main_ci {
-                                break;
-                            }
-                                            if row.ci == main_ci && (row.it == 1 || row.it == 4) {
-                                                seek += row.text.chars().count();
-                                            }
-                        }
-                        tab.modes.mo_yu.pending_seek_chars = seek;
+                        tab.modes.mo_yu.base_line = base_line;
+                        tab.modes.mo_yu.main_line = current_line;
                         tab.modes.mo_yu.sentences.clear();
                         tab.modes.mo_yu.sentence_idx = 0;
                         tab.modes.mo_yu.timer = 0.0;
@@ -1610,11 +1600,10 @@ impl FolixApp {
                                     tab.modes.mo_yu.positioned = false;
                                     if is_fixed_doc {
                                         tab.modes.mo_yu.page = tab.modes.page;
-                                        tab.modes.mo_yu.pending_seek_chars = 0;
+                                        tab.modes.mo_yu.base_line = 0;
                                     } else {
                                         let target = tab.modes.reading.layout.current_line.max(1);
                                         let rows = &tab.modes.reading.layout.layout_cache_rows;
-                                        // First pass: find target chapter
                                         let mut found_ci = 0usize;
                                         for row in rows {
                                             if row.line_no >= target {
@@ -1625,18 +1614,12 @@ impl FolixApp {
                                         if found_ci == 0 && !rows.is_empty() {
                                             found_ci = rows.last().unwrap().ci;
                                         }
-                                        // Second pass: count chars in found_ci before target line
-                                        let mut seek = 0usize;
-                                        for row in rows {
-                                            if row.ci == found_ci && row.line_no >= target {
-                                                break;
-                                            }
-                                            if row.ci == found_ci && (row.it == 1 || row.it == 4) {
-                                                seek += row.text.chars().count();
-                                            }
-                                        }
+                                        let base_line = rows.iter()
+                                            .find(|r| r.ci == found_ci)
+                                            .map(|r| r.line_no)
+                                            .unwrap_or(0);
                                         tab.modes.mo_yu.page = found_ci;
-                                        tab.modes.mo_yu.pending_seek_chars = seek;
+                                        tab.modes.mo_yu.base_line = base_line;
                                     }
                                 }
                             }
