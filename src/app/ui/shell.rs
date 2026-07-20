@@ -1289,7 +1289,7 @@ impl FolixApp {
                                 found = Some(row.line_no);
                                 break;
                             }
-                            line_cum += rc + 1;
+                            line_cum += rc;
                         }
                     }
                     tab.modes.reading.layout.mo_yu_playing_line = found;
