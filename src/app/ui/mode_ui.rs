@@ -1448,7 +1448,7 @@ pub fn render_mo_yu_ui(
                     if mo_yu.pending_seek_chars > 0 {
                         let mut cum = 0usize;
                         for (i, s) in mo_yu.sentences.iter().enumerate() {
-                            if cum >= mo_yu.pending_seek_chars {
+                            if cum + s.chars().count() > mo_yu.pending_seek_chars {
                                 mo_yu.sentence_idx = i;
                                 break;
                             }
@@ -1472,7 +1472,7 @@ pub fn render_mo_yu_ui(
                     if mo_yu.pending_seek_chars > 0 {
                         let mut cum = 0usize;
                         for (i, s) in mo_yu.sentences.iter().enumerate() {
-                            if cum >= mo_yu.pending_seek_chars {
+                            if cum + s.chars().count() > mo_yu.pending_seek_chars {
                                 mo_yu.sentence_idx = i;
                                 break;
                             }

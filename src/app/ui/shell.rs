@@ -1344,9 +1344,9 @@ impl FolixApp {
                             if row.line_no >= main_line && row.ci == main_ci {
                                 break;
                             }
-                            if row.ci == main_ci && (row.it == 1 || row.it == 4) {
-                                seek += row.text.chars().count() + 1;
-                            }
+                                            if row.ci == main_ci && (row.it == 1 || row.it == 4) {
+                                                seek += row.text.chars().count();
+                                            }
                         }
                         tab.modes.mo_yu.pending_seek_chars = seek;
                         tab.modes.mo_yu.sentences.clear();
@@ -1632,7 +1632,7 @@ impl FolixApp {
                                                 break;
                                             }
                                             if row.ci == found_ci && (row.it == 1 || row.it == 4) {
-                                                seek += row.text.chars().count() + 1;
+                                                seek += row.text.chars().count();
                                             }
                                         }
                                         tab.modes.mo_yu.page = found_ci;
