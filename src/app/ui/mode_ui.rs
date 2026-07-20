@@ -1445,8 +1445,8 @@ pub fn render_mo_yu_ui(
                 if !sentences.is_empty() {
                     mo_yu.sentences = sentences;
                     mo_yu.sentence_idx = 0;
-                    if mo_yu.main_line > mo_yu.base_line {
-                        let local_line = mo_yu.main_line - mo_yu.base_line;
+                    if mo_yu.main_line > 0 {
+                        let local_line = mo_yu.main_line;
                         let mut prefix_end = 0;
                         let mut nl_seen = 0;
                         for (i, c) in text.char_indices() {
@@ -1461,7 +1461,9 @@ pub fn render_mo_yu_ui(
                         if prefix_end == 0 && local_line > 0 {
                             prefix_end = text.len();
                         }
-                        mo_yu.sentence_idx = split_sentences(&text[..prefix_end]).len();
+                        let prev = split_sentences(&text[..prefix_end]).len();
+                        let max = mo_yu.sentences.len().saturating_sub(1);
+                        mo_yu.sentence_idx = prev.min(max);
                     }
                     mo_yu.timer = 0.0;
                     mo_yu.scroll_x = 0.0;
@@ -1476,8 +1478,8 @@ pub fn render_mo_yu_ui(
                 if !sentences.is_empty() {
                     mo_yu.sentences = sentences;
                     mo_yu.sentence_idx = 0;
-                    if mo_yu.main_line > mo_yu.base_line {
-                        let local_line = mo_yu.main_line - mo_yu.base_line;
+                    if mo_yu.main_line > 0 {
+                        let local_line = mo_yu.main_line;
                         let mut prefix_end = 0;
                         let mut nl_seen = 0;
                         for (i, c) in text.char_indices() {
@@ -1492,7 +1494,9 @@ pub fn render_mo_yu_ui(
                         if prefix_end == 0 && local_line > 0 {
                             prefix_end = text.len();
                         }
-                        mo_yu.sentence_idx = split_sentences(&text[..prefix_end]).len();
+                        let prev = split_sentences(&text[..prefix_end]).len();
+                        let max = mo_yu.sentences.len().saturating_sub(1);
+                        mo_yu.sentence_idx = prev.min(max);
                     }
                     mo_yu.timer = 0.0;
                     mo_yu.scroll_x = 0.0;
