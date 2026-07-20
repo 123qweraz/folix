@@ -595,6 +595,43 @@ fn render_reflow_document(
                             ));
                         }
                     }
+                    // Custom selection highlight (persists across right-click)
+                    let sel = &reading.selection;
+                    if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
+                        let (a_ch, a_blk, a_pos) = anchor;
+                        let (_f_ch, _f_blk, f_pos) = focus;
+                        if a_ch == rows[i].ci && a_blk == rows[i].bi {
+                            let row_text_len = rows[i].text.chars().count();
+                            let local_a = a_pos.saturating_sub(rows[i].char_offset).min(row_text_len);
+                            let local_f = f_pos.saturating_sub(rows[i].char_offset).min(row_text_len);
+                            if local_a != local_f {
+                                let sel_start = local_a.min(local_f);
+                                let sel_end = local_a.max(local_f);
+                                if let Some(galley) = &rows[i].galley {
+                                    let hl_rect = galley.pos_from_ccursor(egui::text::CCursor {
+                                        index: sel_start,
+                                        prefer_next_row: false,
+                                    });
+                                    let hl_end_rect = galley.pos_from_ccursor(egui::text::CCursor {
+                                        index: sel_end,
+                                        prefer_next_row: false,
+                                    });
+                                    let hl_x0 = content_left + gutter_w + hl_rect.left().min(hl_end_rect.left());
+                                    let hl_x1 = content_left + gutter_w + hl_rect.left().max(hl_end_rect.left());
+                                    if (hl_x1 - hl_x0).abs() > 0.5 {
+                                        painter.rect_filled(
+                                            egui::Rect::from_min_max(
+                                                egui::pos2(hl_x0, rect.top()),
+                                                egui::pos2(hl_x1, rect.bottom()),
+                                            ),
+                                            0.0,
+                                            egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 3 => {
                     painter.rect_filled(
@@ -838,17 +875,18 @@ fn render_reflow_document(
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
                         let (a_ch, a_blk, a_pos) = anchor;
                         let (f_ch, f_blk, f_pos) = focus;
-                        let block_text = chapter_cache_ref[rows[i].ci].as_ref()
-                            .and_then(|ch| ch.blocks.get(rows[i].bi))
-                            .and_then(|b| if let ContentBlock::Text { text: t, .. } = b { Some(t.as_str()) } else { None })
-                            .unwrap_or("");
-                        let block_len = block_text.chars().count();
-                        let local_a = if a_ch == rows[i].ci && a_blk == rows[i].bi { a_pos } else { 0 };
-                        let local_f = if f_ch == rows[i].ci && f_blk == rows[i].bi { f_pos } else { block_len };
-                        let s_start = local_a.min(local_f).max(0).min(block_len);
-                        let s_end = local_a.max(local_f).max(0).min(block_len);
+                        let row_text = &rows[i].text;
+                        let row_len = row_text.chars().count();
+                        let local_a = if a_ch == rows[i].ci && a_blk == rows[i].bi {
+                            a_pos.saturating_sub(rows[i].char_offset).min(row_len)
+                        } else { 0 };
+                        let local_f = if f_ch == rows[i].ci && f_blk == rows[i].bi {
+                            f_pos.saturating_sub(rows[i].char_offset).min(row_len)
+                        } else { row_len };
+                        let s_start = local_a.min(local_f);
+                        let s_end = local_a.max(local_f);
                         if s_start < s_end {
-                            let sel_text: String = block_text.chars().skip(s_start).take(s_end - s_start).collect();
+                            let sel_text: String = row_text.chars().skip(s_start).take(s_end - s_start).collect();
                             if ui.button("Copy").clicked() { ui.ctx().copy_text(sel_text.clone()); ui.close_menu(); }
                             if ui.button("Add to Vocabulary").clicked() { sel.pending_vocab = Some(sel_text.clone()); ui.close_menu(); }
                             if ui.button("Save Sentence").clicked() { sel.pending_sentence = Some(sel_text); ui.close_menu(); }
