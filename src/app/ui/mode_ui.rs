@@ -1,5 +1,6 @@
 use crate::app::engines::{DocumentHandle, ContentBlock, TextWordPosition};
 use crate::app::core::app_state::AppSettings;
+use crate::app::core::text_layout::TextLayout;
 use crate::app::core::mode_system::{ReadingState, ReadingLayout, FitMode, ViewRotation, Bookmark, AutoState, SelectionState, Vocabulary, SidebarSection, MoYuState, LayoutRow};
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -294,8 +295,8 @@ fn render_reflow_document(
                     actual_fid,
                     text_avail_w));
                 let g = apply_line_spacing(g, actual_fs, settings.reading_line_height);
-                row.height = g.rect.height().max(1.0);
-                row.galley = Some(g);
+                row.galley = TextLayout::from_galley(g);
+                row.height = row.galley.height();
                 any_change = true;
             }
         }
@@ -366,12 +367,12 @@ fn render_reflow_document(
 
             for (ci, chapter_opt) in reading.layout.chapter_cache.iter().enumerate() {
                 if ci > 0 {
-                    new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: None, layout_gen: gen, heading_level: 0, bold: false, italic: false, list_item: false, target_ci: None });
+                    new_rows.push(LayoutRow { line_no: 0, ci, bi: 0, it: 0, text: String::new(), height: 12.0, char_offset: 0, galley: TextLayout::empty(), layout_gen: gen, heading_level: 0, bold: false, italic: false, list_item: false, target_ci: None });
                 }
                 let chapter = match chapter_opt.as_ref() {
                     Some(ch) => ch,
                     None => {
-                        new_rows.push(LayoutRow { line_no: global_line + 1, ci, bi: 0, it: 3, text: String::new(), height: ph, char_offset: 0, galley: None, layout_gen: gen, heading_level: 0, bold: false, italic: false, list_item: false, target_ci: None });
+                        new_rows.push(LayoutRow { line_no: global_line + 1, ci, bi: 0, it: 3, text: String::new(), height: ph, char_offset: 0, galley: TextLayout::empty(), layout_gen: gen, heading_level: 0, bold: false, italic: false, list_item: false, target_ci: None });
                         global_line += 1;
                         continue;
                     }
@@ -391,7 +392,7 @@ fn render_reflow_document(
                                     text: src_line.to_string(),
                                     height: h,
                                     char_offset,
-                                    galley: None,
+                                    galley: TextLayout::empty(),
                                     layout_gen: gen,
                                     heading_level: *heading_level,
                                     bold: *bold,
@@ -412,7 +413,7 @@ fn render_reflow_document(
                                 text: String::new(),
                                 height: max_w / aspect.max(0.01) + 8.0,
                                 char_offset: 0,
-                                galley: None,
+                                galley: TextLayout::empty(),
                                 layout_gen: gen,
                                 heading_level: 0,
                                 bold: false,
@@ -431,7 +432,7 @@ fn render_reflow_document(
                                     text: src_line.to_string(),
                                     height: h,
                                     char_offset: 0,
-                                    galley: None,
+                                    galley: TextLayout::empty(),
                                     layout_gen: gen,
                                     heading_level: 0,
                                     bold: false,
@@ -470,7 +471,7 @@ fn render_reflow_document(
                 1 | 4 => {
                     if row.text.is_empty() {
                         row.height = line_h;
-                        row.galley = None;
+                        row.galley = TextLayout::empty();
                     } else if i >= vis_first && i < vis_last {
                         let actual_fs = heading_font_size(row.heading_level, font_size);
                         let actual_fid = egui::FontId::new(actual_fs, font_family_for_row(row.bold, row.italic));
@@ -479,13 +480,13 @@ fn render_reflow_document(
                             actual_fid,
                             text_avail_w));
                         let g = apply_line_spacing(g, actual_fs, settings.reading_line_height);
-                        row.height = g.rect.height().max(1.0);
-                        row.galley = Some(g);
+                        row.galley = TextLayout::from_galley(g);
+                        row.height = row.galley.height();
                     } else {
                         let actual_fs = heading_font_size(row.heading_level, font_size);
                         let actual_lh = actual_fs * settings.reading_line_height;
                         row.height = cpl_heuristic(&row.text, text_avail_w, actual_fs, actual_lh);
-                        row.galley = None;
+                        row.galley = TextLayout::empty();
                     }
                 }
                 2 => {
@@ -496,10 +497,10 @@ fn render_reflow_document(
                             row.height = max_w / aspect.max(0.01) + 8.0;
                         }
                     }
-                    row.galley = None;
+                    row.galley = TextLayout::empty();
                 }
-                3 => { row.galley = None; }
-                _ => { row.height = 12.0; row.galley = None; }
+                3 => { row.galley = TextLayout::empty(); }
+                _ => { row.height = 12.0; row.galley = TextLayout::empty(); }
             }
         }
 
@@ -616,11 +617,9 @@ fn render_reflow_document(
                             if min_abs < row_start + row_text_len && max_abs > row_start && min_abs != max_abs {
                                 let local_a = min_abs.saturating_sub(row_start).min(row_text_len);
                                 let local_b = max_abs.saturating_sub(row_start).min(row_text_len);
-                                if let Some(galley) = &rows[i].galley {
-                                    let hl_start = galley.pos_from_ccursor(egui::text::CCursor { index: local_a, prefer_next_row: false });
-                                    let hl_end = galley.pos_from_ccursor(egui::text::CCursor { index: local_b, prefer_next_row: false });
-                                    let hl_x0 = content_left + gutter_w + hl_start.left().min(hl_end.left());
-                                    let hl_x1 = content_left + gutter_w + hl_start.left().max(hl_end.left());
+                                if rows[i].galley.is_some() {
+                                    let hl_x0 = content_left + gutter_w + rows[i].galley.char_left(local_a).min(rows[i].galley.char_left(local_b));
+                                    let hl_x1 = content_left + gutter_w + rows[i].galley.char_left(local_a).max(rows[i].galley.char_left(local_b));
                                     if (hl_x1 - hl_x0).abs() > 0.5 {
                                         painter.rect_filled(
                                             egui::Rect::from_min_max(egui::pos2(hl_x0, rect.top()), egui::pos2(hl_x1, rect.bottom())),
@@ -690,7 +689,7 @@ fn render_reflow_document(
                         );
                     }
                     let link_color = egui::Color32::from_rgb(30, 100, 220);
-                    if let Some(galley) = &rows[i].galley {
+                    if let Some(galley) = rows[i].galley.as_galley() {
                         let text_x = content_left + gutter_w;
                         let text_top = rect.top();
                         painter.add(egui::Shape::galley(
@@ -832,9 +831,9 @@ fn render_reflow_document(
                 let local_x = pos.x - (content_left + gutter_w);
                 let r = &rows[row_idx];
                 r.char_offset
-                    + if let Some(galley) = &r.galley {
+                    + if r.galley.is_some() {
                         let local_y = pos.y - (base_y + row_starts[row_idx]);
-                        galley.cursor_from_pos(egui::vec2(local_x.max(0.0), local_y.max(0.0))).ccursor.index
+                        r.galley.cursor_at(local_x, local_y)
                     } else {
                         ((local_x / text_avail_w.max(1.0)).clamp(0.0, 1.0) * r.text.chars().count() as f32) as usize
                     }
@@ -866,7 +865,7 @@ fn render_reflow_document(
                     egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
                     egui::vec2(text_avail_w, rows[i].height),
                 );
-                let resp = if let Some(galley) = &rows[i].galley {
+                let resp = if let Some(galley) = rows[i].galley.as_galley() {
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
                         ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
                         ui.add(egui::Label::new(galley.clone()).selectable(true))

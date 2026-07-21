@@ -26,6 +26,7 @@ pub enum ViewRotation {
 }
 
 use std::collections::HashMap;
+use crate::app::core::text_layout::TextLayout;
 
 #[derive(Clone)]
 pub struct SearchState {
@@ -70,8 +71,8 @@ pub struct LayoutRow {
     pub height: f32,
     /// Character offset of this row within its block (including newlines).
     pub char_offset: usize,
-    /// Cached text galley from Fonts::layout_delayed_color (avoid per-frame layout).
-    pub galley: Option<std::sync::Arc<egui::Galley>>,
+    /// Cached text layout (egui::Galley or iced equivalent).
+    pub galley: TextLayout,
     /// Generation counter: matched against ReadingState::layout_cache_gen to detect staleness.
     pub layout_gen: u64,
     /// Heading level (1-6, 0 = body text).
