@@ -892,9 +892,9 @@ fn render_reflow_document(
                     }
                 }
 
-                // Drag update → update focus within the same block
+                // Drag update → update focus (latest_pos gives real-time cursor, not press origin)
                 if resp.dragged_by(egui::PointerButton::Primary) {
-                    if let Some(pos) = resp.interact_pointer_pos() {
+                    if let Some(pos) = ui.input(|i| i.pointer.latest_pos()) {
                         sel.char_focus = Some((rows[i].ci, rows[i].bi, char_pos_row(pos, i)));
                     }
                 }
@@ -954,7 +954,7 @@ fn render_reflow_document(
             // Global drag tracker: for CROSS-BLOCK selections only (same-block handled by per-row dragged_by)
             if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
                 if let (Some(anchor), Some(_)) = (sel.char_anchor, sel.char_focus) {
-                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                    if let Some(pos) = ui.input(|i| i.pointer.latest_pos()) {
                         let local_y = pos.y - base_y;
                         let idx = row_starts.partition_point(|&y| y <= local_y).saturating_sub(1);
                         if idx >= first && idx < last.min(rows.len()) {
