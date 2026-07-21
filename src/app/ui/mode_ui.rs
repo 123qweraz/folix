@@ -838,26 +838,15 @@ fn render_reflow_document(
                     }
                     continue;
                 }
-                // --- Text rows: use native selectable Label ---
+                // --- Text rows: handle interactions manually (custom highlight persists across right-click) ---
                 if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
                 let text_rect = egui::Rect::from_min_size(
                     egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
                     egui::vec2(text_avail_w, rows[i].height),
                 );
-                let resp = if let Some(galley) = &rows[i].galley {
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                        ui.add(egui::Label::new(galley.clone()).selectable(true))
-                    }).inner
-                } else {
-                    let label_fs = heading_font_size(rows[i].heading_level, font_size);
-                    let label_text = egui::RichText::new(&rows[i].text)
-                        .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                        ui.add(egui::Label::new(label_text).selectable(true))
-                    }).inner
-                };
+                let resp = ui.interact(text_rect, egui::Id::new(("text", i)), egui::Sense::click_and_drag());
 
-                // Character position helper (uses Y position for wrapped text)
+                // Character position helper
                 let char_pos = |pos: egui::Pos2| -> usize {
                     let local_x = pos.x - (content_left + gutter_w);
                     rows[i].char_offset
@@ -869,7 +858,7 @@ fn render_reflow_document(
                         }
                 };
 
-                // Track selection for context menu
+                // Drag to select
                 if resp.drag_started_by(egui::PointerButton::Primary) {
                     if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
                         let abs_char = char_pos(pos);
@@ -885,7 +874,15 @@ fn render_reflow_document(
                     }
                 }
 
-                // Context menu (uses tracked selection, may be stale if Label cleared it on right-click)
+                // Left-click (non-drag) → clear selection
+                if resp.clicked() && !resp.dragged() {
+                    sel.char_anchor = None;
+                    sel.char_focus = None;
+                    sel.selected_text = String::new();
+                    sel.selected_word_indices.clear();
+                }
+
+                // Context menu — uses our own char_anchor/char_focus which persist until "Copy" closes the menu
                 resp.context_menu(|ui| {
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
                         let (a_ch, a_blk, a_pos) = anchor;
@@ -902,7 +899,7 @@ fn render_reflow_document(
                         let s_end = local_a.max(local_f);
                         if s_start < s_end {
                             let sel_text: String = row_text.chars().skip(s_start).take(s_end - s_start).collect();
-                            if ui.button("Copy").clicked() { ui.ctx().copy_text(sel_text.clone()); ui.close_menu(); }
+                            if ui.button("Copy").clicked() { ui.ctx().copy_text(sel_text.clone()); sel.char_anchor = None; sel.char_focus = None; sel.selected_text = String::new(); sel.selected_word_indices.clear(); ui.close_menu(); }
                             if ui.button("Add to Vocabulary").clicked() { sel.pending_vocab = Some(sel_text.clone()); ui.close_menu(); }
                             if ui.button("Save Sentence").clicked() { sel.pending_sentence = Some(sel_text); ui.close_menu(); }
                         }
