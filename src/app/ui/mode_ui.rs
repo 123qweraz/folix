@@ -609,41 +609,25 @@ fn render_reflow_document(
                             );
                         }
                     }
-                    // Custom selection highlight (persists across right-click)
+                    // Custom selection highlight (persists across right-click; covers all selected rows)
                     let sel = &reading.selection;
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
-                        let (a_ch, a_blk, a_pos) = anchor;
-                        let (_f_ch, _f_blk, f_pos) = focus;
-                        if a_ch == rows[i].ci && a_blk == rows[i].bi {
-                            let row_text_len = rows[i].text.chars().count();
-                            let local_a = a_pos.saturating_sub(rows[i].char_offset).min(row_text_len);
-                            let local_f = f_pos.saturating_sub(rows[i].char_offset).min(row_text_len);
-                            if local_a != local_f {
-                                let sel_start = local_a.min(local_f);
-                                let sel_end = local_a.max(local_f);
-                                if let Some(galley) = &rows[i].galley {
-                                    let hl_rect = galley.pos_from_ccursor(egui::text::CCursor {
-                                        index: sel_start,
-                                        prefer_next_row: false,
-                                    });
-                                    let hl_end_rect = galley.pos_from_ccursor(egui::text::CCursor {
-                                        index: sel_end,
-                                        prefer_next_row: false,
-                                    });
-                                    let hl_x0 = content_left + gutter_w + hl_rect.left().min(hl_end_rect.left());
-                                    let hl_x1 = content_left + gutter_w + hl_rect.left().max(hl_end_rect.left());
-                                    if (hl_x1 - hl_x0).abs() > 0.5 {
-                                        painter.rect_filled(
-                                            egui::Rect::from_min_max(
-                                                egui::pos2(hl_x0, rect.top()),
-                                                egui::pos2(hl_x1, rect.bottom()),
-                                            ),
-                                            0.0,
-                                            egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
-                                        );
-                                    }
-                                }
-                            }
+                        let (a_ch, a_blk, _a_pos) = anchor;
+                        let (f_ch, f_blk, _f_pos) = focus;
+                        let (min_ch, max_ch) = (a_ch.min(f_ch), a_ch.max(f_ch));
+                        let (min_blk, max_blk) = (a_blk.min(f_blk), a_blk.max(f_blk));
+                        if rows[i].ci >= min_ch && rows[i].ci <= max_ch
+                            && !(rows[i].ci == min_ch && rows[i].bi < min_blk)
+                            && !(rows[i].ci == max_ch && rows[i].bi > max_blk)
+                        {
+                            painter.rect_filled(
+                                egui::Rect::from_min_size(
+                                    egui::pos2(content_left + gutter_w, rect.top()),
+                                    egui::vec2(text_avail_w, rows[i].height),
+                                ),
+                                0.0,
+                                egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
+                            );
                         }
                     }
                 }
@@ -838,15 +822,26 @@ fn render_reflow_document(
                     }
                     continue;
                 }
-                // --- Text rows: handle interactions manually (custom highlight persists across right-click) ---
+                // --- Text rows: use native selectable Label ---
                 if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
                 let text_rect = egui::Rect::from_min_size(
                     egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
                     egui::vec2(text_avail_w, rows[i].height),
                 );
-                let resp = ui.interact(text_rect, egui::Id::new(("text", i)), egui::Sense::click_and_drag());
+                let resp = if let Some(galley) = &rows[i].galley {
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                        ui.add(egui::Label::new(galley.clone()).selectable(true))
+                    }).inner
+                } else {
+                    let label_fs = heading_font_size(rows[i].heading_level, font_size);
+                    let label_text = egui::RichText::new(&rows[i].text)
+                        .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                        ui.add(egui::Label::new(label_text).selectable(true))
+                    }).inner
+                };
 
-                // Character position helper
+                // Character position helper (uses Y position for wrapped text)
                 let char_pos = |pos: egui::Pos2| -> usize {
                     let local_x = pos.x - (content_left + gutter_w);
                     rows[i].char_offset
@@ -858,7 +853,7 @@ fn render_reflow_document(
                         }
                 };
 
-                // Drag to select
+                // Track selection for context menu
                 if resp.drag_started_by(egui::PointerButton::Primary) {
                     if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
                         let abs_char = char_pos(pos);
@@ -882,7 +877,7 @@ fn render_reflow_document(
                     sel.selected_word_indices.clear();
                 }
 
-                // Context menu — uses our own char_anchor/char_focus which persist until "Copy" closes the menu
+                // Context menu — uses our own char_anchor/char_focus (not egui's native selection)
                 resp.context_menu(|ui| {
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
                         let (a_ch, a_blk, a_pos) = anchor;
