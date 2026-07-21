@@ -69,6 +69,7 @@ pub struct KeyCombo {
 }
 
 impl KeyCombo {
+    #[cfg(feature = "egui")]
     pub fn check(&self, ctx: &egui::Context) -> bool {
         if let Some(ekey) = key_from_str(&self.key) {
             let mods = self.to_mods();
@@ -78,6 +79,7 @@ impl KeyCombo {
         }
     }
 
+    #[cfg(feature = "egui")]
     pub fn to_mods(&self) -> egui::Modifiers {
         egui::Modifiers {
             alt: self.alt,
@@ -178,6 +180,7 @@ pub const AVAILABLE_KEYS: &[&str] = &[
     "Minus","Equals",
 ];
 
+#[cfg(feature = "egui")]
 pub fn key_from_str(name: &str) -> Option<egui::Key> {
     match name {
         "A" => Some(egui::Key::A),
