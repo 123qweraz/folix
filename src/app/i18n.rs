@@ -129,6 +129,7 @@ static ZH_CN: &[(&str, &str)] = &[
     ("Opened:", "已打开："),
     ("Failed to open:", "打开失败："),
     ("Saved:", "已保存："),
+    ("Reloaded:", "已重新加载："),
     ("Failed to reload:", "重新加载失败："),
 
     // Info

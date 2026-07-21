@@ -4,7 +4,7 @@ use folix::app::ui::shell::FolixApp;
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() -> eframe::Result<()> {
-    env_logger::init();
+    let _ = env_logger::try_init();
 
     // Load language before creating the window
     let lang = folix::app::config::ConfigData::load()

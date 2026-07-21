@@ -52,7 +52,6 @@ pub struct PdfToolboxState {
     pub log: Vec<LogEntry>,
     pub running: bool,
     pub toc_chapters: Vec<TocChapter>,
-    pub merge_before_after_page: usize,
 }
 
 impl PdfToolboxState {
@@ -68,7 +67,6 @@ impl PdfToolboxState {
             log: Vec::new(),
             running: false,
             toc_chapters: Vec::new(),
-            merge_before_after_page: 1,
         }
     }
 

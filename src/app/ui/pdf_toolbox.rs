@@ -16,8 +16,6 @@ pub fn render_pdf_toolbox(ui: &mut egui::Ui, state: &mut PdfToolboxState) {
                 ui.label(egui::RichText::new("INPUT").strong().size(14.0));
                 ui.separator();
 
-                let is_image_op = state.operation == PdfOperation::ImageToPdf;
-
                 if ui.add_sized([ui.available_width(), 28.0], egui::Button::new("📂 Add Files"))
                     .clicked()
                 {
@@ -30,22 +28,11 @@ pub fn render_pdf_toolbox(ui: &mut egui::Ui, state: &mut PdfToolboxState) {
                             dialog = dialog.add_filter("PDF", &["pdf"]);
                         }
                     }
-                    if !is_image_op {
-                        if let Some(files) = dialog.pick_files() {
-                            for f in files {
-                                let path = f.to_string_lossy().to_string();
-                                if !state.input_files.contains(&path) {
-                                    state.input_files.push(path);
-                                }
-                            }
-                        }
-                    } else {
-                        if let Some(files) = dialog.pick_files() {
-                            for f in files {
-                                let path = f.to_string_lossy().to_string();
-                                if !state.input_files.contains(&path) {
-                                    state.input_files.push(path);
-                                }
+                    if let Some(files) = dialog.pick_files() {
+                        for f in files {
+                            let path = f.to_string_lossy().to_string();
+                            if !state.input_files.contains(&path) {
+                                state.input_files.push(path);
                             }
                         }
                     }

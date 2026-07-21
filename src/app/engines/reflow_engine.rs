@@ -936,7 +936,11 @@ impl ReflowDocument {
 
                     // <br> and <hr> → line break
                     if name.eq_ignore_ascii_case(b"br") || name.eq_ignore_ascii_case(b"hr") {
-                        current_text.push('\n');
+                        if link_href.is_some() {
+                            link_text.push('\n');
+                        } else {
+                            current_text.push('\n');
+                        }
                         buf.clear();
                         continue;
                     }

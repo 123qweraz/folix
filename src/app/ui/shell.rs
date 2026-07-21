@@ -201,7 +201,10 @@ impl FolixApp {
                 tab.document = Some(doc);
                 tab.path = Some(path_str.clone());
                 tab.modes = TabModes::new();
-                tab.modes.reading.view_mode = if tab.document.as_ref().unwrap().lock().is_fixed() {
+                let is_fixed = tab.document.as_ref()
+                    .map(|d| d.lock().is_fixed())
+                    .unwrap_or(true);
+                tab.modes.reading.view_mode = if is_fixed {
                     ViewMode::Image
                 } else {
                     ViewMode::Text
@@ -297,7 +300,7 @@ impl FolixApp {
                     tab.modes.page = tab.modes.page.min(max);
                     tab.modes.auto.progress = (tab.modes.auto.progress as usize).min(max) as f32;
                 }
-                self.status_message = format!("{} {}", crate::app::i18n::tr(lng, "Saved:"), path);
+                self.status_message = format!("{} {}", crate::app::i18n::tr(lng, "Reloaded:"), path);
             }
         } else {
             self.status_message = format!("{} {}", crate::app::i18n::tr(lng, "Failed to reload:"), path);
@@ -1110,7 +1113,10 @@ impl FolixApp {
             }
         });
 
-        let document = self.state.tabs[idx].document.as_ref().unwrap().clone();
+        let document = match self.state.tabs[idx].document.as_ref() {
+            Some(d) => d.clone(),
+            None => return,
+        };
         let is_reflow = { !document.lock().is_fixed() };
         let tab = &mut self.state.tabs[idx];
         let ctx = ui.ctx().clone();
@@ -1756,6 +1762,7 @@ impl FolixApp {
 impl Drop for FolixApp {
     fn drop(&mut self) {
         self.sync_progress();
+        self.save_config();
     }
 }
 
@@ -1792,6 +1799,8 @@ fn page_count_for_tab(tab: &crate::app::core::app_state::OpenTab) -> usize {
         let handle = doc.lock();
         if let Some(fixed) = handle.as_fixed() {
             fixed.page_count()
+        } else if let Some(reflow) = handle.as_reflow() {
+            reflow.chapter_count()
         } else {
             1
         }

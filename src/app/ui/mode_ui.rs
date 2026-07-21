@@ -595,6 +595,20 @@ fn render_reflow_document(
                             ));
                         }
                     }
+                    // Search highlight for reflow documents
+                    if !reading.search.query.is_empty() && !rows[i].text.is_empty() {
+                        let lower_query = reading.search.query.to_lowercase();
+                        if rows[i].text.to_lowercase().contains(&lower_query) {
+                            painter.rect_filled(
+                                egui::Rect::from_min_size(
+                                    egui::pos2(content_left + gutter_w, rect.top()),
+                                    egui::vec2(text_avail_w, rows[i].height),
+                                ),
+                                0.0,
+                                egui::Color32::from_rgba_premultiplied(255, 150, 50, 60),
+                            );
+                        }
+                    }
                     // Custom selection highlight (persists across right-click)
                     let sel = &reading.selection;
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
@@ -799,8 +813,9 @@ fn render_reflow_document(
             }
         }
 
-        // Interaction layer (only for non-line-number mode)
-        if !reading.layout.show_line_numbers {
+        // Interaction layer
+        // Magnifier also needs mouse tracking in line-number mode
+        {
             let sel = &mut reading.selection;
             for i in first..last.min(rows.len()) {
                 // --- Link rows: keep existing click handling ---
@@ -1053,7 +1068,7 @@ fn render_scroll(
     // Only extract text positions when selection is active.
     // During auto-play (Light mode) there's no selection, so skip to avoid
     // the expensive MuPDF text extraction on each page's first appearance.
-    let need_words = !selection.selected_word_indices.is_empty();
+    let need_words = selection.selecting || !selection.selected_word_indices.is_empty();
     let all_words: HashMap<usize, Vec<TextWordPosition>> = if need_words {
         let d = doc.lock();
         if let Some(fixed) = d.as_fixed() {
@@ -1128,7 +1143,14 @@ fn render_image_page(
     // Acquire texture (from GPU cache or render + upload)
     let (tex_id, tex_size) = {
         let d = doc.lock();
-        let fixed = d.as_fixed().unwrap();
+        let fixed = match d.as_fixed() {
+            Some(f) => f,
+            None => {
+                drop(d);
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 1000.0), egui::Sense::hover());
+                return;
+            }
+        };
         let cached_tex = fixed.get_texture_handle(page_idx, scale);
         match cached_tex {
             Some((id, [w, h])) => (id, egui::Vec2::new(w as f32, h as f32)),
@@ -1838,7 +1860,9 @@ pub fn render_sidebar(
                         let count = reflow.chapter_count();
                         drop(doc);
                         for ci in 0..count {
-                            let text = document.lock().as_reflow().unwrap().chapter_text(ci);
+                            let doc2 = document.lock();
+                            let text = doc2.as_reflow().map(|r| r.chapter_text(ci)).unwrap_or_default();
+                            drop(doc2);
                             if text.to_lowercase().contains(&lower_query) {
                                 rs.search.matches.push(ci);
                             }
@@ -1847,7 +1871,9 @@ pub fn render_sidebar(
                         drop(doc);
                         let total = document.lock().as_fixed().map(|f| f.page_count()).unwrap_or(0);
                         for p in 0..total {
-                            let text = document.lock().as_fixed().unwrap().page_text(p);
+                            let doc2 = document.lock();
+                            let text = doc2.as_fixed().map(|f| f.page_text(p)).unwrap_or_default();
+                            drop(doc2);
                             if text.to_lowercase().contains(&lower_query) {
                                 rs.search.matches.push(p);
                             }
