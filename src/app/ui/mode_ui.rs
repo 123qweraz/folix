@@ -528,7 +528,7 @@ fn render_reflow_document(
         + rows.last().map_or(0.0, |r| r.height);
 
     let chapter_cache_ref = &reading.layout.chapter_cache;
-    let text_color = ui.style().visuals.text_color();
+    let _text_color = ui.style().visuals.text_color();
     let img_max_w = (text_block_w - gutter_w).min(600.0);
 
     output = sa.show(ui, |ui| {
@@ -573,15 +573,7 @@ fn render_reflow_document(
                     );
                 }
                  1 => {
-                    // Always render text galley (not just when line numbers visible)
-                    if let Some(galley) = &rows[i].galley {
-                        let text_x = content_left + gutter_w;
-                        painter.add(egui::Shape::galley(
-                            egui::pos2(text_x, rect.top()),
-                            galley.clone(),
-                            text_color,
-                        ));
-                    }
+                    // Text rendered by Label::selectable(true) in interaction layer
                     if reading.layout.show_line_numbers {
                         let ln_color = if reading.layout.mo_yu_playing_line == Some(rows[i].line_no) {
                             egui::Color32::from_rgb(255, 140, 0)
@@ -835,6 +827,18 @@ fn render_reflow_document(
         // Magnifier also needs mouse tracking in line-number mode
         {
             let sel = &mut reading.selection;
+            // Shared helper: absolute character position for any row
+            let char_pos_row = |pos: egui::Pos2, row_idx: usize| -> usize {
+                let local_x = pos.x - (content_left + gutter_w);
+                let r = &rows[row_idx];
+                r.char_offset
+                    + if let Some(galley) = &r.galley {
+                        let local_y = pos.y - (base_y + row_starts[row_idx]);
+                        galley.cursor_from_pos(egui::vec2(local_x.max(0.0), local_y.max(0.0))).ccursor.index
+                    } else {
+                        ((local_x / text_avail_w.max(1.0)).clamp(0.0, 1.0) * r.text.chars().count() as f32) as usize
+                    }
+            };
             for i in first..last.min(rows.len()) {
                 // --- Link rows: keep existing click handling ---
                 if rows[i].it == 4 {
@@ -856,7 +860,7 @@ fn render_reflow_document(
                     }
                     continue;
                 }
-                // --- Text rows: Label for visual text + drag/click interaction ---
+                // --- Text rows: Label (selectable) with invisible native highlight + orange custom highlight ---
                 if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
                 let text_rect = egui::Rect::from_min_size(
                     egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
@@ -864,42 +868,27 @@ fn render_reflow_document(
                 );
                 let resp = if let Some(galley) = &rows[i].galley {
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                        ui.add(egui::Label::new(galley.clone()).selectable(false).sense(egui::Sense::click_and_drag()))
+                        ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
+                        ui.add(egui::Label::new(galley.clone()).selectable(true))
                     }).inner
                 } else {
                     let label_fs = heading_font_size(rows[i].heading_level, font_size);
                     let label_text = egui::RichText::new(&rows[i].text)
                         .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                        ui.add(egui::Label::new(label_text).selectable(false).sense(egui::Sense::click_and_drag()))
+                        ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
+                        ui.add(egui::Label::new(label_text).selectable(true))
                     }).inner
                 };
 
-                // Character position helper (uses Y position for wrapped text)
-                let char_pos = |pos: egui::Pos2| -> usize {
-                    let local_x = pos.x - (content_left + gutter_w);
-                    rows[i].char_offset
-                        + if let Some(galley) = &rows[i].galley {
-                            let local_y = pos.y - text_rect.top();
-                            galley.cursor_from_pos(egui::vec2(local_x.max(0.0), local_y.max(0.0))).ccursor.index
-                        } else {
-                            ((local_x / text_rect.width().max(1.0)).clamp(0.0, 1.0) * rows[i].text.chars().count() as f32) as usize
-                        }
-                };
-
-                // Track selection for context menu
+                // Drag start → set anchor and focus on the row where press originated
                 if resp.drag_started_by(egui::PointerButton::Primary) {
                     if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
-                        let abs_char = char_pos(pos);
+                        let abs_char = char_pos_row(pos, i);
                         sel.char_anchor = Some((rows[i].ci, rows[i].bi, abs_char));
                         sel.char_focus = Some((rows[i].ci, rows[i].bi, abs_char));
                         sel.selected_text = String::new();
                         sel.selected_word_indices.clear();
-                    }
-                }
-                if resp.dragged_by(egui::PointerButton::Primary) {
-                    if let Some(pos) = resp.interact_pointer_pos() {
-                        sel.char_focus = Some((rows[i].ci, rows[i].bi, char_pos(pos)));
                     }
                 }
 
@@ -911,9 +900,8 @@ fn render_reflow_document(
                     sel.selected_word_indices.clear();
                 }
 
-                // Context menu — uses our own char_anchor/char_focus (not egui's native selection)
+                // Context menu — uses our own char_anchor/char_focus
                 resp.context_menu(|ui| {
-                    // Gather selected text across all rows for multi-block copy
                     let mut full_sel_text = String::new();
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
                         let (a_ch, a_blk, a_pos) = anchor;
@@ -944,13 +932,27 @@ fn render_reflow_document(
                 // Magnifier: track character under mouse when active
                 if reading.magnifier.active {
                     if let Some(pos) = resp.interact_pointer_pos() {
-                        let abs_char = char_pos(pos);
+                        let abs_char = char_pos_row(pos, i);
                         let local_idx = abs_char.saturating_sub(rows[i].char_offset);
                         if let Some(ch) = rows[i].text.chars().nth(local_idx) {
                             if is_cjk(ch) {
                                 reading.magnifier.chinese_char = ch.to_string();
                                 reading.magnifier.source_line = rows[i].text.clone();
                             }
+                        }
+                    }
+                }
+            }
+
+            // Global drag tracker: updates char_focus for the row under the pointer (supports multi-row select)
+            if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
+                if let (Some(_), Some(_)) = (sel.char_anchor, sel.char_focus) {
+                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                        let local_y = pos.y - base_y;
+                        let idx = row_starts.partition_point(|&y| y <= local_y).saturating_sub(1);
+                        if idx >= first && idx < last.min(rows.len()) {
+                            let abs_char = char_pos_row(pos, idx);
+                            sel.char_focus = Some((rows[idx].ci, rows[idx].bi, abs_char));
                         }
                     }
                 }
