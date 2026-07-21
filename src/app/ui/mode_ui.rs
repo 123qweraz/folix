@@ -573,6 +573,15 @@ fn render_reflow_document(
                     );
                 }
                  1 => {
+                    // Always render text galley (not just when line numbers visible)
+                    if let Some(galley) = &rows[i].galley {
+                        let text_x = content_left + gutter_w;
+                        painter.add(egui::Shape::galley(
+                            egui::pos2(text_x, rect.top()),
+                            galley.clone(),
+                            text_color,
+                        ));
+                    }
                     if reading.layout.show_line_numbers {
                         let ln_color = if reading.layout.mo_yu_playing_line == Some(rows[i].line_no) {
                             egui::Color32::from_rgb(255, 140, 0)
@@ -586,14 +595,6 @@ fn render_reflow_document(
                             font_id.clone(),
                             ln_color,
                         );
-                        if let Some(galley) = &rows[i].galley {
-                            let text_x = content_left + gutter_w;
-                            painter.add(egui::Shape::galley(
-                                egui::pos2(text_x, rect.top()),
-                                galley.clone(),
-                                text_color,
-                            ));
-                        }
                     }
                     // Search highlight for reflow documents
                     if !reading.search.query.is_empty() && !rows[i].text.is_empty() {
@@ -626,7 +627,7 @@ fn render_reflow_document(
                                     egui::vec2(text_avail_w, rows[i].height),
                                 ),
                                 0.0,
-                                egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
+                                egui::Color32::from_rgba_premultiplied(255, 165, 0, 100),
                             );
                         }
                     }
@@ -822,24 +823,13 @@ fn render_reflow_document(
                     }
                     continue;
                 }
-                // --- Text rows: use native selectable Label ---
+                // --- Text rows: interact rect only (text rendered in painting pass) ---
                 if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
                 let text_rect = egui::Rect::from_min_size(
                     egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
                     egui::vec2(text_avail_w, rows[i].height),
                 );
-                let resp = if let Some(galley) = &rows[i].galley {
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                        ui.add(egui::Label::new(galley.clone()).selectable(true))
-                    }).inner
-                } else {
-                    let label_fs = heading_font_size(rows[i].heading_level, font_size);
-                    let label_text = egui::RichText::new(&rows[i].text)
-                        .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                        ui.add(egui::Label::new(label_text).selectable(true))
-                    }).inner
-                };
+                let resp = ui.interact(text_rect, egui::Id::new(("text", i)), egui::Sense::click_and_drag());
 
                 // Character position helper (uses Y position for wrapped text)
                 let char_pos = |pos: egui::Pos2| -> usize {
