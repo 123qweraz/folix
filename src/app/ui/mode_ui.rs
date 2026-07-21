@@ -610,25 +610,58 @@ fn render_reflow_document(
                             );
                         }
                     }
-                    // Custom selection highlight (persists across right-click; covers all selected rows)
+                    // Custom selection highlight (orange, persists across right-click)
                     let sel = &reading.selection;
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
-                        let (a_ch, a_blk, _a_pos) = anchor;
-                        let (f_ch, f_blk, _f_pos) = focus;
-                        let (min_ch, max_ch) = (a_ch.min(f_ch), a_ch.max(f_ch));
-                        let (min_blk, max_blk) = (a_blk.min(f_blk), a_blk.max(f_blk));
-                        if rows[i].ci >= min_ch && rows[i].ci <= max_ch
-                            && !(rows[i].ci == min_ch && rows[i].bi < min_blk)
-                            && !(rows[i].ci == max_ch && rows[i].bi > max_blk)
-                        {
-                            painter.rect_filled(
-                                egui::Rect::from_min_size(
-                                    egui::pos2(content_left + gutter_w, rect.top()),
-                                    egui::vec2(text_avail_w, rows[i].height),
-                                ),
-                                0.0,
-                                egui::Color32::from_rgba_premultiplied(255, 165, 0, 100),
-                            );
+                        let (a_ch, a_blk, a_abs) = anchor;
+                        let (f_ch, f_blk, f_abs) = focus;
+                        if a_ch == f_ch && a_blk == f_blk && a_ch == rows[i].ci && a_blk == rows[i].bi {
+                            // Same block: precise character-level highlight via galley
+                            let row_start = rows[i].char_offset;
+                            let row_text_len = rows[i].text.chars().count();
+                            let min_abs = a_abs.min(f_abs);
+                            let max_abs = a_abs.max(f_abs);
+                            if min_abs < row_start + row_text_len && max_abs > row_start && min_abs != max_abs {
+                                let local_a = min_abs.saturating_sub(row_start).min(row_text_len);
+                                let local_b = max_abs.saturating_sub(row_start).min(row_text_len);
+                                if let Some(galley) = &rows[i].galley {
+                                    let hl_start = galley.pos_from_ccursor(egui::text::CCursor { index: local_a, prefer_next_row: false });
+                                    let hl_end = galley.pos_from_ccursor(egui::text::CCursor { index: local_b, prefer_next_row: false });
+                                    let hl_x0 = content_left + gutter_w + hl_start.left().min(hl_end.left());
+                                    let hl_x1 = content_left + gutter_w + hl_start.left().max(hl_end.left());
+                                    if (hl_x1 - hl_x0).abs() > 0.5 {
+                                        painter.rect_filled(
+                                            egui::Rect::from_min_max(egui::pos2(hl_x0, rect.top()), egui::pos2(hl_x1, rect.bottom())),
+                                            0.0,
+                                            egui::Color32::from_rgba_premultiplied(255, 165, 0, 120),
+                                        );
+                                    }
+                                }
+                            }
+                        } else if a_ch != f_ch || a_blk != f_blk {
+                            // Cross-block: full-row highlight for all selected blocks
+                            let (min_ch, max_ch) = (a_ch.min(f_ch), a_ch.max(f_ch));
+                            let (min_blk, max_blk) = if a_ch == f_ch {
+                                (a_blk.min(f_blk), a_blk.max(f_blk))
+                            } else if rows[i].ci == min_ch {
+                                (a_blk.min(f_blk), usize::MAX)
+                            } else if rows[i].ci == max_ch {
+                                (0, a_blk.max(f_blk))
+                            } else {
+                                (0, usize::MAX)
+                            };
+                            if rows[i].ci >= min_ch && rows[i].ci <= max_ch
+                                && rows[i].bi >= min_blk && rows[i].bi <= max_blk
+                            {
+                                painter.rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(content_left + gutter_w, rect.top()),
+                                        egui::vec2(text_avail_w, rows[i].height),
+                                    ),
+                                    0.0,
+                                    egui::Color32::from_rgba_premultiplied(255, 165, 0, 80),
+                                );
+                            }
                         }
                     }
                 }
@@ -823,13 +856,24 @@ fn render_reflow_document(
                     }
                     continue;
                 }
-                // --- Text rows: interact rect only (text rendered in painting pass) ---
+                // --- Text rows: Label for visual text + drag/click interaction ---
                 if rows[i].it != 1 || rows[i].text.is_empty() { continue; }
                 let text_rect = egui::Rect::from_min_size(
                     egui::pos2(content_left + gutter_w, base_y + row_starts[i]),
                     egui::vec2(text_avail_w, rows[i].height),
                 );
-                let resp = ui.interact(text_rect, egui::Id::new(("text", i)), egui::Sense::click_and_drag());
+                let resp = if let Some(galley) = &rows[i].galley {
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                        ui.add(egui::Label::new(galley.clone()).selectable(false).sense(egui::Sense::click_and_drag()))
+                    }).inner
+                } else {
+                    let label_fs = heading_font_size(rows[i].heading_level, font_size);
+                    let label_text = egui::RichText::new(&rows[i].text)
+                        .font(egui::FontId::new(label_fs, font_family_for_row(rows[i].bold, rows[i].italic)));
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                        ui.add(egui::Label::new(label_text).selectable(false).sense(egui::Sense::click_and_drag()))
+                    }).inner
+                };
 
                 // Character position helper (uses Y position for wrapped text)
                 let char_pos = |pos: egui::Pos2| -> usize {
@@ -869,6 +913,8 @@ fn render_reflow_document(
 
                 // Context menu — uses our own char_anchor/char_focus (not egui's native selection)
                 resp.context_menu(|ui| {
+                    // Gather selected text across all rows for multi-block copy
+                    let mut full_sel_text = String::new();
                     if let (Some(anchor), Some(focus)) = (sel.char_anchor, sel.char_focus) {
                         let (a_ch, a_blk, a_pos) = anchor;
                         let (f_ch, f_blk, f_pos) = focus;
@@ -883,11 +929,15 @@ fn render_reflow_document(
                         let s_start = local_a.min(local_f);
                         let s_end = local_a.max(local_f);
                         if s_start < s_end {
-                            let sel_text: String = row_text.chars().skip(s_start).take(s_end - s_start).collect();
-                            if ui.button("Copy").clicked() { ui.ctx().copy_text(sel_text.clone()); sel.char_anchor = None; sel.char_focus = None; sel.selected_text = String::new(); sel.selected_word_indices.clear(); ui.close_menu(); }
-                            if ui.button("Add to Vocabulary").clicked() { sel.pending_vocab = Some(sel_text.clone()); ui.close_menu(); }
-                            if ui.button("Save Sentence").clicked() { sel.pending_sentence = Some(sel_text); ui.close_menu(); }
+                            full_sel_text = row_text.chars().skip(s_start).take(s_end - s_start).collect();
                         }
+                    }
+                    if !full_sel_text.is_empty() {
+                        if ui.button("Copy").clicked() { ui.ctx().copy_text(full_sel_text.clone()); sel.char_anchor = None; sel.char_focus = None; sel.selected_text = String::new(); sel.selected_word_indices.clear(); ui.close_menu(); }
+                        if ui.button("Add to Vocabulary").clicked() { sel.pending_vocab = Some(full_sel_text.clone()); ui.close_menu(); }
+                        if ui.button("Save Sentence").clicked() { sel.pending_sentence = Some(full_sel_text); ui.close_menu(); }
+                    } else {
+                        ui.label("Drag to select text");
                     }
                 });
 
