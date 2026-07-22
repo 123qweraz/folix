@@ -1,17 +1,19 @@
 - **Git discipline**: after every successful `cargo build`, run `git add -A && git commit -m "..."` to save progress.
-- **Build**: `cargo run --bin iced`
+- **Build**: `cargo run --bin slint`
 - **Architecture**:
-  - `src/app/` — pure domain/application layer (no iced dependency)
+  - `src/app/` — pure domain/application layer (no UI dependency)
     - `engines/` — PDF rendering (mupdf → RGBA), reflow parsing (rbook)
     - `core/` — state types, shortcuts (pure enums), text layout stub
     - `storage/` — SQLite persistence
     - `config.rs` — AppSettings (serde), config file load/save
-  - `src/iced_app/` — presentation layer (iced widgets)
-    - `state.rs` — State, Tab, TabContent, DocumentHolder, Message
-    - `tab_bar.rs`, `home_page.rs`, `settings.rs`, `pdf_viewer.rs`,
-      `reflow_viewer.rs`, `pdf_toolbox.rs`
-  - `src/bin/iced.rs` — binary entrypoint, update/view/subscription
+  - `src/slint_app/` — presentation layer (Slint widgets)
+    - `main_window.slint` — root layout, tab bar, content switch, status bar
+    - `reflow_viewer.slint` / `reflow_viewer.rs` — EPUB/TXT reader (TextEdit, native select+copy)
+    - `pdf_viewer.slint` / `pdf_viewer.rs` — PDF display (Image from RGBA), click word selection with highlight re-render
+    - `mod.rs` — `slint::include_modules!()` + module declarations
+  - `src/bin/slint.rs` — binary entrypoint, callback wiring, clipboard via copypasta
 - **Key patterns**:
-  - Engines return `RenderedPage { width, height, rgba }`, UI converts to `iced::widget::image::Handle`
-  - TextLayout is a pure stub (iced's native text widget handles layout)
-  - PDF rendering in async Task via mupdf directly or PdfDocument
+  - Engines return `RenderedPage { width, height, rgba }`, Rust converts to `slint::Image` via `SharedPixelBuffer<Rgba8Pixel>`
+  - PDF text selection: click → hit-test word bboxes → re-render RGBA with highlight → set Image
+  - Reflow text: `TextEdit { read-only: true }` gives native selection + Ctrl+C, no cosmic-text needed
+- **Building**: uses `build.rs` with `slint_build::compile()`

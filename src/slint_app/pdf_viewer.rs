@@ -18,6 +18,15 @@ impl PdfViewerState {
         Self { document: None, current_page: 0, zoom: 1.5, selection_start: None, selection_end: None }
     }
 
+    pub fn load_handle(&mut self, handle: Arc<Mutex<engines::DocumentHandle>>) {
+        if handle.lock().is_fixed() {
+            self.document = Some(handle);
+            self.current_page = 0;
+            self.selection_start = None;
+            self.selection_end = None;
+        }
+    }
+
     pub fn open_file(&mut self, path: &str) -> Result<(), String> {
         let handle = DocumentManager::open(path).ok_or_else(|| "Failed to open file".to_string())?;
 

@@ -13,6 +13,13 @@ impl ReflowViewerState {
         Self { document: None, current_chapter: 0 }
     }
 
+    pub fn load_handle(&mut self, handle: Arc<Mutex<engines::DocumentHandle>>) {
+        if handle.lock().is_reflow() {
+            self.document = Some(handle);
+            self.current_chapter = 0;
+        }
+    }
+
     pub fn open_file(&mut self, path: &str) -> Result<String, String> {
         let handle = DocumentManager::open(path).ok_or_else(|| "Failed to open file".to_string())?;
 
