@@ -1,0 +1,55 @@
+import { VerticalBox, Button, TextEdit } from "std-widgets.slint";
+
+export component ReflowViewer {
+    in property <string> content;
+    in property <string> chapter-title;
+    in property <int> current-chapter;
+    in property <int> total-chapters;
+
+    callback prev-chapter();
+    callback next-chapter();
+
+    VerticalBox {
+        // Chapter title bar with navigation
+        Rectangle {
+            height: 36px;
+            background: #f5f5f5;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                Text {
+                    text: root.chapter-title;
+                    vertical-alignment: center;
+                    font-size: 14px;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: (root.current-chapter + 1) + " / " + root.total-chapters;
+                    vertical-alignment: center;
+                    font-size: 12px;
+                    color: #888;
+                }
+                Button {
+                    text: "Prev";
+                    enabled: root.current-chapter > 0;
+                    clicked => { root.prev-chapter(); }
+                }
+                Button {
+                    text: "Next";
+                    enabled: root.current-chapter + 1 < root.total-chapters;
+                    clicked => { root.next-chapter(); }
+                }
+            }
+        }
+
+        // Text content (read-only with selection support)
+        TextEdit {
+            text: root.content;
+            read-only: true;
+            wrap: word-wrap;
+            vertical-stretch: 1;
+            font-size: 16px;
+        }
+    }
+}

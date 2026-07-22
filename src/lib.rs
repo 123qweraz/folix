@@ -1,2 +1,2 @@
 pub mod app;
-pub mod iced_app;
+pub mod slint_app;
