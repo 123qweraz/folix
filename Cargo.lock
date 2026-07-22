@@ -1686,6 +1686,7 @@ name = "folix"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "copypasta",
  "encoding_rs",
  "env_logger",
  "image",
