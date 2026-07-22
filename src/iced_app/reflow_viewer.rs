@@ -27,10 +27,13 @@ pub fn view(tab: &Tab) -> Element<'_, Message> {
 
             let font_size = 16.0;
             let line_height = 1.4;
-            let total_h = holder.chapter_lines.len() as f32 * font_size * line_height + 8.0;
+            let full_text = holder.chapter_lines.join("\n");
+            let total_chars = full_text.len();
+            let est_lines = (total_chars as f32 / 55.0).ceil() as usize + holder.chapter_lines.len();
+            let total_h = est_lines as f32 * font_size * line_height + 8.0;
 
             let canvas_widget = canvas::Canvas::new(ReflowCanvas {
-                lines: holder.chapter_lines.clone(),
+                text: full_text,
                 font_size,
                 line_height,
             })

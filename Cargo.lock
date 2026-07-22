@@ -1393,6 +1393,7 @@ name = "folix"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "cosmic-text",
  "encoding_rs",
  "env_logger",
  "iced",
