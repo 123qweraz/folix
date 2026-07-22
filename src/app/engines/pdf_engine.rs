@@ -2,7 +2,6 @@ use super::{FixedLayout, Document, RenderedPage, TocEntry, TextWordPosition};
 use mupdf::{Document as MuDocument, MetadataName, TextExtractOptions, Colorspace, Matrix};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use egui::{TextureId, TextureHandle};
 
 /// MuPDF's `Document` is not `Send`/`Sync` because it wraps a raw pointer,
 /// but its read operations are thread-safe (MuPDF uses internal locking).
@@ -35,7 +34,6 @@ pub struct PdfDocument {
     page_sizes_cache: Mutex<Option<Vec<(f32, f32)>>>,
     text_cache: Mutex<HashMap<usize, String>>,
     text_positions_cache: Mutex<HashMap<usize, Vec<TextWordPosition>>>,
-    texture_handles: Mutex<HashMap<usize, (u32, TextureHandle)>>,
 }
 
 impl PdfDocument {
@@ -75,7 +73,6 @@ impl PdfDocument {
             page_sizes_cache: Mutex::new(None),
             text_cache: Mutex::new(HashMap::new()),
             text_positions_cache: Mutex::new(HashMap::new()),
-            texture_handles: Mutex::new(HashMap::new()),
         })
     }
 
@@ -284,21 +281,6 @@ impl FixedLayout for PdfDocument {
         sizes.get(page).map(|&(w, h)| (w * scale, h * scale))
     }
 
-    fn get_texture_handle(&self, page: usize, scale: f32) -> Option<(TextureId, [usize; 2])> {
-        let cache = self.texture_handles.lock();
-        cache.get(&page)
-            .filter(|(s, _)| *s == scale.to_bits())
-            .map(|(_, h)| (h.id(), h.size()))
-    }
-
-    fn set_texture_handle(&self, page: usize, scale: f32, handle: TextureHandle) {
-        let mut cache = self.texture_handles.lock();
-        cache.insert(page, (scale.to_bits(), handle));
-        if cache.len() > 32 {
-            let key = *cache.keys().next().unwrap();
-            cache.remove(&key);
-        }
-    }
 }
 
 impl Document for PdfDocument {

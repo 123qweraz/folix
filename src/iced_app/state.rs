@@ -4,6 +4,7 @@ use std::sync::Arc;
 use iced::{keyboard, Task};
 use parking_lot::Mutex as PmMutex;
 
+use crate::app::config::AppSettings;
 use crate::app::engines::reflow_engine::ReflowDocument;
 use crate::app::engines::ReflowLayout;
 use crate::app::storage::sqlite::Database;
@@ -70,25 +71,6 @@ pub struct State {
     pub status: String,
     pub db: Option<Database>,
     pub settings: AppSettings,
-}
-
-#[derive(Clone)]
-pub struct AppSettings {
-    pub dark_mode: bool,
-    pub language: String,
-    pub reading_font_size: f32,
-    pub reading_line_height: f32,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            dark_mode: false,
-            language: "zh-CN".into(),
-            reading_font_size: 16.0,
-            reading_line_height: 1.4,
-        }
-    }
 }
 
 // ── Messages ─────────────────────────────────────────────────

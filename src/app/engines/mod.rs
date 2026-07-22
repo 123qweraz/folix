@@ -1,13 +1,7 @@
-#[cfg(feature = "egui")]
 pub mod pdf_engine;
 pub mod reflow_engine;
-#[cfg(feature = "egui")]
-pub mod image_engine;
 pub mod edit_operations;
 pub mod pdf_operations;
-
-#[cfg(feature = "egui")]
-use egui::{TextureId, TextureHandle};
 
 #[derive(Clone)]
 pub struct RenderedPage {
@@ -59,10 +53,6 @@ pub trait FixedLayout: Document {
     }
     fn page_text(&self, page: usize) -> String;
     fn page_text_positions(&self, page: usize) -> Vec<TextWordPosition>;
-    #[cfg(feature = "egui")]
-    fn get_texture_handle(&self, page: usize, scale: f32) -> Option<(TextureId, [usize; 2])>;
-    #[cfg(feature = "egui")]
-    fn set_texture_handle(&self, page: usize, scale: f32, handle: TextureHandle);
 }
 
 /// Lightweight block metadata used for pagination (no text or image payload).

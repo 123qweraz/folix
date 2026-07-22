@@ -69,27 +69,6 @@ pub struct KeyCombo {
 }
 
 impl KeyCombo {
-    #[cfg(feature = "egui")]
-    pub fn check(&self, ctx: &egui::Context) -> bool {
-        if let Some(ekey) = key_from_str(&self.key) {
-            let mods = self.to_mods();
-            ctx.input_mut(|i| i.consume_key(mods, ekey))
-        } else {
-            false
-        }
-    }
-
-    #[cfg(feature = "egui")]
-    pub fn to_mods(&self) -> egui::Modifiers {
-        egui::Modifiers {
-            alt: self.alt,
-            ctrl: self.ctrl,
-            shift: self.shift,
-            mac_cmd: false,
-            command: self.ctrl,
-        }
-    }
-
     pub fn display(&self) -> String {
         let mut parts = Vec::new();
         if self.ctrl { parts.push("Ctrl"); }
@@ -180,69 +159,4 @@ pub const AVAILABLE_KEYS: &[&str] = &[
     "Minus","Equals",
 ];
 
-#[cfg(feature = "egui")]
-pub fn key_from_str(name: &str) -> Option<egui::Key> {
-    match name {
-        "A" => Some(egui::Key::A),
-        "B" => Some(egui::Key::B),
-        "C" => Some(egui::Key::C),
-        "D" => Some(egui::Key::D),
-        "E" => Some(egui::Key::E),
-        "F" => Some(egui::Key::F),
-        "G" => Some(egui::Key::G),
-        "H" => Some(egui::Key::H),
-        "I" => Some(egui::Key::I),
-        "J" => Some(egui::Key::J),
-        "K" => Some(egui::Key::K),
-        "L" => Some(egui::Key::L),
-        "M" => Some(egui::Key::M),
-        "N" => Some(egui::Key::N),
-        "O" => Some(egui::Key::O),
-        "P" => Some(egui::Key::P),
-        "Q" => Some(egui::Key::Q),
-        "R" => Some(egui::Key::R),
-        "S" => Some(egui::Key::S),
-        "T" => Some(egui::Key::T),
-        "U" => Some(egui::Key::U),
-        "V" => Some(egui::Key::V),
-        "W" => Some(egui::Key::W),
-        "X" => Some(egui::Key::X),
-        "Y" => Some(egui::Key::Y),
-        "Z" => Some(egui::Key::Z),
-        "Num0" => Some(egui::Key::Num0),
-        "Num1" => Some(egui::Key::Num1),
-        "Num2" => Some(egui::Key::Num2),
-        "Num3" => Some(egui::Key::Num3),
-        "Num4" => Some(egui::Key::Num4),
-        "Num5" => Some(egui::Key::Num5),
-        "Num6" => Some(egui::Key::Num6),
-        "Num7" => Some(egui::Key::Num7),
-        "Num8" => Some(egui::Key::Num8),
-        "Num9" => Some(egui::Key::Num9),
-        "F1" => Some(egui::Key::F1),
-        "F2" => Some(egui::Key::F2),
-        "F3" => Some(egui::Key::F3),
-        "F4" => Some(egui::Key::F4),
-        "F5" => Some(egui::Key::F5),
-        "F6" => Some(egui::Key::F6),
-        "F7" => Some(egui::Key::F7),
-        "F8" => Some(egui::Key::F8),
-        "F9" => Some(egui::Key::F9),
-        "F10" => Some(egui::Key::F10),
-        "F11" => Some(egui::Key::F11),
-        "F12" => Some(egui::Key::F12),
-        "Space" => Some(egui::Key::Space),
-        "ArrowLeft" => Some(egui::Key::ArrowLeft),
-        "ArrowRight" => Some(egui::Key::ArrowRight),
-        "ArrowUp" => Some(egui::Key::ArrowUp),
-        "ArrowDown" => Some(egui::Key::ArrowDown),
-        "PageUp" => Some(egui::Key::PageUp),
-        "PageDown" => Some(egui::Key::PageDown),
-        "Home" => Some(egui::Key::Home),
-        "End" => Some(egui::Key::End),
-        "Tab" => Some(egui::Key::Tab),
-        "Minus" => Some(egui::Key::Minus),
-        "Equals" => Some(egui::Key::Equals),
-        _ => None,
-    }
-}
+

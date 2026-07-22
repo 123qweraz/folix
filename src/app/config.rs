@@ -1,6 +1,56 @@
-use crate::app::core::app_state::AppSettings;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// Application settings persisted to disk.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AppSettings {
+    pub toolbar_icon_size: f32,
+    pub show_toolbar_nav: bool,
+    pub show_toolbar_view: bool,
+    pub show_toolbar_page: bool,
+    pub show_toolbar_auto: bool,
+    pub show_toolbar_edit: bool,
+    pub background_color: [u8; 4],
+    pub reader_bg_color: [u8; 4],
+    pub dark_mode: bool,
+    pub scroll_speed: f32,
+    pub mo_yu_speed: f32,
+    pub shortcuts: crate::app::core::shortcuts::ShortcutMap,
+    pub language: String,
+    #[serde(skip)]
+    pub editing_shortcut: Option<usize>,
+    pub reading_font_size: f32,
+    pub reading_line_height: f32,
+    pub reading_margin_h: f32,
+    pub reading_max_text_width: f32,
+    pub reading_side_margin_pct: f32,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            toolbar_icon_size: 16.0,
+            show_toolbar_nav: true,
+            show_toolbar_view: true,
+            show_toolbar_page: true,
+            show_toolbar_auto: true,
+            show_toolbar_edit: true,
+            background_color: [255, 255, 255, 255],
+            reader_bg_color: [235, 235, 238, 255],
+            dark_mode: false,
+            scroll_speed: 800.0,
+            mo_yu_speed: 1.5,
+            shortcuts: crate::app::core::shortcuts::default_shortcuts(),
+            language: "zh-CN".into(),
+            editing_shortcut: None,
+            reading_font_size: 16.0,
+            reading_line_height: 1.4,
+            reading_margin_h: 16.0,
+            reading_max_text_width: 720.0,
+            reading_side_margin_pct: 0.25,
+        }
+    }
+}
 
 pub fn config_path() -> PathBuf {
     // Follows XDG Base Directory spec on Linux, standard platform conventions on macOS/Windows

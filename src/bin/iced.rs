@@ -1,8 +1,8 @@
-use iced::widget::{column, container, row, text};
-use iced::{event, keyboard, window, Element, Length, Subscription, Task};
+use iced::widget::{column, text};
+use iced::{event, keyboard, window, Element, Subscription, Task};
 
 use folix::iced_app::state::{
-    self, boot, tab_title, DocumentHolder, Message, TabContent,
+    self, boot, DocumentHolder, Message, TabContent,
 };
 use folix::iced_app::{tab_bar, home_page, settings, pdf_toolbox, pdf_viewer, reflow_viewer};
 
@@ -158,7 +158,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     return schedule_render(state);
                 }
             } else if let TabContent::Document {
-                ref mut current_page,
                 document:
                     DocumentHolder::Reflow(ref mut holder),
                 ..
@@ -178,7 +177,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             if let TabContent::Document {
                 ref mut current_page,
                 document:
-                    DocumentHolder::Pdf(ref holder),
+                    DocumentHolder::Pdf(..),
                 ..
             } = state.tabs[tab_idx].content
             {
@@ -187,7 +186,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     return schedule_render(state);
                 }
             } else if let TabContent::Document {
-                ref mut current_page,
                 document:
                     DocumentHolder::Reflow(ref mut holder),
                 ..
