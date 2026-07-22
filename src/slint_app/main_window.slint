@@ -43,6 +43,7 @@ export component MainWindow inherits Window {
     callback next-page();
     callback page-clicked(float, float);
     callback copy-selected();
+    callback new-home-tab();
     callback open-settings();
     callback open-pdf-toolbox();
     callback open-recent(string);
@@ -67,6 +68,7 @@ export component MainWindow inherits Window {
             background: #e0e0e0;
             HorizontalLayout {
                 padding-left: 4px;
+                padding-right: 4px;
                 spacing: 2px;
                 HorizontalLayout {
                     horizontal-stretch: 1;
@@ -82,41 +84,42 @@ export component MainWindow inherits Window {
                                 padding-left: 10px;
                                 padding-right: 4px;
                                 spacing: 4px;
+                                cross-axis-alignment: center;
                                 Text {
                                     text: tab.title;
-                                    vertical-alignment: center;
                                     horizontal-stretch: 1;
                                     font-size: 12px;
                                     overflow: elide;
                                 }
-                                Rectangle {
-                                    width: 18px;
-                                    height: 18px;
+                                Text {
+                                    text: "×";
+                                    font-size: 12px;
+                                    color: #666;
+                                    min-width: 16px;
+                                    min-height: 16px;
                                     TouchArea {
                                         clicked => { root.close-tab(idx); }
-                                        Rectangle {
-                                            width: 100%;
-                                            height: 100%;
-                                            border-radius: 2px;
-                                            Text {
-                                                text: "×";
-                                                font-size: 12px;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
-                                                color: #666;
-                                            }
-                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-                Button {
-                    text: "+";
-                    min-width: 28px;
-                    min-height: 28px;
-                    clicked => { root.open-file(); }
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: #ccc;
+                    TouchArea {
+                        clicked => { root.new-home-tab(); }
+                        Text {
+                            text: "+";
+                            font-size: 14px;
+                            color: #555;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
             }
         }

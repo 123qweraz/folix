@@ -26,8 +26,13 @@ fn update_active_tab(window: &MainWindow, state: &AppState) {
 
     window.set_show_home(false);
 
-    match &tab.content {
-        folix::slint_app::state::TabContent::Reflow(rstate) => {
+        match &tab.content {
+            folix::slint_app::state::TabContent::Home => {
+                window.set_show_home(true);
+                window.set_show_reflow(false);
+                window.set_show_pdf(false);
+            }
+            folix::slint_app::state::TabContent::Reflow(rstate) => {
             window.set_show_reflow(true);
             window.set_show_pdf(false);
             window.set_reflow_content(rstate.current_text().into());
@@ -127,6 +132,18 @@ fn main() {
             } else {
                 window.set_status_text("Failed to open file".into());
             }
+        });
+    }
+
+    // New home tab
+    {
+        let w = window.as_weak();
+        let s = state.clone();
+        window.on_new_home_tab(move || {
+            let window = w.unwrap();
+            s.borrow_mut().new_home_tab();
+            refresh_ui(&window, &s.borrow());
+            window.set_status_text("New tab".into());
         });
     }
 

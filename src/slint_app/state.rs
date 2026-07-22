@@ -9,6 +9,7 @@ pub struct Tab {
 }
 
 pub enum TabContent {
+    Home,
     Reflow(ReflowViewerState),
     Pdf(PdfViewerState),
 }
@@ -16,6 +17,7 @@ pub enum TabContent {
 impl Tab {
     pub fn title_for_display(&self) -> String {
         let name = match &self.content {
+            TabContent::Home => "主页".to_string(),
             TabContent::Reflow(state) => state.current_title(),
             TabContent::Pdf(state) => state.document_title(),
         };
@@ -31,6 +33,14 @@ impl Tab {
 
     pub fn is_pdf(&self) -> bool {
         matches!(self.content, TabContent::Pdf(_))
+    }
+
+    pub fn new_home_tab() -> Self {
+        Self {
+            title: "主页".to_string(),
+            path: String::new(),
+            content: TabContent::Home,
+        }
     }
 }
 
@@ -116,6 +126,11 @@ impl AppState {
 
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
+    }
+
+    pub fn new_home_tab(&mut self) {
+        self.tabs.push(Tab::new_home_tab());
+        self.active_tab = self.tabs.len() - 1;
     }
 
     pub fn current_title(&self) -> String {
