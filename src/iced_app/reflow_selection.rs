@@ -72,12 +72,12 @@ impl canvas::Program<state::Message> for ReflowCanvas {
                         self.line_height,
                         bounds.size().width,
                     );
-                    if let Some(hit) = buf.hit(pos.x, pos.y) {
+                    // try cosmic-text hit detection
+                    let found = buf.hit(pos.x, pos.y);
+                    if let Some(hit) = found {
                         state.drag_start = Some(hit);
                         state.drag_current = Some(hit);
                         return Some(canvas::Action::capture());
-                    } else {
-                        eprintln!("reflow: hit() returned None at pos=({}, {})", pos.x, pos.y);
                     }
                 }
             }
@@ -107,7 +107,6 @@ impl canvas::Program<state::Message> for ReflowCanvas {
                     let selected = if lo < hi && hi <= self.text.len() {
                         self.text[lo..hi].to_string()
                     } else {
-                        eprintln!("reflow: invalid range {}..{} (len={})", lo, hi, self.text.len());
                         String::new()
                     };
 
@@ -116,8 +115,6 @@ impl canvas::Program<state::Message> for ReflowCanvas {
                     return Some(canvas::Action::publish(state::Message::SelectionFinalize(
                         selected,
                     )));
-                } else {
-                    eprintln!("reflow: ButtonReleased but drag_start={:?} drag_current={:?}", state.drag_start, state.drag_current);
                 }
             }
             _ => {}
@@ -183,18 +180,14 @@ impl canvas::Program<state::Message> for ReflowCanvas {
             }
         }
 
-        // debug: show drag_start state
-        let dbg = match state.drag_start {
-            Some(c) => format!("drag: line={} idx={}", c.line, c.index),
-            None => "drag: none".to_string(),
-        };
-        frame.fill_text(canvas::Text {
-            content: dbg,
-            position: Point::new(2.0, 2.0),
-            color: Color::from_rgb(1.0, 0.0, 0.0),
-            size: iced::Pixels(11.0),
-            ..canvas::Text::default()
-        });
+        // debug: red border = selection active
+        if state.drag_start.is_some() {
+            frame.fill_rectangle(
+                Point::new(0.0, 0.0),
+                Size::new(bounds.size().width, 3.0),
+                Color::from_rgb(1.0, 0.0, 0.0),
+            );
+        }
 
         vec![frame.into_geometry()]
     }
