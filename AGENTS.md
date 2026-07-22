@@ -1,1 +1,17 @@
 - **Git discipline**: after every successful `cargo build`, run `git add -A && git commit -m "..."` to save progress.
+- **Build**: `cargo run --bin iced`
+- **Architecture**:
+  - `src/app/` — pure domain/application layer (no iced dependency)
+    - `engines/` — PDF rendering (mupdf → RGBA), reflow parsing (rbook)
+    - `core/` — state types, shortcuts (pure enums), text layout stub
+    - `storage/` — SQLite persistence
+    - `config.rs` — AppSettings (serde), config file load/save
+  - `src/iced_app/` — presentation layer (iced widgets)
+    - `state.rs` — State, Tab, TabContent, DocumentHolder, Message
+    - `tab_bar.rs`, `home_page.rs`, `settings.rs`, `pdf_viewer.rs`,
+      `reflow_viewer.rs`, `pdf_toolbox.rs`
+  - `src/bin/iced.rs` — binary entrypoint, update/view/subscription
+- **Key patterns**:
+  - Engines return `RenderedPage { width, height, rgba }`, UI converts to `iced::widget::image::Handle`
+  - TextLayout is a pure stub (iced's native text widget handles layout)
+  - PDF rendering in async Task via mupdf directly or PdfDocument
