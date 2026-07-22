@@ -41,7 +41,7 @@ pub struct ReflowCanvas {
     pub line_height: f32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub struct ReflowState {
     pub drag_start: Option<Cursor>,
     pub drag_current: Option<Cursor>,
@@ -76,6 +76,8 @@ impl canvas::Program<state::Message> for ReflowCanvas {
                         state.drag_start = Some(hit);
                         state.drag_current = Some(hit);
                         return Some(canvas::Action::capture());
+                    } else {
+                        eprintln!("reflow: hit() returned None at pos=({}, {})", pos.x, pos.y);
                     }
                 }
             }
@@ -102,13 +104,20 @@ impl canvas::Program<state::Message> for ReflowCanvas {
                     let a = full_offset(&self.text, start);
                     let b = full_offset(&self.text, current);
                     let (lo, hi) = (a.min(b), a.max(b));
-                    let selected = self.text[lo..hi].to_string();
+                    let selected = if lo < hi && hi <= self.text.len() {
+                        self.text[lo..hi].to_string()
+                    } else {
+                        eprintln!("reflow: invalid range {}..{} (len={})", lo, hi, self.text.len());
+                        String::new()
+                    };
 
                     state.drag_start = None;
                     state.drag_current = None;
                     return Some(canvas::Action::publish(state::Message::SelectionFinalize(
                         selected,
                     )));
+                } else {
+                    eprintln!("reflow: ButtonReleased but drag_start={:?} drag_current={:?}", state.drag_start, state.drag_current);
                 }
             }
             _ => {}
@@ -150,7 +159,7 @@ impl canvas::Program<state::Message> for ReflowCanvas {
                             r: 0.2,
                             g: 0.4,
                             b: 1.0,
-                            a: 0.3,
+                            a: 0.5,
                         },
                     );
                 }
@@ -174,6 +183,19 @@ impl canvas::Program<state::Message> for ReflowCanvas {
             }
         }
 
+        // debug: show drag_start state
+        let dbg = match state.drag_start {
+            Some(c) => format!("drag: line={} idx={}", c.line, c.index),
+            None => "drag: none".to_string(),
+        };
+        frame.fill_text(canvas::Text {
+            content: dbg,
+            position: Point::new(2.0, 2.0),
+            color: Color::from_rgb(1.0, 0.0, 0.0),
+            size: iced::Pixels(11.0),
+            ..canvas::Text::default()
+        });
+
         vec![frame.into_geometry()]
     }
 
@@ -188,5 +210,55 @@ impl canvas::Program<state::Message> for ReflowCanvas {
         } else {
             mouse::Interaction::Text
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_full_offset_basic() {
+        assert_eq!(full_offset("abc\ndef", Cursor::new(0, 0)), 0);
+        assert_eq!(full_offset("abc\ndef", Cursor::new(0, 3)), 3);
+        assert_eq!(full_offset("abc\ndef", Cursor::new(1, 0)), 4);
+        assert_eq!(full_offset("abc\ndef", Cursor::new(1, 3)), 7);
+    }
+
+    #[test]
+    fn test_cosmic_text_hit() {
+        let mut fs = FontSystem::new();
+        let text = "Hello World\nSecond line";
+        let m = Metrics::new(16.0, 16.0 * 1.4);
+        let mut b = Buffer::new(&mut fs, m);
+        b.set_text(&mut fs, text, &Attrs::new(), Shaping::Advanced, None);
+        b.set_size(&mut fs, Some(400.0), None);
+        let runs: Vec<_> = b.layout_runs().collect();
+        assert!(!runs.is_empty());
+        if let Some(run) = runs.first() {
+            assert!(b.hit(10.0, run.line_top + run.line_height / 2.0).is_some());
+        }
+    }
+
+    #[test]
+    fn test_integrated_selection() {
+        let mut fs = FontSystem::new();
+        let text = "Hello World\nSecond line\nThird line";
+        let m = Metrics::new(16.0, 16.0 * 1.4);
+        let mut b = Buffer::new(&mut fs, m);
+        b.set_text(&mut fs, text, &Attrs::new(), Shaping::Advanced, None);
+        b.set_size(&mut fs, Some(400.0), None);
+        let runs: Vec<_> = b.layout_runs().collect();
+        assert!(runs.len() >= 3);
+
+        let y0 = runs[0].line_top + runs[0].line_height / 2.0;
+        let y2 = runs.last().unwrap().line_top + runs.last().unwrap().line_height / 2.0;
+        let h1 = b.hit(5.0, y0).unwrap();
+        let h2 = b.hit(5.0, y2).unwrap();
+        let a = full_offset(text, h1);
+        let b_off = full_offset(text, h2);
+        let selected = &text[a.min(b_off)..a.max(b_off)];
+        assert!(!selected.is_empty());
+        eprintln!("Selection test: '{selected}'");
     }
 }
