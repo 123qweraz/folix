@@ -1,0 +1,224 @@
+import { ScrollView } from "std-widgets.slint";
+
+export struct RecentFileInfo {
+    path: string,
+    title: string,
+}
+
+export component HomePage {
+    in property <[RecentFileInfo]> recent-files;
+
+    callback open-document();
+    callback open-settings();
+    callback open-pdf-toolbox();
+    callback open-recent(string);
+
+    VerticalLayout {
+        spacing: 0;
+
+        Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 16px;
+                padding: 40px;
+                cross-axis-alignment: center;
+
+                // Title
+                Text {
+                    text: "Folix";
+                    font-size: 36px;
+                    font-weight: 700;
+                    color: #333;
+                }
+
+                Text {
+                    text: "选择操作";
+                    font-size: 16px;
+                    color: #888;
+                }
+
+                Rectangle { height: 20px; }
+
+                // Three option cards
+                HorizontalLayout {
+                    spacing: 24px;
+                    cross-axis-alignment: center;
+
+                    // Card: Open Document
+                    Rectangle {
+                        width: 200px;
+                        height: 160px;
+                        border-radius: 12px;
+                        background: #f8f9fa;
+                        TouchArea {
+                            clicked => { root.open-document(); }
+                            VerticalLayout {
+                                padding: 24px;
+                                spacing: 12px;
+                                cross-axis-alignment: center;
+                                Rectangle {
+                                    width: 100%;
+                                    height: 80px;
+                                    border-radius: 8px;
+                                    background: #e8f0fe;
+                                    Text {
+                                        text: "📂";
+                                        font-size: 40px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text {
+                                    text: "打开文档";
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    color: #333;
+                                }
+                                Text {
+                                    text: "支持 EPUB、PDF、TXT";
+                                    font-size: 12px;
+                                    color: #888;
+                                }
+                            }
+                        }
+                    }
+
+                    // Card: Settings
+                    Rectangle {
+                        width: 200px;
+                        height: 160px;
+                        border-radius: 12px;
+                        background: #f8f9fa;
+                        TouchArea {
+                            clicked => { root.open-settings(); }
+                            VerticalLayout {
+                                padding: 24px;
+                                spacing: 12px;
+                                cross-axis-alignment: center;
+                                Rectangle {
+                                    width: 100%;
+                                    height: 80px;
+                                    border-radius: 8px;
+                                    background: #fef3e8;
+                                    Text {
+                                        text: "⚙️";
+                                        font-size: 40px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text {
+                                    text: "设置";
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    color: #333;
+                                }
+                                Text {
+                                    text: "阅读偏好、界面主题";
+                                    font-size: 12px;
+                                    color: #888;
+                                }
+                            }
+                        }
+                    }
+
+                    // Card: PDF Toolbox
+                    Rectangle {
+                        width: 200px;
+                        height: 160px;
+                        border-radius: 12px;
+                        background: #f8f9fa;
+                        TouchArea {
+                            clicked => { root.open-pdf-toolbox(); }
+                            VerticalLayout {
+                                padding: 24px;
+                                spacing: 12px;
+                                cross-axis-alignment: center;
+                                Rectangle {
+                                    width: 100%;
+                                    height: 80px;
+                                    border-radius: 8px;
+                                    background: #e8f5e9;
+                                    Text {
+                                        text: "🛠️";
+                                        font-size: 40px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text {
+                                    text: "PDF 工具箱";
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    color: #333;
+                                }
+                                Text {
+                                    text: "合并、拆分、提取";
+                                    font-size: 12px;
+                                    color: #888;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { height: 20px; }
+
+                // Recent files section
+                Rectangle {
+                    width: 660px;
+                    height: 200px;
+                    border-radius: 12px;
+                    background: #f8f9fa;
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 8px;
+                        Text {
+                            text: "最近打开";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: #555;
+                        }
+
+                        if (root.recent-files.length == 0) : Text {
+                            text: "暂无最近文件";
+                            font-size: 13px;
+                            color: #aaa;
+                        }
+
+                        ScrollView {
+                            vertical-stretch: 1;
+                            VerticalLayout {
+                                for file in root.recent-files: Rectangle {
+                                    height: 36px;
+                                    border-radius: 6px;
+                                    TouchArea {
+                                        clicked => { root.open-recent(file.path); }
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            spacing: 8px;
+                                            Text {
+                                                text: "📄";
+                                                font-size: 14px;
+                                                vertical-alignment: center;
+                                            }
+                                            Text {
+                                                text: file.title;
+                                                font-size: 13px;
+                                                vertical-alignment: center;
+                                                horizontal-stretch: 1;
+                                                overflow: elide;
+                                                color: #444;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

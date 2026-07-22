@@ -1,6 +1,7 @@
 import { VerticalBox, Button } from "std-widgets.slint";
 import { ReflowViewer } from "reflow_viewer.slint";
 import { PdfViewer } from "pdf_viewer.slint";
+import { HomePage, RecentFileInfo } from "home_page.slint";
 
 export struct TabInfo {
     title: string,
@@ -14,6 +15,10 @@ export component MainWindow inherits Window {
 
     in-out property <string> status-text: "Ready";
     in property <[TabInfo]> tabs;
+
+    // Home page properties
+    in property <bool> show-home: true;
+    in property <[RecentFileInfo]> recent-files;
 
     // Reflow properties
     in property <bool> show-reflow: false;
@@ -38,6 +43,9 @@ export component MainWindow inherits Window {
     callback next-page();
     callback page-clicked(float, float);
     callback copy-selected();
+    callback open-settings();
+    callback open-pdf-toolbox();
+    callback open-recent(string);
 
     FocusScope {
         width: 0px;
@@ -113,6 +121,16 @@ export component MainWindow inherits Window {
             }
         }
 
+        // Content - Home
+        if (root.show-home) : HomePage {
+            recent-files: root.recent-files;
+            open-document => { root.open-file(); }
+            open-settings => { root.open-settings(); }
+            open-pdf-toolbox => { root.open-pdf-toolbox(); }
+            open-recent(path) => { root.open-recent(path); }
+            vertical-stretch: 1;
+        }
+
         // Content - Reflow
         if (root.show-reflow) : ReflowViewer {
             content: root.reflow-content;
@@ -135,20 +153,6 @@ export component MainWindow inherits Window {
             page-clicked(x, y) => { root.page-clicked(x, y); }
             copy-selected => { root.copy-selected(); }
             vertical-stretch: 1;
-        }
-
-        // Content - Home
-        if (!root.show-reflow && !root.show-pdf) : Rectangle {
-            background: white;
-            vertical-stretch: 1;
-            Text {
-                text: "Welcome to Folix\nOpen a file to get started";
-                wrap: word-wrap;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                font-size: 18px;
-                color: #888;
-            }
         }
 
         // Status bar

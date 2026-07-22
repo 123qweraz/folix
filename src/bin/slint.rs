@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use slint::ComponentHandle;
-use folix::slint_app::{MainWindow, TabInfo};
+use folix::slint_app::{MainWindow, TabInfo, RecentFileInfo};
 use folix::slint_app::state::AppState;
+use folix::app::config::{ConfigData, RecentFile};
 
 fn update_tab_model(window: &MainWindow, state: &AppState) {
     let model = slint::VecModel::<TabInfo>::default();
@@ -17,10 +18,13 @@ fn update_tab_model(window: &MainWindow, state: &AppState) {
 
 fn update_active_tab(window: &MainWindow, state: &AppState) {
     let Some(tab) = state.active_tab() else {
+        window.set_show_home(true);
         window.set_show_reflow(false);
         window.set_show_pdf(false);
         return;
     };
+
+    window.set_show_home(false);
 
     match &tab.content {
         folix::slint_app::state::TabContent::Reflow(rstate) => {
@@ -49,6 +53,22 @@ fn refresh_ui(window: &MainWindow, state: &AppState) {
     update_active_tab(window, state);
 }
 
+fn update_recent_files(window: &MainWindow, files: &[RecentFile]) {
+    let model = slint::VecModel::<RecentFileInfo>::default();
+    for file in files {
+        let title = std::path::Path::new(&file.path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
+        model.push(RecentFileInfo {
+            path: file.path.clone().into(),
+            title: title.into(),
+        });
+    }
+    window.set_recent_files(slint::ModelRc::from(std::rc::Rc::new(model)));
+}
+
 fn copy_to_clipboard(text: &str) {
     use copypasta::ClipboardContext;
     use copypasta::ClipboardProvider;
@@ -61,7 +81,14 @@ fn main() {
     let window = MainWindow::new().unwrap();
     let state = Rc::new(RefCell::new(AppState::new()));
 
-    // Open file
+    // Load recent files
+    let config = ConfigData::load().unwrap_or_else(|| ConfigData {
+        settings: Default::default(),
+        recent_files: vec![],
+    });
+    update_recent_files(&window, &config.recent_files);
+
+    // Open file (button / home page card)
     {
         let w = window.as_weak();
         let s = state.clone();
@@ -71,21 +98,53 @@ fn main() {
                 .add_filter("Documents", &["pdf", "epub", "txt", "md", "docx"])
                 .pick_file();
             let Some(path) = file else { return };
+            let path_str = path.to_string_lossy().to_string();
 
             let mut guard = s.borrow_mut();
-            match guard.open_file(&path.to_string_lossy()) {
-                Ok(_) => {
-                    drop(guard);
-                    refresh_ui(&window, &s.borrow());
-                    window.set_status_text(
-                        format!("Opened: {}", path.file_name().unwrap_or_default().to_string_lossy()).into()
-                    );
-                }
-                Err(e) => {
-                    drop(guard);
-                    window.set_status_text(format!("Error: {}", e).into());
-                }
+            if guard.open_file(&path_str).is_ok() {
+                drop(guard);
+                refresh_ui(&window, &s.borrow());
+                window.set_status_text(
+                    format!("Opened: {}", path.file_name().unwrap_or_default().to_string_lossy()).into()
+                );
+            } else {
+                window.set_status_text("Failed to open file".into());
             }
+        });
+    }
+
+    // Open recent file
+    {
+        let w = window.as_weak();
+        let s = state.clone();
+        window.on_open_recent(move |path| {
+            let window = w.unwrap();
+            let mut guard = s.borrow_mut();
+            if guard.open_file(path.as_str()).is_ok() {
+                drop(guard);
+                refresh_ui(&window, &s.borrow());
+                window.set_status_text(format!("Opened recent").into());
+            } else {
+                window.set_status_text("Failed to open file".into());
+            }
+        });
+    }
+
+    // Open settings
+    {
+        let w = window.as_weak();
+        window.on_open_settings(move || {
+            let window = w.unwrap();
+            window.set_status_text("Settings - coming soon".into());
+        });
+    }
+
+    // Open PDF toolbox
+    {
+        let w = window.as_weak();
+        window.on_open_pdf_toolbox(move || {
+            let window = w.unwrap();
+            window.set_status_text("PDF Toolbox - coming soon".into());
         });
     }
 
