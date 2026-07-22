@@ -1,15 +1,19 @@
-use iced::widget::{button, column, image, row, scrollable, text};
+use iced::widget::{button, canvas, column, image, row, scrollable, stack, text};
 use iced::{Element, Length};
 
+use super::pdf_selection::SelectionOverlay;
 use super::state::{DocumentHolder, Message, Tab, TabContent};
 
 pub fn view(tab: &Tab) -> Element<'_, Message> {
     match &tab.content {
         TabContent::Document {
-            document: DocumentHolder::Pdf(holder),
+            document:
+                DocumentHolder::Pdf(holder),
             current_page,
             scale,
             page_image,
+            word_positions,
+            page_height_pdf,
             ..
         } => {
             let page_info = text(format!(
@@ -38,7 +42,17 @@ pub fn view(tab: &Tab) -> Element<'_, Message> {
                 text("Rendering...").into()
             };
 
-            let scroll = scrollable(img)
+            let overlay = canvas::Canvas::new(SelectionOverlay {
+                word_positions: word_positions.clone(),
+                scale: *scale,
+                page_height_pdf: *page_height_pdf,
+            })
+            .width(Length::Fill)
+            .height(Length::Shrink);
+
+            let content = stack![img, overlay];
+
+            let scroll = scrollable(content)
                 .width(Length::Fill)
                 .height(Length::Fill);
 

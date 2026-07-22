@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::{keyboard, Task};
+use iced::{keyboard, Task, Point};
 use parking_lot::Mutex as PmMutex;
 
 use crate::app::config::AppSettings;
 use crate::app::engines::reflow_engine::ReflowDocument;
-use crate::app::engines::ReflowLayout;
+use crate::app::engines::{ReflowLayout, TextWordPosition};
 use crate::app::storage::sqlite::Database;
 
 // ── Tab types ────────────────────────────────────────────────
@@ -19,6 +19,8 @@ pub enum TabContent {
         current_page: usize,
         scale: f32,
         page_image: Option<iced::widget::image::Handle>,
+        word_positions: Vec<TextWordPosition>,
+        page_height_pdf: f32,
     },
     Settings,
     PdfToolbox,
@@ -71,6 +73,8 @@ pub struct State {
     pub status: String,
     pub db: Option<Database>,
     pub settings: AppSettings,
+    pub clipboard_text: String,
+    pub context_menu: Option<Point>,
 }
 
 // ── Messages ─────────────────────────────────────────────────
@@ -96,6 +100,10 @@ pub enum Message {
     NavDown,
     SettingsChanged(AppSettings),
     PdfOperation(String),
+    SelectionFinalize(String),
+    CopySelection,
+    RightClick,
+    DismissContextMenu,
 }
 
 // ── State methods ────────────────────────────────────────────
@@ -129,6 +137,8 @@ pub fn boot() -> (State, Task<Message>) {
         status: "Press Ctrl+O to open a file".into(),
         db,
         settings: AppSettings::default(),
+        clipboard_text: String::new(),
+        context_menu: None,
     };
 
     (state, Task::none())
@@ -195,6 +205,28 @@ fn load_chapter_texts(doc: &ReflowDocument, idx: usize) -> Vec<String> {
 pub fn load_chapter_texts_locked(doc: &Arc<PmMutex<ReflowDocument>>, idx: usize) -> Vec<String> {
     let guard = doc.lock();
     load_chapter_texts(&guard, idx)
+}
+
+pub fn load_pdf_word_positions(doc: &SafeDoc, page: usize) -> (Vec<TextWordPosition>, f32) {
+    use mupdf::TextExtractOptions;
+    let guard = doc.0.lock();
+    if let Ok(page_obj) = guard.load_page(page as i32) {
+        let height = page_obj.bounds().ok().map_or(792.0, |b| b.height());
+        let words = page_obj.words(TextExtractOptions::default()).unwrap_or_default();
+        let positions: Vec<TextWordPosition> = words
+            .into_iter()
+            .map(|w| TextWordPosition {
+                text: w.text,
+                x0: w.bounds.x0,
+                y0: w.bounds.y0,
+                x1: w.bounds.x1,
+                y1: w.bounds.y1,
+            })
+            .collect();
+        (positions, height)
+    } else {
+        (vec![], 792.0)
+    }
 }
 
 pub fn tab_title(tab: &Tab) -> &str {

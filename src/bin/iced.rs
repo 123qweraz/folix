@@ -1,5 +1,6 @@
-use iced::widget::{column, text};
-use iced::{event, keyboard, window, Element, Subscription, Task};
+use iced::clipboard;
+use iced::widget::{column, container, text};
+use iced::{event, keyboard, mouse, window, Element, Subscription, Task};
 
 use folix::iced_app::state::{
     self, boot, DocumentHolder, Message, TabContent,
@@ -28,44 +29,51 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::FileSelected(Some(path)) => {
             if let Some((path, doc)) = state::load_document(path) {
+                let is_pdf = matches!(doc, DocumentHolder::Pdf(_));
                 let title = path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("Document")
                     .to_string();
-                let tabs = &mut state.tabs;
-                // Check if current tab is Home, replace it
-                let is_home = matches!(tabs[state.active_tab].content, TabContent::Home);
-                if is_home {
-                    tabs[state.active_tab] = state::Tab {
-                        title: title.clone(),
-                        content: TabContent::Document {
-                            path: path.clone(),
-                            document: doc,
-                            current_page: 0,
-                            scale: 1.5,
-                            page_image: None,
-                        },
-                        path: Some(path.clone()),
-                    };
+                let (word_positions, page_height_pdf) = if is_pdf {
+                    match &doc {
+                        DocumentHolder::Pdf(holder) => {
+                            state::load_pdf_word_positions(&holder.doc, 0)
+                        }
+                        _ => (vec![], 792.0),
+                    }
                 } else {
-                    tabs.push(state::Tab {
-                        title: title.clone(),
-                        content: TabContent::Document {
-                            path: path.clone(),
-                            document: doc,
-                            current_page: 0,
-                            scale: 1.5,
-                            page_image: None,
-                        },
-                        path: Some(path.clone()),
-                    });
+                    (vec![], 0.0)
+                };
+                let tabs = &mut state.tabs;
+                let is_home = matches!(tabs[state.active_tab].content, TabContent::Home);
+                let new_tab = state::Tab {
+                    title: title.clone(),
+                    content: TabContent::Document {
+                        path: path.clone(),
+                        document: doc,
+                        current_page: 0,
+                        scale: 1.5,
+                        page_image: None,
+                        word_positions,
+                        page_height_pdf,
+                    },
+                    path: Some(path.clone()),
+                };
+                if is_home {
+                    tabs[state.active_tab] = new_tab;
+                } else {
+                    tabs.push(new_tab);
                     state.active_tab = tabs.len() - 1;
                 }
                 state.status = format!("Loaded: {}", title);
-                return schedule_render(state);
+                state.clipboard_text.clear();
+                if is_pdf {
+                    return schedule_render(state);
+                }
+            } else {
+                state.status = "Failed to open document".into();
             }
-            state.status = "Failed to open document".into();
             Task::none()
         }
 
@@ -112,7 +120,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::AddSettingsTab => {
-            // Settings is singleton
             let exists = state
                 .tabs
                 .iter()
@@ -155,6 +162,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             {
                 if *current_page + 1 < holder.page_count {
                     *current_page += 1;
+                    reload_pdf_words(state, tab_idx);
                     return schedule_render(state);
                 }
             } else if let TabContent::Document {
@@ -183,6 +191,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             {
                 if *current_page > 0 {
                     *current_page -= 1;
+                    reload_pdf_words(state, tab_idx);
                     return schedule_render(state);
                 }
             } else if let TabContent::Document {
@@ -203,10 +212,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ZoomIn => {
             let tab_idx = state.active_tab;
             if let TabContent::Document {
-                ref mut scale, ..
+                ref mut scale,
+                document: DocumentHolder::Pdf(..),
+                ..
             } = state.tabs[tab_idx].content
             {
                 *scale = (*scale * 1.25).min(5.0);
+                reload_pdf_words(state, tab_idx);
                 return schedule_render(state);
             }
             Task::none()
@@ -215,10 +227,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ZoomOut => {
             let tab_idx = state.active_tab;
             if let TabContent::Document {
-                ref mut scale, ..
+                ref mut scale,
+                document: DocumentHolder::Pdf(..),
+                ..
             } = state.tabs[tab_idx].content
             {
                 *scale = (*scale / 1.25).max(0.2);
+                reload_pdf_words(state, tab_idx);
                 return schedule_render(state);
             }
             Task::none()
@@ -240,6 +255,9 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     }
                     if c == "t" || c == "T" {
                         return update(state, Message::AddHomeTab);
+                    }
+                    if c == "c" || c == "C" {
+                        return copy_clipboard(state);
                     }
                 }
             }
@@ -267,6 +285,41 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::SelectionFinalize(text) => {
+            state.clipboard_text = text;
+            if !state.clipboard_text.is_empty() {
+                let preview = if state.clipboard_text.len() > 80 {
+                    format!("{}…", &state.clipboard_text[..80])
+                } else {
+                    state.clipboard_text.clone()
+                };
+                state.status = format!("Selected: {}", preview);
+            } else {
+                state.status = "No text selected".into();
+            }
+            state.context_menu = None;
+            Task::none()
+        }
+
+        Message::CopySelection => {
+            return copy_clipboard(state);
+        }
+
+        Message::RightClick => {
+            if !state.clipboard_text.is_empty() {
+                let text = state.clipboard_text.clone();
+                state.status = "Copied!".into();
+                state.context_menu = None;
+                return clipboard::write(text);
+            }
+            Task::none()
+        }
+
+        Message::DismissContextMenu => {
+            state.context_menu = None;
+            Task::none()
+        }
+
         Message::NavLeft | Message::NavRight | Message::NavUp | Message::NavDown => {
             Task::none()
         }
@@ -277,6 +330,37 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::PdfOperation(_) => Task::none(),
+    }
+}
+
+fn copy_clipboard(state: &mut State) -> Task<Message> {
+    let text = state.clipboard_text.clone();
+    if !text.is_empty() {
+        state.status = "Copied!".into();
+        clipboard::write(text)
+    } else {
+        state.status = "Nothing to copy".into();
+        Task::none()
+    }
+}
+
+fn reload_pdf_words(state: &mut State, tab_idx: usize) {
+    let (positions, height) = match &state.tabs[tab_idx].content {
+        TabContent::Document {
+            document: DocumentHolder::Pdf(holder),
+            current_page,
+            ..
+        } => state::load_pdf_word_positions(&holder.doc, *current_page),
+        _ => return,
+    };
+    if let TabContent::Document {
+        ref mut word_positions,
+        ref mut page_height_pdf,
+        ..
+    } = state.tabs[tab_idx].content
+    {
+        *word_positions = positions;
+        *page_height_pdf = height;
     }
 }
 
@@ -348,6 +432,9 @@ fn listen_to_events(
         event::Event::Keyboard(keyboard::Event::KeyPressed {
             key, modifiers, ..
         }) => Some(Message::KeyPressed(key, modifiers)),
+        event::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+            Some(Message::RightClick)
+        }
         _ => None,
     }
 }
@@ -370,7 +457,6 @@ fn view(state: &State) -> Element<'_, Message> {
             TabContent::Settings => settings::view(state),
             TabContent::PdfToolbox => pdf_toolbox::view(state),
             TabContent::Document { .. } => {
-                // Check if PDF or Reflow
                 match &tab.content {
                     TabContent::Document {
                         document: DocumentHolder::Pdf(_),
@@ -386,5 +472,20 @@ fn view(state: &State) -> Element<'_, Message> {
         }
     };
 
-    column![tab_bar, content,].spacing(0).into()
+    let status_text = if !state.clipboard_text.is_empty() {
+        let p = if state.clipboard_text.len() > 50 {
+            format!("{}…", &state.clipboard_text[..50])
+        } else {
+            state.clipboard_text.clone()
+        };
+        format!("Selected: {}  [Ctrl+C to copy]", p)
+    } else {
+        state.status.clone()
+    };
+
+    let status_bar = container(text(status_text).size(12))
+        .padding([2, 8])
+        .width(iced::Length::Fill);
+
+    column![tab_bar, content, status_bar].spacing(0).into()
 }
